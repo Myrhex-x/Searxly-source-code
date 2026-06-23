@@ -301,7 +301,7 @@ struct OnboardingCardButtonStyle: ButtonStyle {
     }
 }
 
-/// Compact tappable card for secondary actions (Open folder, Recheck Docker, etc.)
+/// Compact tappable card for secondary actions (Open folder, Recheck status, etc.)
 struct OnboardingActionCard: View {
     let title: String
     var systemImage: String? = nil

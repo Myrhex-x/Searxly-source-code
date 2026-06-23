@@ -193,7 +193,7 @@ struct ContentView: View {
         // (In full refactor the sidebar etc would read $browserState.tabs directly)
     }
 
-    /// Heavy launch work (decrypt AppData, restore tabs, start Docker). Skipped while App Lock is
+    /// Heavy launch work (decrypt AppData, restore tabs, start local SearXNG). Skipped while App Lock is
     /// showing so Touch ID can present immediately on cold start.
     func performInitialLaunchLoadIfNeeded() {
         guard !encryptionRecoveryManager.isRecoveryRequired else { return }

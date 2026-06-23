@@ -109,7 +109,7 @@ struct OnboardingFlow: View {
     private var localSearchShell: some View {
         OnboardingShell(
             step: 1,
-            instruction: "Nothing starts until you tap Start local search. SearXNG is built in — no Docker, no downloads. First boot takes a few seconds.",
+            instruction: "Nothing starts until you tap Start local search. SearXNG is built in — nothing to install. First boot takes a few seconds.",
             scrollable: true,
             showProgress: true
         ) {

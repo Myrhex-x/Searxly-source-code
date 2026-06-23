@@ -274,6 +274,7 @@ extension BrowserState {
         knowledgePanelState = snapshot.knowledgePanelState
         isLoadingSearch = false
         isLoadingMoreResults = false
+        consecutiveEmptyLoadMorePages = 0
         highlightedResultURL = nil
 
     }

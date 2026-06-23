@@ -1,6 +1,6 @@
 # Security Policy
 
-**Searxly** is a privacy-respecting native macOS browser powered by a local SearXNG instance (via Docker), with an included self-custody Base L2 wallet. This document describes the current security model, known limitations, and how to report vulnerabilities. (The VPN/WireGuard and ad-block implementations are kept in a private working copy and are not part of this public source.)
+**Searxly** is a privacy-respecting native macOS browser powered by a bundled native local SearXNG instance (no Docker), with an included self-custody Base L2 wallet. This document describes the current security model, known limitations, and how to report vulnerabilities. (The VPN/WireGuard and ad-block implementations are kept in a private working copy and are not part of this public source.)
 
 ## Supported Versions
 
@@ -19,7 +19,7 @@ Please include as much detail as possible (steps to reproduce, affected code pat
 
 ### App Sandbox
 - **Status**: Enabled. The app ships with the App Sandbox entitlement (`com.apple.security.app-sandbox`) in `Searxly/Searxly.entitlements`, alongside Hardened Runtime.
-- **How Docker still works under the sandbox**: Privileged operations — spawning the `docker` / `docker compose` CLI and reading/writing `~/searxng-local/` — are delegated to the separate `SearxlyDockerHelper` XPC service, so the main sandboxed app never touches those paths directly.
+- **How privileged operations work under the sandbox**: Spawning and supervising the bundled native SearXNG (Python) process and reading/writing `~/searxng-local/` are delegated to the separate `SearxlyHelper` XPC service (unsandboxed), so the main sandboxed app never touches those paths directly.
 - **Compensating controls**:
   - Hardened Runtime is enabled.
   - Local secrets/data use Keychain + CryptoKit (AES-GCM) at rest.
@@ -41,10 +41,10 @@ Please include as much detail as possible (steps to reproduce, affected code pat
   - The app's `LocalSearxngManager` (or manual copy/rename) produces the real `settings.yml` at runtime.
   - `.gitignore` explicitly protects `settings.yml`, `searxng-local/`, `*.log`, and user data directories.
 - **No real secrets are ever committed** to this public repository.
-- **User responsibility**: Before first Docker launch, replace the placeholder `secret_key` with a strong random value (`openssl rand -hex 32` is recommended). Never commit a file named `settings.yml` containing a real key.
+- **User responsibility**: The app generates a strong random `secret_key` automatically on first setup. If you build a `settings.yml` by hand, replace the placeholder `secret_key` with a strong random value (`openssl rand -hex 32` is recommended). Never commit a file named `settings.yml` containing a real key.
 
 ### Privacy & Data Handling
-- **Local-first by design**: All searches are routed through the user's own local SearXNG container. No queries are sent to third-party public instances by default.
+- **Local-first by design**: All searches are routed through the user's own local SearXNG instance. No queries are sent to third-party public instances by default.
 - **No built-in telemetry or analytics**.
 - Private browsing uses non-persistent `WKWebsiteDataStore`.
 - Optional at-rest encryption for history/bookmarks/etc. via CryptoKit + Keychain.
@@ -54,22 +54,22 @@ Please include as much detail as possible (steps to reproduce, affected code pat
 ### Code Signing, Notarization & Distribution
 - **Current builds**: Use Automatic signing. Network extension entitlements are left commented out, and the VPN implementation is not part of the public source.
 - **QA / Tester builds**: Use the provided `scripts/build-qa.sh`. It produces archived + exported builds and attempts notarization + stapling. See the script and the updated README section "Building for QA Testers & Distribution".
-- **Source builds**: Limited to personal Apple Development certificates. Hardened Runtime is enabled; App Sandbox is enabled, with the `SearxlyDockerHelper` XPC service performing Docker CLI + `~/searxng-local` writes on the sandboxed app's behalf. `DEVELOPMENT_TEAM` is blanked in the project — set your own to build.
+- **Source builds**: Limited to personal Apple Development certificates. Hardened Runtime is enabled; App Sandbox is enabled, with the `SearxlyHelper` XPC service spawning the bundled native SearXNG process + performing `~/searxng-local` writes on the sandboxed app's behalf. `DEVELOPMENT_TEAM` is blanked in the project — set your own to build.
 - **Future official releases**: Will use Developer ID + full notarization pipeline + (when re-enabled) proper provisioning for any system extensions.
 - Recommendation: Run the QA script for any builds you hand to others. Ad-hoc builds require right-click Open on recipient Macs.
 
-### Docker & Local Network
-- Uses the official `searxng/searxng:latest` image.
-- The container publishes port 8080 (configurable via environment variables in `docker-compose.yml`).
-- For advanced users, `SEARXNG_HOST_BIND` and `SEARXNG_BIND_ADDRESS` can restrict exposure.
-- Keep Docker Desktop and macOS up to date.
+### Local SearXNG & Network
+- Runs a pinned, bundled native SearXNG (Python) — shipped inside the app at `Resources/searxng-runtime/`, no external image or daemon.
+- The instance serves on port 8080 (overridable via the `SEARXNG_PORT` / `SEARXNG_BIND_ADDRESS` env vars the helper passes at launch).
+- Defaults to binding `127.0.0.1` (localhost-only); LAN exposure is an opt-in Developer-Mode toggle.
+- Keep macOS up to date.
 
 ### Dependencies
-- Relies on Apple’s WebKit, system frameworks, Docker Desktop, and standard Swift packages.
+- Relies on Apple’s WebKit, system frameworks, the bundled SearXNG Python runtime, and standard Swift packages.
 - No third-party analytics or crash-reporting SDKs are embedded.
 
 ## Security Hardening Roadmap
-- Continue tightening the App Sandbox + `SearxlyDockerHelper` XPC boundary toward least privilege.
+- Continue tightening the App Sandbox + `SearxlyHelper` XPC boundary toward least privilege.
 - Full production-ready entitlements and signing pipeline.
 - Optional security update mechanism (user-opt-in).
 - Independent code review / audit of the wallet and local data persistence layers (once v0.1 stabilizes).

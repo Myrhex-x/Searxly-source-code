@@ -6,13 +6,14 @@
 		================================================================================
 		App Sandbox — ENABLED (Phase 2, 2026)
 		================================================================================
-		All ~/searxng-local file I/O and docker CLI spawning now routes through the
-		SearxlyDockerHelper XPC service (no sandbox), so the main app can be sandboxed.
+		All ~/searxng-local file I/O and spawning of the bundled native SearXNG
+		(Python) process now routes through the SearxlyHelper XPC service
+		(no sandbox), so the main app can be sandboxed.
 
 		Hardened Runtime is also enabled.
 	-->
 
-	<!-- App Sandbox (Phase 2: all ~/searxng-local I/O routes through SearxlyDockerHelper XPC service) -->
+	<!-- App Sandbox (Phase 2: all ~/searxng-local I/O routes through SearxlyHelper XPC service) -->
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
 
@@ -38,7 +39,7 @@
 		<string>$(AppIdentifierPrefix)com.myrhex.Searxly</string>
 	</array>
 
-	<!-- Downloads folder: used by downloadDockerDesktopIfNeededAndPrepare() to save Docker.dmg -->
+	<!-- Downloads folder: read-write access for files the user saves from the browser -->
 	<key>com.apple.security.files.downloads.read-write</key>
 	<true/>
 
@@ -196,9 +197,9 @@
 
 		Longer term options (documented for when you have a paid team + custom profile):
 		- Turn App Sandbox back on (ENABLE_APP_SANDBOX=YES) + add the full set of WebKit-friendly
-		  exceptions + com.apple.security.device.audio-input etc. if needed. Test Docker/local SearXNG
-		  paths carefully (they currently require the main process to be unsandboxed or have explicit
-		  user-selected folder access + XPC for docker CLI).
+		  exceptions + com.apple.security.device.audio-input etc. if needed. Test the local SearXNG
+		  paths carefully (~/searxng-local I/O + spawning the native SearXNG process currently route
+		  through the unsandboxed SearxlyHelper XPC service).
 		- Or keep unsandboxed but embed a small XPC service whose only job is to host WKWebViews
 		  (gives the WebContent processes a different (less daemon-like) bootstrap environment).
 		- File feedbacks with Apple on the rdar and the "WebContent in hardened+unsandboxed app on 27"
@@ -208,9 +209,9 @@
 		Settings → Local AI. It includes prompt versions, prefs, RAG state, recent actions, and
 		instructions to also paste filtered Xcode console ([LocalAI] + the WebContent / NSHostingView lines).
 
-		Unrelated but visible in your log: Docker socket errors are from LocalSearxngManager
-		(~/searxng-local docker-compose). Only relevant if you are testing the one-click local
-		SearXNG feature; they do not affect the on-device Apple Intelligence path.
+		Unrelated but visible in your log: any ~/searxng-local errors are from LocalSearxngManager
+		spawning the bundled native SearXNG process via SearxlyHelper. Only relevant if you are
+		testing the one-click local SearXNG feature; they do not affect the on-device Apple Intelligence path.
 	-->
 </dict>
 </plist>

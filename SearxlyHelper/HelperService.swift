@@ -1,15 +1,15 @@
 //
-//  DockerHelperService.swift
-//  SearxlyDockerHelper — XPC Service
+//  HelperService.swift
+//  SearxlyHelper — XPC Service
 //
-//  Implements SearxlyDockerHelperProtocol. This process runs without App Sandbox, so it can
+//  Implements SearxlyHelperProtocol. This process runs without App Sandbox, so it can
 //  spawn the bundled native SearXNG (python) process and access ~/searxng-local on behalf of
-//  the sandboxed main app. (No Docker — the runtime is bundled inside the app.)
+//  the sandboxed main app. (The runtime is bundled inside the app.)
 //
 
 import Foundation
 
-final class DockerHelperService: NSObject, SearxlyDockerHelperProtocol {
+final class HelperService: NSObject, SearxlyHelperProtocol {
 
     /// Strong reference to the launched SearXNG process, used for a clean terminate while this
     /// service instance is alive. The pidfile (not this) is the source of truth for status/stop,

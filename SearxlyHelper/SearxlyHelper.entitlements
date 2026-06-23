@@ -3,15 +3,15 @@
 <plist version="1.0">
 <dict>
     <!--
-        SearxlyDockerHelper XPC Service entitlements.
+        SearxlyHelper XPC Service entitlements.
 
         IMPORTANT: Do NOT add com.apple.security.app-sandbox here.
         The whole point of this XPC service is to run without sandbox so it can
-        spawn docker CLI subprocesses and write to ~/searxng-local, which the
-        sandboxed main app cannot do directly.
+        spawn the bundled native SearXNG (Python) process and write to
+        ~/searxng-local, which the sandboxed main app cannot do directly.
 
-        network.client is needed so the helper can reach the Docker daemon socket
-        for `docker info` and similar probes.
+        network.client is needed so the helper can probe the local SearXNG
+        web server (http://127.0.0.1:8080) for readiness.
     -->
     <key>com.apple.security.network.client</key>
     <true/>

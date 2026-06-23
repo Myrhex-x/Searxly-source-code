@@ -34,7 +34,7 @@ struct InstancesSettingsView: View {
 
             SettingsSection(
                 title: "Local search on this Mac",
-                footer: "Runs a private SearXNG built into Searxly — no Docker required. Recommended for keeping queries on your computer."
+                footer: "Runs a private SearXNG built into Searxly — nothing to install. Recommended for keeping queries on your computer."
             ) {
                 localSearchPanel
             }
@@ -138,7 +138,7 @@ struct InstancesSettingsView: View {
         }
     }
 
-    // MARK: - Local Docker
+    // MARK: - Local SearXNG
 
     private var localSearchPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -221,7 +221,7 @@ struct InstancesSettingsView: View {
             )
             .disabled(manager.isBusy)
 
-            Text("SearXNG is built in — no Docker, no downloads. First launch takes a few seconds.")
+            Text("SearXNG is built in — nothing to install. First launch takes a few seconds.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else if manager.status == .stopped {
@@ -277,7 +277,7 @@ struct InstancesSettingsView: View {
             if manager.canConfigureLANExposure {
                 SettingsToggleRow(
                     title: "Expose on local network",
-                    description: "Developer option. Restart the container after changing.",
+                    description: "Developer option. Restart the local instance after changing.",
                     isOn: $developerLANExposureEnabled
                 )
                 .onChange(of: developerLANExposureEnabled) { oldValue, newValue in
@@ -484,7 +484,7 @@ struct InstancesSettingsView: View {
 
     // MARK: - Status helpers
 
-    private func statusSystemImage(for status: ContainerStatus) -> String {
+    private func statusSystemImage(for status: SearxngStatus) -> String {
         switch status {
         case .running: return "checkmark.circle.fill"
         case .stopped: return "powerplug"
@@ -493,7 +493,7 @@ struct InstancesSettingsView: View {
         }
     }
 
-    private func statusColor(for status: ContainerStatus) -> Color {
+    private func statusColor(for status: SearxngStatus) -> Color {
         switch status {
         case .running: return .green
         case .stopped: return .secondary
@@ -502,7 +502,7 @@ struct InstancesSettingsView: View {
         }
     }
 
-    private func statusBadge(for status: ContainerStatus) -> String {
+    private func statusBadge(for status: SearxngStatus) -> String {
         switch status {
         case .running: return "Ready"
         case .stopped: return "Stopped"
@@ -512,7 +512,7 @@ struct InstancesSettingsView: View {
         }
     }
 
-    private func statusTitle(for status: ContainerStatus) -> String {
+    private func statusTitle(for status: SearxngStatus) -> String {
         switch status {
         case .running: return "Local SearXNG is running"
         case .stopped: return "Local SearXNG is stopped"
@@ -522,7 +522,7 @@ struct InstancesSettingsView: View {
         }
     }
 
-    private func statusDescription(for status: ContainerStatus) -> String {
+    private func statusDescription(for status: SearxngStatus) -> String {
         switch status {
         case .running:
             return "Searches run through your private SearXNG on this Mac."

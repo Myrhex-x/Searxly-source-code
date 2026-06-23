@@ -2,11 +2,12 @@
 
 This folder is the **single source of truth** for the files that Searxly bundles into the app and copies to `~/searxng-local/` on first automatic (or manual) setup of the user's private local SearXNG instance.
 
+SearXNG runs as a **bundled native Python process** — no Docker, no downloads. The signed Python runtime ships inside the app at `Resources/searxng-runtime/`, and the unsandboxed `SearxlyHelper` XPC service spawns and supervises it (`python -m searx.webapp`) on behalf of the sandboxed main app.
+
 ## Contents
-- `docker-compose.yml` — the compose file (mounts the config dir + the premium Searxly `custom/` theme).
 - `searxng/settings.yml.example` — safe template (placeholder secret). At runtime Searxly generates a strong random `secret_key` and writes a real `settings.yml`.
 - `searxng/limiter.toml` — permissive limiter for local private use.
-- `custom/` — the premium xAI/SpaceX-inspired Searxly theme (templates + static CSS). Mounted into the container so the beautiful minimal results page is present from day one.
+- `custom/` — the premium xAI/SpaceX-inspired Searxly theme (templates + static CSS). Kept for reference; the native instance serves SearXNG's complete built-in simple theme, and Searxly renders its own native SwiftUI SERP from the JSON API.
 
 ## How bundling works
 1. In Xcode: the `LocalSearxng` folder must be added to the **Searxly** target via **Add Files → Create folder references** (not "Create groups").
@@ -19,11 +20,9 @@ The high-level `provisionIfNeeded()` / `ensureReadyAndRunning()` (and the old `e
 - Keep this folder minimal. Stray files (including old .txt docs) will be bundled and copied to every user's machine.
 - The committed `settings.yml.example` must never contain a real secret.
 - The manager now guarantees a real secret is written for new setups.
-- Duplicate `local-searxng/` folders at the project root have been removed in favor of this canonical location.
+- Do **not** set `ui.static_path` / `ui.templates_path` in the template. Those were legacy bind-mount paths (`/etc/searxng/custom/...`); pointing them at a missing or partial directory makes the native SearXNG reject the config (`Invalid settings.yml`) and never boot.
 
-## Docker CLI requirement (user education)
-After the user installs Docker Desktop they **must** go to Docker Desktop → Settings → General and enable "Docker CLI". Sandboxed macOS apps cannot see the `docker` binary otherwise. The onboarding and Settings UIs give clear guidance and a "check again" button.
+## How it just works (user education)
+After downloading Searxly, the user taps **Start local search** in onboarding (or Settings → Instances). The bundled runtime boots in a few seconds — nothing to install. There is no Docker requirement, no daemon, and no CLI to configure.
 
-This setup (combined with the automatic flow in onboarding) means that after downloading Searxly, a user only needs to install Docker Desktop + tick the one CLI checkbox. Everything else for a working, private, local SearXNG with the Searxly theme is handled automatically via big buttons.
-
-An optional "Manual / advanced" disclosure is also surfaced in onboarding and Settings → Instances for power users who want folder-only creation, copy-paste compose commands, or a custom local URL.
+An optional "Manual / advanced" disclosure is also surfaced in onboarding and Settings → Instances for power users who want folder-only creation or a custom local URL.

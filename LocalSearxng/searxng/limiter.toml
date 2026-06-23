@@ -1,6 +1,6 @@
 # Permissive limiter config for local private development.
 # Works together with server.limiter=false (in settings.yml) and
-# SEARXNG_LIMITER=false (docker-compose env).
+# SEARXNG_LIMITER=false (env var passed by SearxlyHelper at launch).
 # Schema must match the pinned image (searxng/searxng:2025.2.12).
 # In this version ipv4_prefix/ipv6_prefix live under [real_ip], not [botdetection].
 
@@ -8,7 +8,7 @@
 # Larger prefixes = more specific client identification.
 ipv4_prefix = 32
 ipv6_prefix = 48
-# Trust the first X-Forwarded-For value (direct Docker access, no reverse proxy).
+# Trust the first X-Forwarded-For value (direct localhost access, no reverse proxy).
 x_for = 1
 
 [botdetection.ip_limit]

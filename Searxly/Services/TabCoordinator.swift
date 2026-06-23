@@ -39,7 +39,7 @@ extension BrowserState {
             }
         }
 
-        // Stale opt-in from a prior partial setup must not re-enable background Docker on next launch.
+        // Stale opt-in from a prior partial setup must not re-enable background auto-start on next launch.
         if let binding = hasCompletedOnboardingBinding, !binding.wrappedValue {
             UserDefaults.standard.removeObject(forKey: "Searxly.LocalSearxng.UserOptedIn")
         }
@@ -56,7 +56,7 @@ extension BrowserState {
                 if !self.searxInstances.contains(where: { inst in
                     localhostURLs.contains { inst.url.hasPrefix($0) }
                 }) {
-                    let localInst = SearXNGInstance(name: "Local (Docker)", url: localURL)
+                    let localInst = SearXNGInstance(name: "Local", url: localURL)
                     self.searxInstances.append(localInst)
                     if self.currentInstanceID == UUID() || !self.searxInstances.contains(where: { $0.id == self.currentInstanceID }) {
                         self.currentInstanceID = localInst.id

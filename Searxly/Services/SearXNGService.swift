@@ -211,7 +211,7 @@ final class SearXNGService {
         }
     }
 
-    /// Avoid `localhost` → `::1` when Docker publishes IPv4-only on 127.0.0.1.
+    /// Avoid `localhost` → `::1` when SearXNG binds IPv4-only on 127.0.0.1.
     private static func ipv4PreferredLocalURL(_ url: String) -> String {
         guard url.contains("://localhost") else { return url }
         return url.replacingOccurrences(of: "://localhost", with: "://127.0.0.1")

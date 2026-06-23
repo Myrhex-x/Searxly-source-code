@@ -2,8 +2,8 @@
 //  Searxly
 //
 //  First-class in-app control for the user's private local SearXNG instance.
-//  SearXNG runs as a bundled native Python process (no Docker) supervised by the
-//  unsandboxed SearxlyDockerHelper XPC service. UI surfaces in Onboarding +
+//  SearXNG runs as a bundled native Python process supervised by the
+//  unsandboxed SearxlyHelper XPC service. UI surfaces in Onboarding +
 //  Settings/InstancesSettingsView.
 //
 
@@ -12,7 +12,7 @@ import SwiftUI
 import Observation
 import Security
 
-enum ContainerStatus: Equatable {
+enum SearxngStatus: Equatable {
     case stopped
     case starting
     case running
@@ -20,7 +20,7 @@ enum ContainerStatus: Equatable {
     case error(String)
 }
 
-/// Shared lean engine list for Searxly local Docker (creation + optimization + migration).
+/// Shared lean engine list for Searxly's local SearXNG (creation + optimization + migration).
 enum LeanSearxngEngines {
     static let block = """
 engines:
@@ -28,6 +28,15 @@ engines:
   # Stable image-shipped engines only. Edit ~/searxng-local/searxng/settings.yml to expand.
   # Wikipedia engine removed: Searxly promotes Grokipedia client-side and suppresses Wikipedia
   # in the native SERP. Knowledge-panel enrichment still fetches wiki text via site: queries.
+
+  # General-web engines. Multiple independent backends give the SERP both breadth (more results
+  # per page) and depth (later pages keep yielding new results, so infinite scroll has somewhere to
+  # go). google is the strongest single source (~20/page + reliable deep pagination); bing/mojeek/
+  # yahoo add diversity and paginate well. brave & startpage were removed — from a residential IP
+  # they consistently return zero (blocked), so they only diluted the set without adding results.
+  - name: google
+    engine: google
+    shortcut: go
 
   - name: bing
     engine: bing
@@ -52,13 +61,13 @@ engines:
     engine: duckduckgo
     shortcut: ddg
 
-  - name: brave
-    engine: brave
-    shortcut: br
+  - name: mojeek
+    engine: mojeek
+    shortcut: mjk
 
-  - name: startpage
-    engine: startpage
-    shortcut: sp
+  - name: yahoo
+    engine: yahoo
+    shortcut: yh
 
   - name: openverse
     engine: openverse
@@ -129,7 +138,7 @@ engines:
 final class LocalSearxngManager {
     static let shared = LocalSearxngManager()
 
-    var status: ContainerStatus = .stopped
+    var status: SearxngStatus = .stopped
     var isBusy = false
     var lastError: String?
     var logs: [String] = []
@@ -191,7 +200,7 @@ final class LocalSearxngManager {
     let projectFolderURL: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("searxng-local")
 
-    /// Whether Searxly may start/pull the local Docker container without an explicit user action.
+    /// Whether Searxly may start the local SearXNG instance without an explicit user action.
     /// Only true after onboarding is finished — never during the first-run flow.
     var mayAutoStartLocalContainer: Bool {
         UserDefaults.standard.bool(forKey: Self.hasCompletedOnboardingKey)
@@ -203,7 +212,7 @@ final class LocalSearxngManager {
     }
 
     /// Probe order for local SearXNG health checks. IPv4 first — `localhost` often resolves to `::1`,
-    /// which fails when Docker publishes only on `127.0.0.1`.
+    /// which fails when SearXNG binds only on `127.0.0.1`.
     var localWebProbeURLs: [String] {
         if bindToLocalhostOnly {
             return ["http://127.0.0.1:8080"]
@@ -213,7 +222,7 @@ final class LocalSearxngManager {
 
     var currentTask: Task<Void, Never>?
 
-    /// Coalesced launch warm-up (init + loadPersistedData must not each spawn docker probes).
+    /// Coalesced launch warm-up (init + loadPersistedData must not each spawn readiness probes).
     var launchWarmUpTask: Task<Void, Never>?
 
     /// Coalesced user-initiated ensure path (search, Local AI, Settings).

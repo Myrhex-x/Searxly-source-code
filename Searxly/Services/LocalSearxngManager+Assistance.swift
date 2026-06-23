@@ -20,7 +20,7 @@ extension LocalSearxngManager {
     /// Does NOT start SearXNG.
     func recreateProjectFolder() async {
         do {
-            guard let proxy = DockerHelperClient.shared.proxy() else {
+            guard let proxy = HelperClient.shared.proxy() else {
                 logs.append("❌ XPC helper unavailable — cannot remove ~/searxng-local")
                 return
             }

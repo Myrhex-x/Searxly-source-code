@@ -31,7 +31,7 @@ struct SearXNGInstance: Identifiable, Codable, Equatable, Hashable {
     // No default public instances.
     // Public instances have been removed: they are unreliable, frequently down,
     // and undermine the privacy goals of Searxly. Users must add their own
-    // private/local SearXNG instance (easiest via the included local Docker setup).
+    // private/local SearXNG instance (the built-in native instance is easiest).
     static let defaultInstances: [SearXNGInstance] = []
 
     /// Known public instance base URLs (normalized, no trailing slash).

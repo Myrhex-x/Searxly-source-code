@@ -1,16 +1,16 @@
 //
-//  DockerProvisioningTests.swift
+//  LocalSearxngProvisioningTests.swift
 //  SearxlyTests
 //
 //  Smoke tests for LocalSearxngManager provisioning (secret generation, lean engine
-//  config replacement, docker-compose bind-var patching).
+//  config replacement, bind/port patching).
 //  These tests use a temporary directory so they never touch ~/searxng-local.
 //
 
 import XCTest
 @testable import Searxly
 
-final class DockerProvisioningTests: XCTestCase {
+final class LocalSearxngProvisioningTests: XCTestCase {
 
     // MARK: - Secret generation
 
@@ -120,9 +120,9 @@ final class DockerProvisioningTests: XCTestCase {
         // NOTE: provisionIfNeeded() uses projectFolderURL which is ~/searxng-local.
         // We test the folder-creation logic by calling ensureProjectFolderExists directly
         // after verifying the bundle has the required resources.
-        guard Bundle.main.url(forResource: "docker-compose", withExtension: "yml") != nil ||
-              Bundle.main.url(forResource: "docker-compose", withExtension: "yml", subdirectory: "LocalSearxng") != nil else {
-            throw XCTSkip("docker-compose.yml not found in bundle — run tests from the full app target")
+        guard Bundle.main.url(forResource: "settings", withExtension: "yml.example", subdirectory: "LocalSearxng/searxng") != nil ||
+              Bundle.main.url(forResource: "settings", withExtension: "yml.example") != nil else {
+            throw XCTSkip("bundled settings.yml.example not found — run tests from the full app target")
         }
 
         // Verify the bundled settings template is reachable

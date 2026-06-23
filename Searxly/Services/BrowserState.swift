@@ -30,6 +30,10 @@ final class BrowserState {
     var searchPageNo: Int = 1
     var isLoadingMoreResults: Bool = false
     var canLoadMoreResults: Bool = true
+    /// Consecutive load-more pages that added nothing new. Aggregated SearXNG engines are flaky
+    /// (a single request can be CAPTCHA'd/rate-limited and come back empty), so we tolerate a few
+    /// dry pages before giving up instead of freezing scroll on the first one.
+    var consecutiveEmptyLoadMorePages: Int = 0
 
     /// The base URL of the SearXNG instance that successfully served the current `searchResults`.
     /// Used to construct reliable /image_proxy URLs for the images & videos grids + preview sheet
@@ -214,8 +218,8 @@ final class BrowserState {
     var shouldShowHomeInstanceWarning: Bool {
         if searxInstances.isEmpty { return true }
         let url = currentSearxInstance.url.lowercased()
-        let isLocalDocker = url.contains("localhost") || url.contains("127.0.0.1")
-        guard isLocalDocker else { return false }
+        let isLocalInstance = url.contains("localhost") || url.contains("127.0.0.1")
+        guard isLocalInstance else { return false }
         switch LocalSearxngManager.shared.status {
         case .running, .starting:
             return false

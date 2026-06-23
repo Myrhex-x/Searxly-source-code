@@ -68,20 +68,20 @@ struct TopBarArea: View {
                     .background(.regularMaterial, in: Capsule())
                     .glassEffect(glassEnabled ? .regular.interactive() : .clear, in: Capsule())
 
-                    // Rank 2: Live Docker container status (next to privacy badge)
-                    let dockerManager = LocalSearxngManager.shared
+                    // Rank 2: Live local SearXNG status (next to privacy badge)
+                    let searxngManager = LocalSearxngManager.shared
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(dockerStatusColor(dockerManager.status))
+                            .fill(searxngStatusColor(searxngManager.status))
                             .frame(width: 8, height: 8)
-                        Text(dockerStatusShort(dockerManager.status))
+                        Text(searxngStatusShort(searxngManager.status))
                             .font(.caption2.weight(.medium))
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(.regularMaterial, in: Capsule())
                     .onTapGesture {
-                        // Quick action: open Settings to full Docker controls
+                        // Quick action: open Settings to full local SearXNG controls
                         showingSettings = true
                     }
 
@@ -210,7 +210,7 @@ struct TopBarArea: View {
 }
 
 // MARK: - Local SearXNG status helpers
-private func dockerStatusColor(_ status: ContainerStatus) -> Color {
+private func searxngStatusColor(_ status: SearxngStatus) -> Color {
     switch status {
     case .running: return .green
     case .stopped: return .gray
@@ -219,7 +219,7 @@ private func dockerStatusColor(_ status: ContainerStatus) -> Color {
     }
 }
 
-private func dockerStatusShort(_ status: ContainerStatus) -> String {
+private func searxngStatusShort(_ status: SearxngStatus) -> String {
     switch status {
     case .running: return "Local"
     case .stopped: return "Off"

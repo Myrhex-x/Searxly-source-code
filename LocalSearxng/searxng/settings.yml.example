@@ -53,27 +53,87 @@ search:
   # use codes from 'languages.py'
   default_lang: "auto"
   # max_page: 0  # if engine supports paging, 0 means unlimited numbers of pages
-  # Available languages
-  # languages:
-  #   - all
-  #   - en
-  #   - en-US
-  #   - de
-  #   - it-IT
-  #   - fr
-  #   - fr-BE
+  # Allowed search locales. Searxly sends the macOS system locale (e.g. en-US, fr-FR) so results
+  # follow the user's language AND region. SearXNG only honors a region-qualified code if it's listed
+  # here — otherwise it silently strips "en-US" down to "en", and engines like Bing then fall back to
+  # IP-based geo-targeting (the "results in the wrong language" bug). Listing the region variants below
+  # keeps the region intact end-to-end. Base codes are kept as graceful fallbacks; unknown locales
+  # still degrade to the base language rather than to IP guessing.
+  languages:
+    - all
+    - en
+    - en-US
+    - en-GB
+    - en-CA
+    - en-AU
+    - fr
+    - fr-FR
+    - fr-CA
+    - de
+    - de-DE
+    - es
+    - es-ES
+    - es-MX
+    - it
+    - it-IT
+    - pt
+    - pt-PT
+    - pt-BR
+    - nl
+    - nl-NL
+    - sv
+    - sv-SE
+    - da
+    - da-DK
+    - fi
+    - fi-FI
+    - pl
+    - pl-PL
+    - ru
+    - ru-RU
+    - tr
+    - tr-TR
+    - ar
+    - ar-SA
+    - ja
+    - ja-JP
+    - ko
+    - ko-KR
+    - zh
+    - zh-CN
+    - zh-TW
+    - hi
+    - id
+    - id-ID
+    - uk
+    - cs
+    - cs-CZ
+    - ro
+    - ro-RO
+    - hu
+    - hu-HU
+    - el
+    - el-GR
+    - he
+    - th
+    - th-TH
+    - vi
   # ban time in seconds after engine errors
   ban_time_on_fail: 5
   # max ban time in seconds after engine errors
   max_ban_time_on_fail: 120
   suspended_times:
-    # Engine suspension time after error (in seconds; set to 0 to disable)
+    # Engine suspension time after error (in seconds; set to 0 to disable).
+    # Tuned DOWN from SearXNG's public-instance defaults (180s / 3600s) for a single-user local
+    # instance: from a home IP, engines (Google/DDG/Mojeek) get CAPTCHA'd/rate-limited intermittently,
+    # and the long defaults benched them for minutes-to-an-hour — leaving only Bing. Shorter
+    # suspensions let them recover quickly so the SERP isn't permanently bing-only.
     # For error "Access denied" and "HTTP error [402, 403]"
-    SearxEngineAccessDenied: 180
+    SearxEngineAccessDenied: 60
     # For error "CAPTCHA"
-    SearxEngineCaptcha: 3600
+    SearxEngineCaptcha: 300
     # For error "Too many request" and "HTTP error 429"
-    SearxEngineTooManyRequests: 180
+    SearxEngineTooManyRequests: 60
     # Cloudflare CAPTCHA
     cf_SearxEngineCaptcha: 1296000
     cf_SearxEngineAccessDenied: 86400
@@ -88,7 +148,7 @@ search:
 
 server:
   # Is overwritten by ${SEARXNG_PORT} and ${SEARXNG_BIND_ADDRESS}
-  # For the local Docker setup we publish :8080 from the host and bind to all interfaces inside the container.
+  # SearxlyHelper passes these env vars at launch; the native instance binds 127.0.0.1:8080 by default.
   port: 8080
   bind_address: "0.0.0.0"
   # public URL of the instance, to ensure correct inbound links. Is overwritten
@@ -108,7 +168,7 @@ server:
   # SANITIZED TEMPLATE FOR OPEN SOURCE / PUBLIC REPO
   # Replace secret_key with your own strong random value BEFORE first use.
   # Generate a good one with:   openssl rand -hex 32
-  # Never commit a real key. The app and Docker expect a file named settings.yml
+  # Never commit a real key. The app expects a file named settings.yml
   # with a real key at runtime (the one-click setup copies from this .example).
   # ============================================================
   secret_key: "YOUR_SECRET_KEY_HERE"  # Is overwritten by ${SEARXNG_SECRET}
@@ -136,10 +196,12 @@ valkey:
   url: false
 
 ui:
-  # Custom static path - points to our premium xAI/SpaceX-inspired Searxly theme
-  static_path: "/etc/searxng/custom/static"
-  # Custom templates path - overrides for the simple theme delivering the luxurious minimal redesign
-  templates_path: "/etc/searxng/custom/templates"
+  # NOTE: static_path/templates_path are intentionally NOT overridden.
+  # Those were legacy bind-mounts (/etc/searxng/custom/...) that don't exist in the
+  # native runtime — pointing ui.static_path/templates_path at a missing or partial
+  # directory makes SearXNG reject the config ("Invalid settings.yml") and never boot.
+  # Searxly renders its own native SwiftUI SERP from the JSON API, so the built-in
+  # simple theme (complete, always present) is all SearXNG itself needs to serve.
   # query_in_title: When true, the result page's titles contains the query
   # it decreases the privacy, since the browser can records the page titles.
   query_in_title: false
@@ -187,10 +249,13 @@ ui:
 # communication with search engines
 #
 outgoing:
-  # default timeout in seconds, can be override by engine
-  request_timeout: 3.0
+  # default timeout in seconds, can be override by engine.
+  # Raised from SearXNG's 3.0 default: from a home IP the slower engines (Google/Mojeek/Yahoo) often
+  # need >3s to answer, so a tight timeout dropped them and left only the fast one (Bing). 5s + a 10s
+  # hard cap lets them complete without making a search feel sluggish.
+  request_timeout: 5.0
   # the maximum timeout in seconds
-  # max_request_timeout: 10.0
+  max_request_timeout: 10.0
   # suffix of searxng_useragent, could contain information like an email address
   # to the administrator
   useragent_suffix: ""

@@ -119,7 +119,7 @@ extension LocalAIChatSheet {
     func executeUserWebSearch() async {
         guard let perform = performPrivateSearch else { return }
 
-        // Ensure SearXNG container (same proven pattern used for the native tool closure).
+        // Ensure SearXNG is running (same proven pattern used for the native tool closure).
         let mgr = LocalSearxngManager.shared
         if mgr.projectFolderExists {
             if await mgr.isLocalWebReady() {

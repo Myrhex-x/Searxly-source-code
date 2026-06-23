@@ -12,7 +12,7 @@ extension LocalSearxngManager {
     /// True if the bundled SearXNG process (tracked by the helper's pidfile) is alive.
     /// Note: "alive" ≠ "serving" — use `isLocalWebReady()` for the definitive serving signal.
     func isSearxngProcessRunning() async -> Bool {
-        await DockerHelperClient.shared.proxy()?.isSearxngRunningAsync() ?? false
+        await HelperClient.shared.proxy()?.isSearxngRunningAsync() ?? false
     }
 
     /// Does the SearXNG web server actually respond? This is the definitive readiness signal —

@@ -2,7 +2,7 @@
 //  SearxngRuntimeConfig.swift
 //  Searxly
 //
-//  The bundled native SearXNG runtime. SearXNG ships inside the app (no Docker) and is updated
+//  The bundled native SearXNG runtime. SearXNG ships inside the app and is updated
 //  via app releases. Keep `bundledVersion` in lockstep with scripts/build-searxng-runtime.sh
 //  (SEARXNG_COMMIT) when bumping the bundled runtime.
 //

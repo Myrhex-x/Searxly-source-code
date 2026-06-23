@@ -71,6 +71,7 @@ extension BrowserState {
         searchPageNo = 1
         isLoadingMoreResults = false
         canLoadMoreResults = true
+        consecutiveEmptyLoadMorePages = 0
         showEnableAIToolsPrompt = false
         highlightedResultURL = nil
         lastSearchInstanceURL = nil
@@ -169,6 +170,12 @@ extension BrowserState {
 
     // MARK: - Pagination
 
+    /// Give up infinite scroll only after this many *consecutive* pages add nothing new — a single
+    /// empty page is usually a transient engine block (CAPTCHA/429), not the true end of results.
+    static let maxConsecutiveEmptyLoadMorePages = 3
+    /// Hard ceiling so a perpetually-duplicate engine can't spin the loader forever.
+    static let maxSearchPage = 15
+
     func loadMoreSearchResults() {
         guard !lastEffectiveSearchQuery.isEmpty,
               canLoadMoreResults,
@@ -193,8 +200,11 @@ extension BrowserState {
                     category: currentSearchCategory,
                     query: lastEffectiveSearchQuery
                 )
+                // Always advance the page cursor: a dry page (all duplicates or an engine
+                // momentarily blocked) must not permanently freeze scroll — the next page often
+                // recovers. We stop only after several dry pages in a row, or at the page ceiling.
+                searchPageNo = nextPage
                 if newCount > 0 {
-                    searchPageNo = nextPage
                     searchResults = SearchResultProcessor.process(
                         raw: raw,
                         existing: searchResults,
@@ -202,12 +212,18 @@ extension BrowserState {
                         category: currentSearchCategory,
                         append: true
                     )
-                    canLoadMoreResults = true
+                    consecutiveEmptyLoadMorePages = 0
                 } else {
-                    canLoadMoreResults = false
+                    consecutiveEmptyLoadMorePages += 1
                 }
+                canLoadMoreResults =
+                    consecutiveEmptyLoadMorePages < Self.maxConsecutiveEmptyLoadMorePages
+                    && nextPage < Self.maxSearchPage
             } catch {
-                canLoadMoreResults = false
+                // A transient network/parse error shouldn't kill scroll outright; count it toward
+                // the dry-page budget and don't advance the cursor so the same page can be retried.
+                consecutiveEmptyLoadMorePages += 1
+                canLoadMoreResults = consecutiveEmptyLoadMorePages < Self.maxConsecutiveEmptyLoadMorePages
                 Log.search.error("SearXNG load-more error: \(error)")
             }
             isLoadingMoreResults = false
@@ -238,6 +254,7 @@ extension BrowserState {
         searchPageNo = 1
         canLoadMoreResults = true
         isLoadingMoreResults = false
+        consecutiveEmptyLoadMorePages = 0
 
         let effectiveQuery = await maybeRewriteQuery(query)
         lastEffectiveSearchQuery = effectiveQuery
@@ -271,7 +288,7 @@ extension BrowserState {
         } catch {
             if !preserveResultsWhileLoading { searchResults = [] }
             searchErrorMessage = error is SearXNGError
-                ? "No working private SearXNG instance reachable. Check Docker / your instance in Settings, or start the local one."
+                ? "No working private SearXNG instance reachable. Check your instance in Settings, or start the local one."
                 : "Search error: \(error.localizedDescription)"
             Log.search.error("SearXNG fetch error: \(error)")
         }

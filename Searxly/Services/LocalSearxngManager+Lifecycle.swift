@@ -70,11 +70,11 @@ extension LocalSearxngManager {
         isBusy = true
         lastError = nil
         status = .starting
-        logs.append("▶️ Starting SearXNG (native — no Docker)...")
+        logs.append("▶️ Starting SearXNG (native bundled runtime)...")
         logs.append("   bindAddress = \(bindAddress):8080")
 
         let (pid, errMsg): (Int32, String) = await {
-            guard let proxy = DockerHelperClient.shared.proxy() else { return (-1, "Helper service unavailable.") }
+            guard let proxy = HelperClient.shared.proxy() else { return (-1, "Helper service unavailable.") }
             return await proxy.startSearxngAsync(
                 pythonExecutablePath: pythonPath,
                 settingsPath: settingsPath,
@@ -113,7 +113,7 @@ extension LocalSearxngManager {
         status = .stopping
         logs.append("⏹ Stopping SearXNG...")
 
-        let stopped = await DockerHelperClient.shared.proxy()?.stopSearxngAsync() ?? false
+        let stopped = await HelperClient.shared.proxy()?.stopSearxngAsync() ?? false
         if !stopped {
             logs.append("⚠️ Could not confirm SearXNG fully stopped (helper unavailable or process unresponsive).")
         }
@@ -167,8 +167,8 @@ extension LocalSearxngManager {
     }
 
     /// Probe-first launch path: never re-runs compose against a healthy or booting container,
-    /// never launches/restarts Docker Desktop, and only starts SearXNG when the daemon is up
-    /// and the container is genuinely stopped.
+    /// never relaunches a healthy or already-booting instance, and only starts SearXNG when it is
+    /// genuinely stopped.
     func warmUpLocalSearchOnLaunchIfNeeded() async {
         guard mayAutoStartLocalContainer else { return }
 
@@ -203,7 +203,7 @@ extension LocalSearxngManager {
 
     /// The main "make it just work" API for the automatic onboarding path.
     /// Ensures the folder+configs exist (real secret injected), launches the bundled native SearXNG
-    /// process if necessary, and waits for the web server to be responsive. No Docker, no downloads —
+    /// process if necessary, and waits for the web server to be responsive. No external dependencies —
     /// the runtime ships inside the app. Updates status, logs, and lastError for the UI to observe.
     func ensureReadyAndRunning() async {
         if let warmUp = launchWarmUpTask {
@@ -297,7 +297,7 @@ extension LocalSearxngManager {
 
     /// Updates `projectFolderExists` via the XPC helper (required under App Sandbox).
     func updateProjectFolderExists() async {
-        guard let proxy = DockerHelperClient.shared.proxy() else {
+        guard let proxy = HelperClient.shared.proxy() else {
             projectFolderExists = false
             return
         }
@@ -308,7 +308,7 @@ extension LocalSearxngManager {
     /// One-time (or on-demand) optimization for existing installs.
     /// The full upstream settings.yml.example has 100+ engines. Even disabled ones make
     /// SearXNG's Python startup much slower and use more memory — especially painful on
-    /// 8GB/16GB Macs where Docker Desktop's VM is already memory-starved.
+    /// 8GB/16GB Macs.
     ///
     /// This safely detects the bloated default and replaces only the engines: section
     /// with our lean fast set (same list we use for brand-new setups). A backup is kept.
@@ -319,7 +319,7 @@ extension LocalSearxngManager {
     /// dupes / stackoverflow / arxiv (even if the DidApplyLean key is already true)
     /// so that users hitting CrashLoop from prior bad writes get automatically fixed.
     func ensureFastEngineConfigIfNeeded() async {
-        guard let proxy = DockerHelperClient.shared.proxy() else { return }
+        guard let proxy = HelperClient.shared.proxy() else { return }
         let settingsPath = projectFolderURL.appendingPathComponent("searxng/settings.yml").path
         guard await proxy.fileExistsAsync(atPath: settingsPath) else { return }
 
@@ -397,7 +397,7 @@ extension LocalSearxngManager {
             // NOTE: The previous "\n\n last resort" splitter has been removed (see creation
             // path for full rationale). Engines: is the last section; we replace to EOF.
             // This + the hasProblematicEngines guard above ensures even previously-polluted
-            // ~/searxng-local/searxng/settings.yml (the cause of the user's docker CrashLoop
+            // ~/searxng-local/searxng/settings.yml (the cause of the user's crash loop
             // with ahmia + bandcamp duplicate) gets a clean lean list on next Start or
             // auto "Download & start" button press.
             // We now preserve any tail after engines (e.g. doi_resolvers from original) and
@@ -427,7 +427,7 @@ default_doi_resolver: 'oadoi.org'
             if let newData = newContent.data(using: .utf8),
                await proxy.writeFileAsync(data: newData, toPath: settingsPath) {
                 logs.append("✅ Lean/fast engine list applied cleanly to existing SearXNG config (only stable engines; any prior ahmia/bandcamp dupes or old tail removed by the fixed cutter + hasProblematic guard). doi_resolvers section ensured present to fix KeyError on startup.")
-                logs.append("   Big startup speed win + no more engine crash loops on low-RAM Macs. The container will use the clean config on its next (re)start.")
+                logs.append("   Big startup speed win + no more engine crash loops on low-RAM Macs. SearXNG will use the clean config on its next (re)start.")
                 logs.append("   If it's currently running you may want to Stop → Start again (or just tap the main Download & start button).")
                 UserDefaults.standard.set(true, forKey: didOptimizeKey)
             } else {
@@ -439,7 +439,7 @@ default_doi_resolver: 'oadoi.org'
     /// Appends missing media engines to existing lean Searxly configs without wiping customizations.
     func ensureMediaEnginesMigratedIfNeeded() async {
         let migrationKey = "Searxly.DidMigrateMediaEngines2026"
-        guard let proxy = DockerHelperClient.shared.proxy() else { return }
+        guard let proxy = HelperClient.shared.proxy() else { return }
         let settingsPath = projectFolderURL.appendingPathComponent("searxng/settings.yml").path
         guard await proxy.fileExistsAsync(atPath: settingsPath),
               let data = await proxy.readFileAsync(atPath: settingsPath),

@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		BF1E14582FE07FB70064DE5C /* SearxlyDockerHelper.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = BF1E144D2FE07FB70064DE5C /* SearxlyDockerHelper.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BF1E14582FE07FB70064DE5C /* SearxlyHelper.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BFA000030000000000000001 /* P256K in Frameworks */ = {isa = PBXBuildFile; productRef = BFA000020000000000000001 /* P256K */; };
 		BFA000050000000000000001 /* libsecp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = BFA000040000000000000001 /* libsecp256k1 */; };
 		BFB000030000000000000001 /* Bulwark in Frameworks */ = {isa = PBXBuildFile; productRef = BFB000020000000000000001 /* Bulwark */; };
@@ -20,7 +20,7 @@
 			containerPortal = BF13CDA62FC3421E0081D8C8 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = BF1E144C2FE07FB70064DE5C;
-			remoteInfo = SearxlyDockerHelper;
+			remoteInfo = SearxlyHelper;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -30,7 +30,7 @@
 			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
 			dstSubfolder = Product;
 			files = (
-				BF1E14582FE07FB70064DE5C /* SearxlyDockerHelper.xpc in Embed XPC Services */,
+				BF1E14582FE07FB70064DE5C /* SearxlyHelper.xpc in Embed XPC Services */,
 			);
 			name = "Embed XPC Services";
 		};
@@ -38,16 +38,16 @@
 
 /* Begin PBXFileReference section */
 		BF13CDAE2FC3421E0081D8C8 /* Searxly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Searxly.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		BF1E144D2FE07FB70064DE5C /* SearxlyDockerHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = SearxlyDockerHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
+		BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = SearxlyHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		BF1E14592FE07FB70064DE5C /* Exceptions for "SearxlyDockerHelper" folder in "SearxlyDockerHelper" target */ = {
+		BF1E14592FE07FB70064DE5C /* Exceptions for "SearxlyHelper" folder in "SearxlyHelper" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = BF1E144C2FE07FB70064DE5C /* SearxlyDockerHelper */;
+			target = BF1E144C2FE07FB70064DE5C /* SearxlyHelper */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -62,12 +62,12 @@
 			path = LocalSearxng;
 			sourceTree = "<group>";
 		};
-		BF1E144E2FE07FB70064DE5C /* SearxlyDockerHelper */ = {
+		BF1E144E2FE07FB70064DE5C /* SearxlyHelper */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				BF1E14592FE07FB70064DE5C /* Exceptions for "SearxlyDockerHelper" folder in "SearxlyDockerHelper" target */,
+				BF1E14592FE07FB70064DE5C /* Exceptions for "SearxlyHelper" folder in "SearxlyHelper" target */,
 			);
-			path = SearxlyDockerHelper;
+			path = SearxlyHelper;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -95,7 +95,7 @@
 			children = (
 				BF13CE082FC458470081D8C8 /* LocalSearxng */,
 				BF13CDB02FC3421E0081D8C8 /* Searxly */,
-				BF1E144E2FE07FB70064DE5C /* SearxlyDockerHelper */,
+				BF1E144E2FE07FB70064DE5C /* SearxlyHelper */,
 				BF13CDAF2FC3421E0081D8C8 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -104,7 +104,7 @@
 			isa = PBXGroup;
 			children = (
 				BF13CDAE2FC3421E0081D8C8 /* Searxly.app */,
-				BF1E144D2FE07FB70064DE5C /* SearxlyDockerHelper.xpc */,
+				BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -142,9 +142,9 @@
 			productReference = BF13CDAE2FC3421E0081D8C8 /* Searxly.app */;
 			productType = "com.apple.product-type.application";
 		};
-		BF1E144C2FE07FB70064DE5C /* SearxlyDockerHelper */ = {
+		BF1E144C2FE07FB70064DE5C /* SearxlyHelper */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = BF1E145A2FE07FB70064DE5C /* Build configuration list for PBXNativeTarget "SearxlyDockerHelper" */;
+			buildConfigurationList = BF1E145A2FE07FB70064DE5C /* Build configuration list for PBXNativeTarget "SearxlyHelper" */;
 			buildPhases = (
 				BF1E14492FE07FB70064DE5C /* Sources */,
 				BF1E144A2FE07FB70064DE5C /* Frameworks */,
@@ -153,11 +153,11 @@
 			buildRules = (
 			);
 			fileSystemSynchronizedGroups = (
-				BF1E144E2FE07FB70064DE5C /* SearxlyDockerHelper */,
+				BF1E144E2FE07FB70064DE5C /* SearxlyHelper */,
 			);
-			name = SearxlyDockerHelper;
-			productName = SearxlyDockerHelper;
-			productReference = BF1E144D2FE07FB70064DE5C /* SearxlyDockerHelper.xpc */;
+			name = SearxlyHelper;
+			productName = SearxlyHelper;
+			productReference = BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */;
 			productType = "com.apple.product-type.xpc-service";
 		};
 /* End PBXNativeTarget section */
@@ -199,7 +199,7 @@
 			projectRoot = "";
 			targets = (
 				BF13CDAD2FC3421E0081D8C8 /* Searxly */,
-				BF1E144C2FE07FB70064DE5C /* SearxlyDockerHelper */,
+				BF1E144C2FE07FB70064DE5C /* SearxlyHelper */,
 			);
 		};
 /* End PBXProject section */
@@ -255,7 +255,7 @@
 /* Begin PBXTargetDependency section */
 		BF1E14572FE07FB70064DE5C /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = BF1E144C2FE07FB70064DE5C /* SearxlyDockerHelper */;
+			target = BF1E144C2FE07FB70064DE5C /* SearxlyHelper */;
 			targetProxy = BF1E14562FE07FB70064DE5C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -461,10 +461,10 @@
 			};
 			name = Release;
 		};
-		BF1E145B2FE07FB70064DE5C /* Debug configuration for PBXNativeTarget "SearxlyDockerHelper" */ = {
+		BF1E145B2FE07FB70064DE5C /* Debug configuration for PBXNativeTarget "SearxlyHelper" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = SearxlyDockerHelper/SearxlyDockerHelper.entitlements;
+				CODE_SIGN_ENTITLEMENTS = SearxlyHelper/SearxlyHelper.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -472,12 +472,12 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = SearxlyDockerHelper/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SearxlyDockerHelper;
+				INFOPLIST_FILE = SearxlyHelper/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SearxlyHelper;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyDockerHelper;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyHelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;
@@ -489,10 +489,10 @@
 			};
 			name = Debug;
 		};
-		BF1E145C2FE07FB70064DE5C /* Release configuration for PBXNativeTarget "SearxlyDockerHelper" */ = {
+		BF1E145C2FE07FB70064DE5C /* Release configuration for PBXNativeTarget "SearxlyHelper" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = SearxlyDockerHelper/SearxlyDockerHelper.entitlements;
+				CODE_SIGN_ENTITLEMENTS = SearxlyHelper/SearxlyHelper.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -500,12 +500,12 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = SearxlyDockerHelper/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SearxlyDockerHelper;
+				INFOPLIST_FILE = SearxlyHelper/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SearxlyHelper;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyDockerHelper;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyHelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;
@@ -536,11 +536,11 @@
 			);
 			defaultConfigurationName = Release;
 		};
-		BF1E145A2FE07FB70064DE5C /* Build configuration list for PBXNativeTarget "SearxlyDockerHelper" */ = {
+		BF1E145A2FE07FB70064DE5C /* Build configuration list for PBXNativeTarget "SearxlyHelper" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BF1E145B2FE07FB70064DE5C /* Debug configuration for PBXNativeTarget "SearxlyDockerHelper" */,
-				BF1E145C2FE07FB70064DE5C /* Release configuration for PBXNativeTarget "SearxlyDockerHelper" */,
+				BF1E145B2FE07FB70064DE5C /* Debug configuration for PBXNativeTarget "SearxlyHelper" */,
+				BF1E145C2FE07FB70064DE5C /* Release configuration for PBXNativeTarget "SearxlyHelper" */,
 			);
 			defaultConfigurationName = Release;
 		};

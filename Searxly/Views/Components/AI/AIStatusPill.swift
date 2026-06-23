@@ -4,7 +4,7 @@
 //
 //  NEW FILE (Phase 0).
 //  Small, calm status indicator for Searxly Agent readiness.
-//  Follows the existing pill / badge language used for Docker / instance status.
+//  Follows the existing pill / badge language used for local SearXNG / instance status.
 //  Only visible when the user has ever enabled the master toggle (or in Developer mode).
 //
 

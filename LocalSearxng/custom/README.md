@@ -22,9 +22,10 @@ Inspired by the official xAI website, Grok interface, and SpaceX’s futuristic 
 Recent tweaks focused on rhythm, typography precision, contextual search bar sizing, image grid refinement, and overall "expensive calm" feel.
 
 ## Updating on SearXNG Upgrades
-1. `docker cp searxng:/usr/local/searxng/searx/templates/simple .` (or equivalent)
+1. Copy the upstream `simple` theme from the bundled runtime:
+   `cp -R Searxly.app/Contents/Resources/searxng-runtime/python/lib/python3.12/site-packages/searx/templates/simple .` (or equivalent)
 2. Re-apply our minimal overrides + re-test the CSS selectors.
 
-The theme is automatically deployed via the one-click "Create Local SearXNG Setup Folder" flow in the Searxly macOS app.
+Note: the native instance serves SearXNG's complete built-in simple theme, and Searxly renders its own native SwiftUI SERP from the JSON API — this overlay is kept for reference and for users who browse the SearXNG web UI directly.
 
 Maintained as part of the Searxly project.

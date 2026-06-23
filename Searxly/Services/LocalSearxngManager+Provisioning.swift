@@ -26,7 +26,7 @@ extension LocalSearxngManager {
     func ensureProjectFolderExists() async throws -> URL {
         lastError = nil
 
-        guard let proxy = DockerHelperClient.shared.proxy() else {
+        guard let proxy = HelperClient.shared.proxy() else {
             throw NSError(
                 domain: "Searxly.LocalSearxng",
                 code: 5,
@@ -287,7 +287,7 @@ default_doi_resolver: 'oadoi.org'
     /// Ensures local-only privacy defaults in the on-disk settings.yml (metrics off).
     /// Safe to call on existing installs — does not touch secret_key or engines.
     func patchSettingsYMLForLocalPrivacy() async {
-        guard let proxy = DockerHelperClient.shared.proxy() else { return }
+        guard let proxy = HelperClient.shared.proxy() else { return }
         let settingsPath = projectFolderURL.appendingPathComponent("searxng/settings.yml").path
         guard await proxy.fileExistsAsync(atPath: settingsPath),
               let data = await proxy.readFileAsync(atPath: settingsPath),

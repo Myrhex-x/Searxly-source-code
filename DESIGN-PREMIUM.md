@@ -34,7 +34,7 @@ The result: calm, tech-forward, privacy-respecting luxury that feels intentional
 - **Tabs:** `TabButton` (TabButton.swift:47-97) has good scale 1.02 on select + 0.12 ease animation, 11pt radius glass pills in horizontal; sidebar is simpler. `HorizontalTabBar` re-uses 48pt horizontal padding.
 - **Glass & materials:** Ubiquitous in `RightToolbarControls.swift`, `TopBarArea.swift:59-60`, `TabButton.swift:81`, suggestions dropdown, sheets (`.regularMaterial` headers + footers in SettingsView, ClearBrowsingDataView, MediaPreviewSheet, etc.). Computed `toolbarMaterial` and `glassEnabled` (ContentView.swift:97-98) centralize the reduce toggle.
 - **Premium seeds:** Outstanding `StarfieldBackground` Canvas (drifting + probabilistic shooting stars, OnboardingView.swift:801-980, 140 stars, ~0.8s timer) on full black + 0.88 overlay. Good FaviconView monograms (6pt radius fallback), TabButton scale/hover, some spring animations in media grid. Onboarding is philosophically strong with green privacy tints.
-- **Colors:** Heavy reliance on system `.primary`/`.secondary`/`.tertiary` + `.opacity(0.04-0.22)` whites for glass edges + ad-hoc `.green` for privacy/Docker. `AccentColor.colorset` is empty (system default). `AppearanceMode` enum exists (system/light/dark) but UI is dark-optimized.
+- **Colors:** Heavy reliance on system `.primary`/`.secondary`/`.tertiary` + `.opacity(0.04-0.22)` whites for glass edges + ad-hoc `.green` for privacy/SearXNG status. `AccentColor.colorset` is empty (system default). `AppearanceMode` enum exists (system/light/dark) but UI is dark-optimized.
 - **Other sheets:** `BookmarksHistoryView`, `DownloadsSheetView`, `KeyboardShortcutsView`, `AboutView` (basic), `MediaPreviewSheet` (in SearchImageGrid.swift:221+) all follow the same material + thin stroke pattern. No strong typography or spacing system.
 - **Pain points (premium gap):** Sparse home (user request), inconsistent breathing room (48pt vs 8-16pt paddings), ad-hoc opacities instead of tokens, weak brand identity (no logo, generic "Searxly" text), hover states are functional but not luxurious, results feel list-like rather than elevated cards, loading/error states are utilitarian, motion is present but not curated, typography mixes system sizes without hierarchy discipline. Feels "good modern SwiftUI" rather than "refined expensive tool."
 
@@ -59,7 +59,7 @@ The result: calm, tech-forward, privacy-respecting luxury that feels intentional
 - Introducing public instances, external tracking, or any privacy regression.
 - Heavy cosmic/starfield motifs everywhere (restrained, home-only or very subtle accents only).
 - New major features (e.g. extensions, sync); this is pure aesthetic/system elevation.
-- Changing the Docker/local SearXNG management surface or onboarding flow structure (align only where needed for visual consistency).
+- Changing the local SearXNG management surface or onboarding flow structure (align only where needed for visual consistency).
 - Asset-heavy custom fonts (prefer system + kerning/attributed or minimal SF Symbols extensions).
 
 **Quantitative Targets**
@@ -276,7 +276,7 @@ This gives the implementer a zero-ambiguity starting point while leaving final s
 ```mermaid
 graph TD
     Root[RootContainerView] --> Top[TopBarArea]
-    Top --> Badges[Privacy + Docker + Instance pills]
+    Top --> Badges[Privacy + SearXNG + Instance pills]
     Top --> Addr[AddressBar<br/>radius 14, h48 padding]
     Top --> Tabs{HorizontalTabBar or Sidebar}
     Root --> Main[MainContentView]
@@ -307,7 +307,7 @@ graph TD
 - **SearchResultCard** (ContentView.swift:933+): Upgrade from flat hover to true elevated card with `SLGlass.cardRadius=12`, subtle border, lift on hover (scale 1.005 + shadow 0-8pt), richer security treatment (lock always visible, color via tokens). Engine pill uses luxeAccent when hovering. Snippet line clamp with elegant fade.
 - **Media Grid Items** (SearchImageGrid.swift:161+): Already good spring animation – refine shadow color to use tokens, ensure consistent radius 12, add premium overlay gradient on hover for "expensive photo" feel.
 - **TabButton / HorizontalTabBar** (TabButton.swift:47-97, HorizontalTabBar.swift:28+): Calm scale 1.015 max. Add subtle privacy shield color treatment (green tint on private tabs). Sidebar remains compact but gains consistent token borders.
-- **RightToolbarControls & Top toolbar badges** (RightToolbarControls.swift:38+, TopBarArea.swift:49-106): Standardize all circular buttons to a single `SLButtonStyle.circularGlass` modifier. Docker pill gets better status color mapping via tokens.
+- **RightToolbarControls & Top toolbar badges** (RightToolbarControls.swift:38+, TopBarArea.swift:49-106): Standardize all circular buttons to a single `SLButtonStyle.circularGlass` modifier. SearXNG status pill gets better status color mapping via tokens.
 - **Sheets (Settings, BookmarksHistory, MediaPreview, Clear, Downloads, About, KeyboardShortcuts)**: Consistent header/footer `.regularMaterial` bars with 14pt padding + 12pt radius cards inside. Use design tokens for all text and dividers. AboutView (AboutView.swift:13+) gets logo treatment and refined typography.
 - **Loading / Error states** (MainContentView.swift:70-228): Replace utilitarian ProgressView with elegant centered spinner using luxeAccent. Error gets illustrated state + direct "Open Settings" CTA using primary button style.
 - **Onboarding alignment** (OnboardingView.swift): Minor – ensure step cards use new radius/ tokens; keep starfield as-is (it is already premium).

@@ -1,18 +1,15 @@
 //
-//  SearxlyDockerHelperProtocol.swift
-//  Shared — add to BOTH Searxly and SearxlyDockerHelper targets in Xcode.
+//  SearxlyHelperProtocol.swift
+//  Shared — add to BOTH Searxly and SearxlyHelper targets in Xcode.
 //
 //  XPC interface between the Searxly main app (sandboxed) and the
-//  SearxlyDockerHelper XPC service (unsandboxed). The service supervises the bundled
+//  SearxlyHelper XPC service (unsandboxed). The service supervises the bundled
 //  native Python SearXNG process and performs ~/searxng-local file I/O on the app's behalf.
-//
-//  (The "Docker" in the name is historical — SearXNG is now a bundled native process, no
-//  Docker. The XPC service id com.myrhex.SearxlyDockerHelper is kept to avoid churn.)
 //
 
 import Foundation
 
-/// XPC interface between Searxly (main) and SearxlyDockerHelper (XPC service, no sandbox).
+/// XPC interface between Searxly (main) and SearxlyHelper (XPC service, no sandbox).
 ///
 /// Rules for adding methods:
 ///   - Use only NSXPCConnection-safe scalar types: String, Bool, Data, Int32.
@@ -20,7 +17,7 @@ import Foundation
 ///     (NSData is always whitelisted by XPC).
 ///   - Every method must have exactly one reply block as its last parameter.
 ///   - The reply block is called exactly once, even on error paths.
-@objc protocol SearxlyDockerHelperProtocol {
+@objc protocol SearxlyHelperProtocol {
 
     // MARK: - SearXNG native process supervision
 
@@ -77,7 +74,7 @@ import Foundation
 
 // MARK: - Convenience wrappers (async)
 
-extension SearxlyDockerHelperProtocol {
+extension SearxlyHelperProtocol {
 
     func startSearxngAsync(
         pythonExecutablePath: String,

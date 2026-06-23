@@ -39,7 +39,7 @@ final class OnboardingSetupController {
         }
     }
 
-    /// Passive status refresh on step entry: never starts Docker, never marks success without user action.
+    /// Passive status refresh on step entry: never starts SearXNG, never marks success without user action.
     func prepareSetupStep(activeStep: Int, existingInstanceURLs: [String]) async {
         guard activeStep == 1, !isConnectionSuccessful else { return }
         guard !Task.isCancelled else { return }
@@ -47,7 +47,7 @@ final class OnboardingSetupController {
         newInstanceName = "Local SearXNG"
         newInstanceURL = localSearxng.defaultLocalInstanceURL
 
-        // No Docker CLI / HTTP probes here — nothing touches Docker until the user taps a button.
+        // No HTTP probes here — nothing starts SearXNG until the user taps a button.
         connectionStatus = idleStatusMessage()
 
         hasTriggeredAutoSetup = true

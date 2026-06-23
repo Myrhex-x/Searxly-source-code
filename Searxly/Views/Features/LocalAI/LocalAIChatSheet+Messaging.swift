@@ -635,7 +635,7 @@ extension LocalAIChatSheet {
                         currentTools = AgenticTools.makeCurrent(
                             webSearch: { @Sendable q async in
                                 guard let searcher = ps else { return "No private search available." }
-                                // Ensure the user's private SearXNG (Docker or remote) is ready.
+                                // Ensure the user's private SearXNG (local or remote) is ready.
                                 // The dance below is the proven pattern that avoids MainActor/Sendable
                                 // re-entrancy issues on the current Xcode 27 beta + FoundationModels.
                                 DispatchQueue.main.async {

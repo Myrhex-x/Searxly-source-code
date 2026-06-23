@@ -394,15 +394,15 @@ final class PrivacyManager {
     /// - Clears history, bookmarks
     /// - Clears VPN profiles (which may contain private WireGuard keys from user configs)
     /// - Clears all standard web data (cookies, storage, caches)
-    /// - If requested, also stops the local Docker SearXNG container
+    /// - If requested, also stops the local native SearXNG process
     /// - Also disables Local AI and clears any transient AI context / synthesis (Phase 0+)
     ///
     /// This is deliberately loud and destructive.
-    func panicWipe(stopDockerContainer: Bool = true, completion: (() -> Void)? = nil) {
-        _performPanicWipe(stopDockerContainer: stopDockerContainer, completion: completion)
+    func panicWipe(stopLocalSearxng: Bool = true, completion: (() -> Void)? = nil) {
+        _performPanicWipe(stopLocalSearxng: stopLocalSearxng, completion: completion)
     }
 
-    private func _performPanicWipe(stopDockerContainer: Bool, completion: (() -> Void)?) {
+    private func _performPanicWipe(stopLocalSearxng: Bool, completion: (() -> Void)?) {
         clearHistory()
         clearBookmarks()
 
@@ -421,10 +421,10 @@ final class PrivacyManager {
         // Passwords vault, history, bookmarks, VPN, web data, and LocalAI clears remain.)
 
         clearStandardWebData {
-            if stopDockerContainer {
+            if stopLocalSearxng {
                 Task { @MainActor in
                     await LocalSearxngManager.shared.stop()
-                    Log.privacy.notice("PrivacyManager: panic wipe also stopped the local SearXNG container")
+                    Log.privacy.notice("PrivacyManager: panic wipe also stopped the local SearXNG process")
                     // New in Phase 0: also nuke any in-memory AI state (synthesis, rewrite badge, open chat sheet, etc.)
                     // The manager itself will unload models when the master toggle is forced off by UI or other paths.
                     // We call through BrowserState if a reference is available; otherwise the next load will see clean state.

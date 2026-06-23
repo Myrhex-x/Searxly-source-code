@@ -15,7 +15,7 @@ struct AppData: Codable {
     var searxInstances: [SearXNGInstance] = []  // No public defaults; user must configure private/local instance
     var history: [HistoryItem] = []
     var bookmarks: [BookmarkItem] = []
-    /// Persisted ID of the currently selected SearXNG instance (so the user's choice, e.g. their Local Docker, survives restarts).
+    /// Persisted ID of the currently selected SearXNG instance (so the user's choice, e.g. their Local instance, survives restarts).
     var currentInstanceID: String? = nil
 
     /// Whether browsing history (visit log) should be recorded. Stored here for atomicity with the rest of the sensitive data.
