@@ -19,8 +19,9 @@ extension LocalSearxngManager {
 
     // MARK: - One-click Project Folder Creation (used by Onboarding + Settings)
 
-    /// Creates (or repairs) the ~/searxng-local folder with the required docker-compose.yml + searxng/ config files
-    /// copied from the app bundle. All file I/O is routed through the XPC helper so this is safe under App Sandbox.
+    /// Creates (or repairs) the ~/searxng-local folder with the required searxng/ config files
+    /// (settings.yml + limiter.toml + theme) copied from the app bundle. All file I/O is routed
+    /// through the XPC helper so this is safe under App Sandbox.
     @discardableResult
     func ensureProjectFolderExists() async throws -> URL {
         lastError = nil
@@ -159,10 +160,10 @@ extension LocalSearxngManager {
         }
 
         // Idempotency / safety for existing users:
-        // If compose already exists, only refresh ancillary files (limiter.toml + theme).
-        // Do not overwrite docker-compose or settings.yml which may contain user customizations.
-        let composeURL = targetRoot.appendingPathComponent("docker-compose.yml")
-        if await proxy.fileExistsAsync(atPath: composeURL.path) {
+        // If settings.yml already exists, only refresh ancillary files (limiter.toml + theme).
+        // Do not overwrite settings.yml which may contain user customizations.
+        let settingsURL = configDir.appendingPathComponent("settings.yml")
+        if await proxy.fileExistsAsync(atPath: settingsURL.path) {
             try? await copyBundledFile(
                 resource: "limiter",
                 ext: "toml",
@@ -182,12 +183,6 @@ extension LocalSearxngManager {
         _ = await proxy.createDirectoryAsync(atPath: configDir.path)
 
         do {
-            try await copyBundledFile(
-                resource: "docker-compose",
-                ext: "yml",
-                destination: targetRoot.appendingPathComponent("docker-compose.yml")
-            )
-
             // NOTE (sanitized source repo): committed template is settings.yml.example (placeholder secret).
             // The copy + post-process below produces a real settings.yml with a generated secret.
             try await copyBundledFile(
@@ -281,8 +276,8 @@ default_doi_resolver: 'oadoi.org'
         // For brand-new automatic setups, default to the more secure localhost-only bind.
         bindToLocalhostOnly = true
 
-        // Patch the freshly copied files so the very first `docker compose up` uses correct settings.
-        await ensureDockerComposeHasBindVars()
+        // Patch the freshly written settings.yml so the very first launch uses correct bind/port.
+        await ensureSearxngConfigured()
 
         await updateProjectFolderExists()
         logs.append("✅ Project folder created at \(targetRoot.path)")

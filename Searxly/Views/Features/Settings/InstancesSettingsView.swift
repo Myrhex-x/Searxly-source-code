@@ -34,7 +34,7 @@ struct InstancesSettingsView: View {
 
             SettingsSection(
                 title: "Local search on this Mac",
-                footer: "Runs a private SearXNG container via Docker. Recommended for keeping queries on your computer."
+                footer: "Runs a private SearXNG built into Searxly — no Docker required. Recommended for keeping queries on your computer."
             ) {
                 localSearchPanel
             }
@@ -98,7 +98,7 @@ struct InstancesSettingsView: View {
             Button("Expose on LAN", role: .destructive) {
                 developerLANExposureEnabled = true
                 manager.bindToLocalhostOnly = false
-                Task { await manager.ensureDockerComposeHasBindVars() }
+                Task { await manager.restart() }
             }
         } message: {
             Text("Other devices on your Wi‑Fi or Ethernet could reach your SearXNG instance and run searches through it. Only enable this if you understand the risk.")
@@ -221,7 +221,7 @@ struct InstancesSettingsView: View {
             )
             .disabled(manager.isBusy)
 
-            Text("Requires Docker Desktop. First image download can take a few minutes.")
+            Text("SearXNG is built in — no Docker, no downloads. First launch takes a few seconds.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else if manager.status == .stopped {
@@ -245,7 +245,6 @@ struct InstancesSettingsView: View {
     private var hasLocalSecondaryActions: Bool {
         manager.status == .running
             || !manager.logs.isEmpty
-            || manager.status == .notInstalled
     }
 
     @ViewBuilder
@@ -269,12 +268,6 @@ struct InstancesSettingsView: View {
                     showSetupLogs = true
                 }
             }
-
-            if manager.status == .notInstalled {
-                SettingsActionChip(title: "Get Docker Desktop", systemImage: "arrow.down.circle") {
-                    _ = manager.openDockerDownloadPage()
-                }
-            }
         }
     }
 
@@ -293,7 +286,7 @@ struct InstancesSettingsView: View {
                         developerLANExposureEnabled = false
                     } else if !newValue && oldValue {
                         manager.bindToLocalhostOnly = true
-                        Task { await manager.ensureDockerComposeHasBindVars() }
+                        Task { await manager.restart() }
                     }
                 }
                 .onAppear {
@@ -301,34 +294,24 @@ struct InstancesSettingsView: View {
                 }
             }
 
-            Text("Container image: searxng/searxng:\(manager.pinnedSearxngImageTag)")
+            Text("Bundled SearXNG \(manager.bundledSearxngVersion) — updates ship with app updates.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
 
             SettingsActionChipGrid {
-                SettingsActionChip(title: "Check for update", systemImage: "arrow.down.circle") {
-                    Task { await manager.checkForSearxngImageUpdate() }
-                }
-                .disabled(manager.isBusy)
-
                 SettingsActionChip(title: "Open folder", systemImage: "folder") {
                     manager.openProjectFolderInFinder()
                 }
 
-                SettingsActionChip(title: "Create folder", systemImage: "folder.badge.plus") {
-                    Task { _ = try? await manager.provisionIfNeeded() }
+                SettingsActionChip(title: "Rebuild fresh", systemImage: "arrow.clockwise") {
+                    Task { await manager.recreateProjectFolder() }
                 }
-
-                SettingsActionChip(title: "Copy commands", systemImage: "terminal") {
-                    let cmds = "cd ~/searxng-local\ndocker compose up -d"
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(cmds, forType: .string)
-                }
+                .disabled(manager.isBusy)
             }
 
             SettingsLabeledField(
                 title: "Custom local URL",
-                description: "Only if you changed the default Docker port."
+                description: "Only if you changed the default port (8080)."
             ) {
                 HStack(spacing: 8) {
                     TextField("http://127.0.0.1:8080", text: $manualLocalURL)
@@ -342,7 +325,7 @@ struct InstancesSettingsView: View {
     }
 
     private var needsFullSetup: Bool {
-        !manager.projectFolderExists || manager.status == .notInstalled
+        !manager.projectFolderExists
     }
 
     private var isLocalInstanceActive: Bool {
@@ -504,7 +487,7 @@ struct InstancesSettingsView: View {
     private func statusSystemImage(for status: ContainerStatus) -> String {
         switch status {
         case .running: return "checkmark.circle.fill"
-        case .stopped, .notInstalled: return "powerplug"
+        case .stopped: return "powerplug"
         case .starting, .stopping: return "arrow.triangle.2.circlepath"
         case .error: return "exclamationmark.triangle.fill"
         }
@@ -513,7 +496,7 @@ struct InstancesSettingsView: View {
     private func statusColor(for status: ContainerStatus) -> Color {
         switch status {
         case .running: return .green
-        case .stopped, .notInstalled: return .secondary
+        case .stopped: return .secondary
         case .starting, .stopping: return .orange
         case .error: return .red
         }
@@ -523,7 +506,6 @@ struct InstancesSettingsView: View {
         switch status {
         case .running: return "Ready"
         case .stopped: return "Stopped"
-        case .notInstalled: return "Docker needed"
         case .starting: return "Starting"
         case .stopping: return "Stopping"
         case .error: return "Error"
@@ -534,7 +516,6 @@ struct InstancesSettingsView: View {
         switch status {
         case .running: return "Local SearXNG is running"
         case .stopped: return "Local SearXNG is stopped"
-        case .notInstalled: return "Docker is not ready"
         case .starting: return "Starting local SearXNG…"
         case .stopping: return "Stopping local SearXNG…"
         case .error: return "Local setup needs attention"
@@ -544,11 +525,9 @@ struct InstancesSettingsView: View {
     private func statusDescription(for status: ContainerStatus) -> String {
         switch status {
         case .running:
-            return "Searches can run through your private container on this Mac."
+            return "Searches run through your private SearXNG on this Mac."
         case .stopped:
-            return "Tap Start to launch the container, or use Set up local search."
-        case .notInstalled:
-            return "Install Docker Desktop, open it, then return here."
+            return "Tap Start to launch SearXNG, or use Set up local search."
         case .starting, .stopping:
             return "Please wait a moment."
         case .error:

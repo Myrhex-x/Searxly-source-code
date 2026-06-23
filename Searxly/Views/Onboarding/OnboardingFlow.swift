@@ -109,26 +109,11 @@ struct OnboardingFlow: View {
     private var localSearchShell: some View {
         OnboardingShell(
             step: 1,
-            instruction: "Requires Docker Desktop. Nothing starts until you tap Start local search — the first boot can take 5–10 minutes.",
+            instruction: "Nothing starts until you tap Start local search. SearXNG is built in — no Docker, no downloads. First boot takes a few seconds.",
             scrollable: true,
             showProgress: true
         ) {
-            OnboardingLocalSearchStep(
-                setup: setup,
-                onRecheckDocker: {
-                    setup.recheckDockerAndSetup(activeStep: currentStep, existingInstanceURLs: existingInstanceURLs)
-                },
-                onLaunchDocker: {
-                    _ = LocalSearxngManager.shared.openDockerDesktop()
-                    Task {
-                        try? await Task.sleep(for: .seconds(3))
-                        setup.recheckDockerAndSetup(activeStep: currentStep, existingInstanceURLs: existingInstanceURLs)
-                    }
-                },
-                onGetDocker: {
-                    _ = LocalSearxngManager.shared.openDockerDownloadPage()
-                }
-            )
+            OnboardingLocalSearchStep(setup: setup)
         } actionBar: {
             OnboardingActionBar(
                 showBack: true,

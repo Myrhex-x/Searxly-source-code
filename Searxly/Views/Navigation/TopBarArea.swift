@@ -209,23 +209,22 @@ struct TopBarArea: View {
     }
 }
 
-// MARK: - Docker status helpers (Rank 2)
+// MARK: - Local SearXNG status helpers
 private func dockerStatusColor(_ status: ContainerStatus) -> Color {
     switch status {
     case .running: return .green
     case .stopped: return .gray
     case .starting, .stopping: return .orange
-    case .notInstalled, .error: return .red
+    case .error: return .red
     }
 }
 
 private func dockerStatusShort(_ status: ContainerStatus) -> String {
     switch status {
-    case .running: return "Docker"
-    case .stopped: return "Docker Off"
+    case .running: return "Local"
+    case .stopped: return "Off"
     case .starting: return "Starting"
     case .stopping: return "Stopping"
-    case .notInstalled: return "No Docker"
-    case .error: return "Docker Err"
+    case .error: return "Error"
     }
 }

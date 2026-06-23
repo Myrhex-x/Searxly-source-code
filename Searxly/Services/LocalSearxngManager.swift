@@ -1,9 +1,10 @@
 //  LocalSearxngManager.swift
 //  Searxly
 //
-//  Rank 2: First-class in-app control for the user's local SearXNG Docker instance.
-//  (UI surfaces in Onboarding + Settings/InstancesSettingsView post-refactor.)
-//  Replaces the previous "run these commands in Terminal" experience.
+//  First-class in-app control for the user's private local SearXNG instance.
+//  SearXNG runs as a bundled native Python process (no Docker) supervised by the
+//  unsandboxed SearxlyDockerHelper XPC service. UI surfaces in Onboarding +
+//  Settings/InstancesSettingsView.
 //
 
 import Foundation
@@ -12,7 +13,6 @@ import Observation
 import Security
 
 enum ContainerStatus: Equatable {
-    case notInstalled          // Docker Desktop not found
     case stopped
     case starting
     case running
@@ -134,7 +134,7 @@ final class LocalSearxngManager {
     var lastError: String?
     var logs: [String] = []
 
-    /// Whether the required ~/searxng-local project folder with docker-compose.yml exists.
+    /// Whether the required ~/searxng-local project folder with searxng/settings.yml exists.
     var projectFolderExists = false
 
     /// When true, the local SearXNG publishes only on 127.0.0.1 (more secure).
@@ -162,8 +162,26 @@ final class LocalSearxngManager {
         DeveloperSettings.shared.isEnabled
     }
 
-    /// The pinned image tag bundled with this app build (for display in Settings).
-    var pinnedSearxngImageTag: String { SearxngDockerConfig.pinnedImageTag }
+    /// The bundled SearXNG version (for display in Settings).
+    var bundledSearxngVersion: String { SearxngRuntimeConfig.bundledVersion }
+
+    /// Absolute path to the bundled, signed Python interpreter that runs SearXNG.
+    /// Shipped read-only at Searxly.app/Contents/Resources/searxng-runtime/python/bin/python3.12.
+    var bundledRuntimePythonPath: String? {
+        if let url = Bundle.main.url(
+            forResource: "python3.12",
+            withExtension: nil,
+            subdirectory: "searxng-runtime/python/bin"
+        ) {
+            return url.path
+        }
+        // Fallback for flattened/alternate bundle layouts.
+        if let res = Bundle.main.resourceURL {
+            let p = res.appendingPathComponent("searxng-runtime/python/bin/python3.12").path
+            if FileManager.default.isExecutableFile(atPath: p) { return p }
+        }
+        return nil
+    }
 
     /// UserDefaults key mirrored from ContentView's @AppStorage — gates background auto-start.
     static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
@@ -177,11 +195,6 @@ final class LocalSearxngManager {
     /// Only true after onboarding is finished — never during the first-run flow.
     var mayAutoStartLocalContainer: Bool {
         UserDefaults.standard.bool(forKey: Self.hasCompletedOnboardingKey)
-    }
-
-    /// Whether Docker Desktop.app is present (daemon may still be stopped).
-    var isDockerDesktopInstalled: Bool {
-        FileManager.default.fileExists(atPath: "/Applications/Docker.app")
     }
 
     /// Default local instance URL respecting the localhost-only bind preference.
@@ -205,11 +218,6 @@ final class LocalSearxngManager {
 
     /// Coalesced user-initiated ensure path (search, Local AI, Settings).
     var ensureReadyTask: Task<Void, Never>?
-
-    /// Cached path to a working Docker CLI binary.
-    /// We search common macOS locations because /usr/bin/env docker often fails
-    /// inside sandboxed / Xcode-launched apps due to restricted PATH.
-    var cachedDockerPath: String?
 
     private init() {
         // projectFolderExists starts false; warm-up is scheduled only after loadPersistedData

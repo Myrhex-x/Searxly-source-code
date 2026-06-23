@@ -9,7 +9,7 @@ import Observation
 @MainActor
 @Observable
 final class OnboardingSetupController {
-    var newInstanceName = "Local Docker"
+    var newInstanceName = "Local SearXNG"
     var newInstanceURL = LocalSearxngManager.shared.defaultLocalInstanceURL
     var isTestingConnection = false
     var connectionStatus: String?
@@ -44,7 +44,7 @@ final class OnboardingSetupController {
         guard activeStep == 1, !isConnectionSuccessful else { return }
         guard !Task.isCancelled else { return }
 
-        newInstanceName = "Local Docker"
+        newInstanceName = "Local SearXNG"
         newInstanceURL = localSearxng.defaultLocalInstanceURL
 
         // No Docker CLI / HTTP probes here — nothing touches Docker until the user taps a button.
@@ -65,7 +65,7 @@ final class OnboardingSetupController {
             guard trimmed.contains("localhost") || trimmed.contains("127.0.0.1") else { continue }
 
             newInstanceURL = trimmed
-            newInstanceName = "Local Docker"
+            newInstanceName = "Local SearXNG"
             if await runConnectionProbe(maxAttempts: 3, delaySeconds: 1, updatesUI: updatesUI) {
                 connectionStatus = "Connected — local SearXNG ready at \(trimmed)."
                 return true
@@ -76,7 +76,7 @@ final class OnboardingSetupController {
 
     func useLocalAndTest(quick: Bool = false) {
         connectionTestTask?.cancel()
-        newInstanceName = "Local Docker"
+        newInstanceName = "Local SearXNG"
         newInstanceURL = localSearxng.defaultLocalInstanceURL
         if !quick {
             connectionStatus = nil
@@ -118,7 +118,7 @@ final class OnboardingSetupController {
                 || connectionStatus?.hasPrefix("Waiting for SearXNG") == true
                 || connectionStatus?.contains("Starting private SearXNG") == true {
                 connectionStatus = isLocal
-                    ? "Could not reach local SearXNG. Try Recheck Docker or Start local search again."
+                    ? "Could not reach local SearXNG. Tap Start local search again, or Rebuild fresh under Troubleshooting."
                     : "Connection failed."
                 isConnectionSuccessful = false
             }
@@ -128,7 +128,7 @@ final class OnboardingSetupController {
     /// User-initiated: provision + start container + wait for readiness.
     func startLocalSearch() async {
         localSearxng.clearLogs()
-        newInstanceName = "Local Docker"
+        newInstanceName = "Local SearXNG"
         newInstanceURL = localSearxng.defaultLocalInstanceURL
         isTestingConnection = true
         connectionStatus = "Preparing local SearXNG…"
@@ -147,17 +147,7 @@ final class OnboardingSetupController {
         if success { return }
 
         if !isConnectionSuccessful {
-            connectionStatus = "Could not reach local SearXNG. Check Troubleshooting below, or tap Recheck Docker."
-        }
-    }
-
-    func recheckDockerAndSetup(activeStep: Int, existingInstanceURLs: [String]) {
-        localSearxng.clearDockerPathCache()
-        hasTriggeredAutoSetup = false
-        cancelAllTasks()
-        Task { @MainActor in
-            await localSearxng.refreshStatus()
-            connectionStatus = idleStatusMessage()
+            connectionStatus = "Could not reach local SearXNG. Check Troubleshooting below, or tap Rebuild fresh."
         }
     }
 
@@ -186,14 +176,8 @@ final class OnboardingSetupController {
 
     func idleStatusMessage() -> String {
         let mgr = localSearxng
-        if mgr.isDockerDesktopInstalled, case .stopped = mgr.status {
-            return "Docker is ready. Tap Start local search when you want a private instance on this Mac."
-        }
         if case .starting = mgr.status {
-            return "SearXNG container is starting. Tap Start local search to finish setup, or wait a moment and tap Test connection."
-        }
-        if case .notInstalled = mgr.status {
-            return "Install Docker Desktop, launch it, then tap Recheck Docker."
+            return "SearXNG is starting. Tap Start local search to finish setup, or wait a moment and tap Test connection."
         }
         if case .error(let msg) = mgr.status {
             return "Setup issue: \(msg). Tap Start local search to retry."
@@ -305,7 +289,7 @@ final class OnboardingSetupController {
         guard isConnectionSuccessful else { return }
 
         let name = newInstanceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalName = name.isEmpty ? "Local Docker" : name
+        let finalName = name.isEmpty ? "Local SearXNG" : name
         let trimmedURL = newInstanceURL.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !trimmedURL.isEmpty else { return }

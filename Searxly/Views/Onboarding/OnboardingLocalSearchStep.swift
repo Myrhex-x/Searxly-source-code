@@ -8,9 +8,6 @@ import SwiftUI
 
 struct OnboardingLocalSearchStep: View {
     @Bindable var setup: OnboardingSetupController
-    let onRecheckDocker: () -> Void
-    let onLaunchDocker: () -> Void
-    let onGetDocker: () -> Void
 
     var body: some View {
         VStack(alignment: .center, spacing: 16) {
@@ -85,13 +82,8 @@ struct OnboardingLocalSearchStep: View {
                         OnboardingActionCard(title: "Create folder", systemImage: "folder.badge.plus") {
                             Task { _ = try? await LocalSearxngManager.shared.provisionIfNeeded() }
                         }
-                        OnboardingActionCard(title: "Copy commands", systemImage: "terminal") {
-                            let commands = """
-cd ~/searxng-local
-docker compose up -d
-"""
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(commands, forType: .string)
+                        OnboardingActionCard(title: "Rebuild fresh", systemImage: "arrow.clockwise") {
+                            Task { await LocalSearxngManager.shared.recreateProjectFolder() }
                         }
                     }
 
@@ -140,20 +132,6 @@ docker compose up -d
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-
-                HStack(spacing: 10) {
-                    if case .notInstalled = mgr.status, !mgr.isDockerDesktopInstalled {
-                        OnboardingActionCard(title: "Get Docker Desktop", systemImage: "arrow.down.circle", action: onGetDocker)
-                    }
-
-                    if mgr.status == .stopped || mgr.status == .notInstalled {
-                        OnboardingActionCard(title: "Recheck Docker", systemImage: "arrow.clockwise", action: onRecheckDocker)
-                    }
-
-                    if mgr.status == .stopped, mgr.isDockerDesktopInstalled {
-                        OnboardingActionCard(title: "Launch Docker", systemImage: "play.circle", action: onLaunchDocker)
-                    }
-                }
             }
         }
     }
@@ -171,20 +149,14 @@ docker compose up -d
             return "Private SearXNG ready on this Mac"
         }
         switch mgr.status {
-        case .notInstalled:
-            return mgr.isDockerDesktopInstalled
-                ? "Docker installed — tap Start local search when you're ready"
-                : "Docker Desktop required (free)"
         case .running:
             return "Local SearXNG detected — tap Start local search to connect"
         case .starting:
-            return "SearXNG container is starting…"
+            return "SearXNG is starting…"
         case .stopping:
             return "Stopping SearXNG…"
         case .stopped:
-            return mgr.isDockerDesktopInstalled
-                ? "Docker ready — start your private instance"
-                : "Docker CLI ready"
+            return "Tap Start local search to launch your private instance"
         case .error(let msg):
             return "Setup error: \(msg)"
         }
