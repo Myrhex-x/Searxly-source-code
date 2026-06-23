@@ -1,10 +1,10 @@
 # Searxly
 
 Searxly is a privacy-respecting native macOS browser built with SwiftUI and WebKit.  
-**Core feature:** It runs a fully local, private SearXNG instance on *your own Mac* via Docker (one-click setup, no accounts, no telemetry).
+**Core feature:** It runs a fully local, private SearXNG instance on *your own Mac* — a signed SearXNG runtime is bundled right inside the app, so search happens entirely on your machine with no accounts and no telemetry.
 
 **Current status (as of this build):**
-- Local SearXNG (Docker) is the primary, fully supported private search experience.
+- Local SearXNG (native, bundled inside the app) is the primary, fully supported private search experience.
 - A self-custody Base L2 wallet (BIP-39/32, real EIP-1559 signing) is included in `Searxly/Wallet/`.
 - On-device / local AI assistance lives in `Searxly/LocalAI/`.
 - The ad-block engine and the VPN / WireGuard implementation are **not** included in this public source (see "What's omitted" below).
@@ -14,7 +14,7 @@ This repository contains source code for transparency, code review, and learning
 ## What's in this repository
 
 - Complete browser UI and logic (SwiftUI + WebKit)
-- Local SearXNG Docker management and configuration handling (the hero feature — see `LocalSearxngManager.swift` and `LocalSearxng/`)
+- Local SearXNG lifecycle and configuration handling (the hero feature — see `LocalSearxngManager.swift` and `LocalSearxng/`)
 - Self-custody Base L2 wallet (`Searxly/Wallet/`) + crypto unit tests (`WalletCryptoTests/`)
 - On-device / local AI assistance (`Searxly/LocalAI/`)
 - Supporting infrastructure (persistence, privacy controls, tab hibernation, premium design tokens, etc.)
@@ -51,12 +51,12 @@ Do your own research. All funds go directly to project development.
 
 ## Current Feature Status
 
-- **Local SearXNG**: Fully automatic. One-click in onboarding or Settings → Instances. Creates `~/searxng-local/`, injects a strong secret, deploys the premium Searxly theme, runs `docker compose`, and waits for the instance to be ready.
+- **Local SearXNG**: Fully automatic. One-click in onboarding or Settings → Instances. Creates `~/searxng-local/`, injects a strong secret, deploys the premium Searxly theme, launches the bundled SearXNG process, and waits for the instance to be ready.
 - **VPN**: The WireGuard implementation is omitted from this public source (see "What's omitted"). In maintainer builds it requires a paid Apple Developer membership + a provisioning profile with the `packet-tunnel-provider` capability.
 - **Wallet**: A self-custody Base L2 wallet is included (`Searxly/Wallet/`). Keys never leave the device — the seed is encrypted in the macOS Keychain (AES-GCM + PBKDF2, device-only, never iCloud-synced).
 
-## Local SearXNG Docker Requirements (User Side)
+## Local SearXNG (User Side)
 
-Users need Docker Desktop (or OrbStack / Colima) installed + the Docker CLI enabled in its General settings. The app guides them and can attempt to launch Docker Desktop for them.
+Nothing to install. SearXNG ships inside Searxly as a signed, self-contained runtime, so there are no external dependencies — the app starts your private instance on `127.0.0.1` by itself.
 
-The bundled `LocalSearxng/` folder (docker-compose + configs + premium theme) is copied at runtime into the user's home directory. A strong random `secret_key` is generated automatically — never committed.
+The bundled `LocalSearxng/` folder (configs + premium theme) is copied at runtime into the user's home directory. A strong random `secret_key` is generated automatically — never committed.
