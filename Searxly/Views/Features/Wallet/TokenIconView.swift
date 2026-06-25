@@ -11,17 +11,58 @@ struct TokenIconView: View {
     let token: WalletToken
     var size: CGFloat = 40
 
+    @State private var directory = WalletTokenDirectory.shared
+
     var body: some View {
         ZStack {
-            Circle()
-                .fill(token.iconColor)
-                .frame(width: size, height: size)
-                .overlay(
-                    Circle().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8)
-                )
+            // Always-present tinted backing, so a transparent or dark logo never disappears against
+            // the near-black canvas (it shows through the logo's transparent areas).
+            Circle().fill(token.iconColor)
 
-            tokenGlyph
+            if let url = logoURL {
+                // Real coin logo (CoinGecko CDN, keyed only by the public contract). The drawn glyph
+                // shows while it loads and stays as the fallback if the image can't be fetched.
+                AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.15))) { phase in
+                    if let image = phase.image {
+                        image.resizable().interpolation(.high).scaledToFill()
+                    } else {
+                        tokenGlyph
+                    }
+                }
+            } else {
+                tokenGlyph
+            }
         }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8))
+        .task(id: token.aggregatedID) {
+            await directory.ensureLogo(chainId: token.chainId, contract: token.contractAddress)
+        }
+    }
+
+    /// The real-logo URL for this token, or nil to fall back to the drawn mark. Every ERC-20 (incl.
+    /// SEARXLY, which is a listed token) uses its real logo from the directory; the native gas coins use
+    /// a known logo. The drawn glyph only shows while loading or for a coin no list knows.
+    private var logoURL: URL? {
+        // Core coins get a known, verified logo immediately — so a wrapped/native coin (ETH, WETH, POL)
+        // never falls back to a generic glyph while the token list resolves.
+        switch token.symbol.uppercased() {
+        case "ETH":
+            return URL(string: "https://assets.coingecko.com/coins/images/279/large/ethereum.png")
+        case "WETH":
+            return URL(string: "https://assets.coingecko.com/coins/images/39810/large/weth.png")
+        case "POL", "MATIC":
+            return URL(string: "https://assets.coingecko.com/coins/images/4713/large/polygon.png")
+        default:
+            break
+        }
+        if let contract = token.contractAddress {
+            // Real logo: the CoinGecko list (crisp /large/ variant), or the DexScreener fallback once
+            // it resolves. Both handled by the directory.
+            return directory.resolvedLogo(chainId: token.chainId, contract: contract).flatMap { URL(string: $0) }
+        }
+        return nil
     }
 
     @ViewBuilder

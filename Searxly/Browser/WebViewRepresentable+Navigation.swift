@@ -9,6 +9,46 @@ import WebKit
 import os
 
 extension WebViewRepresentable.Coordinator {
+    /// Onion tabs are proxy-only: their data store carries a SOCKS5 proxy configuration. We never let
+    /// a navigation leave that path — only http(s) (carried by the proxy) and our local placeholder
+    /// schemes are allowed; anything else (custom schemes, file:, etc.) is cancelled. Non-onion tabs
+    /// are unaffected (always allowed). Detected via the presence of a proxy on the data store, so no
+    /// per-tab plumbing is needed.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let isOnionTab = !webView.configuration.websiteDataStore.proxyConfigurations.isEmpty
+        if isOnionTab {
+            let scheme = navigationAction.request.url?.scheme?.lowercased() ?? ""
+            let allowed: Set<String> = ["http", "https", "about", "data", "blob"]
+            if !allowed.contains(scheme) {
+                decisionHandler(.cancel)
+                return
+            }
+        }
+        decisionHandler(.allow)
+    }
+
+    /// Onion-Location auto-detect: when a normal page's response carries an `Onion-Location` header
+    /// pointing at a `.onion` mirror, surface an offer to switch. Skipped on onion tabs themselves.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if navigationResponse.isForMainFrame,
+           webView.configuration.websiteDataStore.proxyConfigurations.isEmpty,   // not already an onion tab
+           let http = navigationResponse.response as? HTTPURLResponse,
+           let raw = http.value(forHTTPHeaderField: "Onion-Location"),
+           let onion = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+           onion.isOnionService {
+            let host = http.url?.host ?? webView.url?.host ?? ""
+            NotificationCenter.default.post(
+                name: .onionLocationDetected, object: nil,
+                userInfo: ["onion": onion.absoluteString, "host": host]
+            )
+        }
+        decisionHandler(.allow)
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         DispatchQueue.main.async { self.parent.isLoading = true }
     }
@@ -62,6 +102,23 @@ extension WebViewRepresentable.Coordinator {
                 object: nil,
                 userInfo: ["url": u, "title": settledTitle]
             )
+        }
+
+        // Onion-Location auto-detect (meta-tag fallback; the response header is handled in
+        // decidePolicyFor navigationResponse). Skipped on onion tabs.
+        if webView.configuration.websiteDataStore.proxyConfigurations.isEmpty {
+            let pageHost = webView.url?.host ?? ""
+            let onionMetaJS = """
+            (function(){var m=document.querySelector("meta[http-equiv='onion-location' i]");return m?m.content:"";})()
+            """
+            webView.evaluateJavaScript(onionMetaJS) { result, _ in
+                guard let s = (result as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !s.isEmpty, let onion = URL(string: s), onion.isOnionService else { return }
+                NotificationCenter.default.post(
+                    name: .onionLocationDetected, object: nil,
+                    userInfo: ["onion": onion.absoluteString, "host": pageHost]
+                )
+            }
         }
 
         if let url = webView.url, (url.host?.contains("youtube.com") == true || url.host?.contains("youtu.be") == true) {
@@ -253,7 +310,46 @@ extension WebViewRepresentable.Coordinator {
                 Log.web.error("[Dev] WebView provisional navigation failed: \(error.localizedDescription) for \(webView.url?.absoluteString ?? "unknown")")
             }
             self.observedContainer?.stabilizeLayout(repeats: 1)
+
+            // Onion tabs: when a real load fails (onion offline/unreachable), show a friendly page
+            // rather than a blank failure. Ignore NSURLErrorCancelled — that fires when the
+            // "Connecting to Tor…" placeholder is replaced by the real load, and isn't an error.
+            let isOnionTab = !webView.configuration.websiteDataStore.proxyConfigurations.isEmpty
+            let nsErr = error as NSError
+            if isOnionTab, !(nsErr.domain == NSURLErrorDomain && nsErr.code == NSURLErrorCancelled) {
+                let host = webView.url?.host ?? "this hidden service"
+                webView.loadHTMLString(Self.onionErrorHTML(host: host), baseURL: webView.url)
+            }
         }
+    }
+
+    /// Friendly monochrome error page for an unreachable / offline onion service.
+    static func onionErrorHTML(host: String) -> String {
+        let safeHost = host.replacingOccurrences(of: "<", with: "&lt;")
+        return """
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          :root { color-scheme: light dark; }
+          html,body{height:100%;margin:0}
+          body{display:flex;align-items:center;justify-content:center;
+               font:-apple-system-body,-apple-system,system-ui,sans-serif;background:#fff;color:#111}
+          @media (prefers-color-scheme: dark){ body{background:#0a0a0a;color:#f2f2f2} }
+          .card{max-width:440px;padding:32px;text-align:center}
+          .glyph{font-size:30px;opacity:.8;margin-bottom:16px}
+          h1{font-size:18px;font-weight:600;margin:0 0 8px}
+          p{font-size:13px;line-height:1.5;opacity:.7;margin:0 0 6px}
+          code{font-size:11px;opacity:.6;word-break:break-all}
+        </style></head>
+        <body><div class="card">
+          <div class="glyph">⚠️</div>
+          <h1>Can’t reach this onion service</h1>
+          <p>Tor connected, but the hidden service didn’t respond. It may be offline, overloaded, or
+          the address may be wrong.</p>
+          <p>Try reloading — Tor will attempt a fresh route.</p>
+          <p><code>\(safeHost)</code></p>
+        </div></body></html>
+        """
     }
 
     func webView(_ webView: WKWebView,

@@ -7,6 +7,9 @@ import SwiftUI
 import CoreImage.CIFilterBuiltins
 
 struct WalletReceiveView: View {
+    /// Pre-selects a coin in the asset chips (set when opened from a coin's detail). The address is the
+    /// same across every EVM network regardless. nil → default.
+    var initialTokenID: String? = nil
     @State private var wallet = WalletManager.shared
     @State private var copiedAddress = false
     @State private var selectedTokenID = "SEARXLY"
@@ -51,6 +54,7 @@ struct WalletReceiveView: View {
                     .padding(5)
                 }
                 .background(WalletTheme.surface, in: Capsule())
+                .overlay(Capsule().strokeBorder(WalletTheme.hairline, lineWidth: 1))
 
                 // QR code
                 Group {
@@ -88,6 +92,10 @@ struct WalletReceiveView: View {
                         .foregroundStyle(address.isEmpty ? WalletTheme.textTertiary : WalletTheme.textSecondary)
                         .multilineTextAlignment(.center)
                         .textSelection(.enabled)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity)
+                        .walletGlass(radius: WalletTheme.radiusField, fill: WalletTheme.surfaceField)
 
                     Button {
                         guard !address.isEmpty else { return }
@@ -108,6 +116,7 @@ struct WalletReceiveView: View {
                         .padding(.horizontal, 22)
                         .padding(.vertical, 11)
                         .background(WalletTheme.surfaceStrong, in: Capsule())
+                        .overlay(Capsule().strokeBorder(WalletTheme.hairline, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                     .disabled(address.isEmpty)
@@ -128,6 +137,7 @@ struct WalletReceiveView: View {
             }
             .padding(22)
         }
+        .onAppear { if let initialTokenID { selectedTokenID = initialTokenID } }
     }
 
     private func formatted(_ addr: String) -> String {

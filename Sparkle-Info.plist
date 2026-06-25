@@ -8,5 +8,32 @@
 	<string>https://searxly.app/appcast.xml</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
+	<!-- Searxly gateway app token. Substituted at build time from SEARXLY_GATEWAY_APP_TOKEN
+	     (blank default in Config.xcconfig; real value layered in via the gitignored Secrets.xcconfig).
+	     A soft gate only — the upstream 0x / io.net keys live on the gateway server, never here.
+	     When blank the wallet falls back to its "bring your own 0x key" path. -->
+	<key>SearxlyGatewayAppToken</key>
+	<string>$(SEARXLY_GATEWAY_APP_TOKEN)</string>
+
+	<!--
+		App Transport Security — Tor .onion exception (scoped, NOT a blanket http allowance).
+		Cleartext http is allowed ONLY for *.onion hidden services — http is the onion convention, and
+		Tor itself encrypts + authenticates end-to-end via the .onion address. ATS stays fully enforced
+		everywhere else: insecure http to clearnet sites is still blocked (HTTPS-only for the normal web),
+		as are the app's own non-web connections (SearXNG API, gateway, Sparkle updates).
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>onion</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
 </dict>
 </plist>

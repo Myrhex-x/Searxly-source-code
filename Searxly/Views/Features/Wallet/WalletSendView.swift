@@ -6,6 +6,8 @@
 import SwiftUI
 
 struct WalletSendView: View {
+    /// Pre-selects the coin to send (set when opened from a coin's detail). nil → default.
+    var initialTokenID: String? = nil
     @State private var wallet = WalletManager.shared
     @State private var toAddress = ""
     @State private var amountText = ""
@@ -101,8 +103,11 @@ struct WalletSendView: View {
     /// The "Max" amount. For ETH we keep a small reserve so there's room for the gas fee (gas on
     /// Base is paid in ETH); tokens use the full balance since their gas is paid separately in ETH.
     private func maxAmount(for token: WalletToken) -> String {
-        guard token.symbol == "ETH" else { return token.formattedBalance }
-        let reserve = Decimal(string: "0.0001") ?? 0   // ample for a Base transfer
+        // Only the native gas coin needs a reserve; tokens pay gas separately in the native coin.
+        guard token.isNative else { return token.formattedBalance }
+        // Leave a little behind for the network fee. L2 gas is tiny; Ethereum mainnet costs much more,
+        // so reserve more there. Applies to every native coin (ETH on L2s/mainnet, POL on Polygon).
+        let reserve = Decimal(string: wallet.activeChain.id == WalletChain.ethereum.id ? "0.002" : "0.0002") ?? 0
         let m = token.balance - reserve
         return m > 0 ? "\(m)" : "0"
     }
@@ -111,13 +116,13 @@ struct WalletSendView: View {
 
     private var fieldBorderColor: Color {
         let typed = toAddress.trimmingCharacters(in: .whitespaces)
-        if typed.isEmpty { return .clear }
-        if resolving { return Color.white.opacity(0.2) }
-        guard let check = addressCheck else { return Color.white.opacity(0.2) }  // name still resolving/typing
+        if typed.isEmpty { return WalletTheme.hairline }
+        if resolving { return WalletTheme.hairlineStrong }
+        guard let check = addressCheck else { return WalletTheme.hairlineStrong }  // name still resolving/typing
         switch check {
         case .invalid: return WalletTheme.negative.opacity(0.6)
         case .warning: return WalletTheme.warning.opacity(0.6)
-        case .ok, .info: return Color.white.opacity(0.35)
+        case .ok, .info: return WalletTheme.hairlineStrong
         }
     }
 
@@ -211,19 +216,15 @@ struct WalletSendView: View {
                                     .foregroundStyle(.white)
                                 Text("\(abbreviated(txHash)) · View on \(wallet.activeChain.explorerName)")
                                     .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(Color(white: 0.5))
+                                    .foregroundStyle(WalletTheme.textTertiary)
                             }
                             Spacer()
                             Image(systemName: "arrow.up.right.square")
                                 .font(.system(size: 11))
-                                .foregroundStyle(Color(white: 0.4))
+                                .foregroundStyle(WalletTheme.textTertiary)
                         }
                         .padding(12)
-                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9)
-                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8)
-                        )
+                        .walletGlass(radius: 9, fill: WalletTheme.surfaceStrong)
                     }
                     .buttonStyle(.plain)
                 }
@@ -240,7 +241,7 @@ struct WalletSendView: View {
                                     TokenIconView(token: token, size: 20)
                                     Text(token.symbol)
                                         .font(.system(size: 12, weight: selectedTokenID == token.id ? .semibold : .regular))
-                                        .foregroundStyle(selectedTokenID == token.id ? .white : Color(white: 0.45))
+                                        .foregroundStyle(selectedTokenID == token.id ? .white : WalletTheme.textTertiary)
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
@@ -256,24 +257,24 @@ struct WalletSendView: View {
                     }
                     .padding(4)
                 }
-                .background(WalletTheme.surfaceField, in: RoundedRectangle(cornerRadius: 10))
+                .walletGlass(radius: 10, fill: WalletTheme.surfaceField)
 
                 // Contract address for selected token (copy it)
                 if let token = selectedToken, let addr = token.contractAddress {
                     HStack(spacing: 8) {
                         Text("Contract:")
                             .font(.system(size: 10))
-                            .foregroundStyle(Color(white: 0.35))
+                            .foregroundStyle(WalletTheme.textTertiary)
                         Text(abbreviated(addr))
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(Color(white: 0.35))
+                            .foregroundStyle(WalletTheme.textTertiary)
                         Button {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(addr, forType: .string)
                         } label: {
                             Image(systemName: "doc.on.doc")
                                 .font(.system(size: 10))
-                                .foregroundStyle(Color(white: 0.3))
+                                .foregroundStyle(WalletTheme.textTertiary)
                         }
                         .buttonStyle(.plain)
                         .help("Copy contract address")
@@ -306,7 +307,7 @@ struct WalletSendView: View {
                     if !toAddress.isEmpty {
                         Button { toAddress = ""; resolvedAddress = nil } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(Color(white: 0.3))
+                                .foregroundStyle(WalletTheme.textTertiary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -358,10 +359,10 @@ struct WalletSendView: View {
                         .accessibilityLabel("Amount to send")
                     Text(selectedToken?.symbol ?? "")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(white: 0.4))
+                        .foregroundStyle(WalletTheme.textTertiary)
                 }
                 .padding(12)
-                .background(WalletTheme.surfaceField, in: RoundedRectangle(cornerRadius: 9))
+                .walletGlass(radius: 9, fill: WalletTheme.surfaceField)
 
                 if amountExceedsBalance {
                     feedbackLabel("That's more than your \(selectedToken?.symbol ?? "") balance.",
@@ -371,7 +372,7 @@ struct WalletSendView: View {
                     if usd > 0 {
                         Text("≈ \(wallet.formatFiat(usd))")
                             .font(.system(size: 11))
-                            .foregroundStyle(Color(white: 0.4))
+                            .foregroundStyle(WalletTheme.textTertiary)
                     }
                 }
 
@@ -384,7 +385,7 @@ struct WalletSendView: View {
                                 Image(systemName: speed.symbol).font(.system(size: 10))
                                 Text(speed.label).font(.system(size: 11, weight: gasSpeed == speed ? .semibold : .regular))
                             }
-                            .foregroundStyle(gasSpeed == speed ? .black : Color(white: 0.55))
+                            .foregroundStyle(gasSpeed == speed ? .black : WalletTheme.textSecondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
                             .background(gasSpeed == speed ? Color.white : WalletTheme.surfaceField,
@@ -397,16 +398,16 @@ struct WalletSendView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "fuelpump")
                         .font(.system(size: 10))
-                        .foregroundStyle(Color(white: 0.3))
+                        .foregroundStyle(WalletTheme.textTertiary)
                     Text("Gas paid in \(wallet.activeChain.nativeSymbol) on \(wallet.activeChain.name) · estimated at runtime")
                         .font(.system(size: 11))
-                        .foregroundStyle(Color(white: 0.3))
+                        .foregroundStyle(WalletTheme.textTertiary)
                 }
 
                 if !sendError.isEmpty {
                     Text(sendError)
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(red: 1, green: 0.35, blue: 0.35))
+                        .foregroundStyle(WalletTheme.negative)
                 }
 
                 // Send button
@@ -435,6 +436,7 @@ struct WalletSendView: View {
             }
             .padding(20)
         }
+        .onAppear { if let initialTokenID { selectedTokenID = initialTokenID } }
         .sheet(isPresented: $showConfirm) { sendConfirmSheet }
         .sheet(isPresented: $showContacts) { contactsPicker }
         .alert("Save contact", isPresented: $savingContact) {
@@ -455,12 +457,7 @@ struct WalletSendView: View {
             HStack {
                 Text("Contacts").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
                 Spacer()
-                Button { showContacts = false } label: {
-                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(WalletTheme.textSecondary).frame(width: 28, height: 28)
-                        .background(WalletTheme.surfaceStrong, in: Circle())
-                }
-                .buttonStyle(.plain)
+                WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { showContacts = false }
             }
             .padding(.horizontal, 20).padding(.vertical, 14)
             Divider().opacity(0.1)
@@ -478,7 +475,7 @@ struct WalletSendView: View {
                                 }
                                 Spacer()
                             }
-                            .padding(12).walletCard(radius: 12)
+                            .padding(12).walletGlass(radius: 12)
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
@@ -514,7 +511,7 @@ struct WalletSendView: View {
                 Divider().opacity(0.08)
                 confirmRow("Network", value: wallet.activeChain.name)
             }
-            .background(WalletTheme.surfaceField, in: RoundedRectangle(cornerRadius: 10))
+            .walletGlass(radius: 10, fill: WalletTheme.surfaceField)
             .padding(.horizontal, 24)
 
             sendSimBanner
@@ -539,18 +536,18 @@ struct WalletSendView: View {
 
                     Text(WalletFeatures.usesPassphrase ? "or enter your passphrase" : "or enter your PIN")
                         .font(.system(size: 11))
-                        .foregroundStyle(Color(white: 0.4))
+                        .foregroundStyle(WalletTheme.textTertiary)
                 } else {
                     Text(WalletFeatures.usesPassphrase ? "Enter your passphrase to authorize" : "Enter your PIN to authorize")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(white: 0.4))
+                        .foregroundStyle(WalletTheme.textTertiary)
                 }
 
                 if !WalletFeatures.usesPassphrase {
                     HStack(spacing: 12) {
                         ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
                             Circle()
-                                .fill(i < pin.count ? Color.white : Color(white: 0.2))
+                                .fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong)
                                 .frame(width: 11, height: 11)
                         }
                     }
@@ -562,7 +559,7 @@ struct WalletSendView: View {
                 if pinError {
                     Text("Incorrect PIN")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(red: 1, green: 0.35, blue: 0.35))
+                        .foregroundStyle(WalletTheme.negative)
                 }
 
                 PINKeypad(pin: $pin, maxLength: WalletConfig.pinLength) { submitSend() }
@@ -587,7 +584,7 @@ struct WalletSendView: View {
         if simChecking {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini).scaleEffect(0.7)
-                Text("Checking transaction…").font(.system(size: 11)).foregroundStyle(Color(white: 0.45))
+                Text("Checking transaction…").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             }
         } else if case .revert(let reason) = sendSim {
             HStack(alignment: .top, spacing: 6) {
@@ -628,7 +625,7 @@ struct WalletSendView: View {
     private func fieldLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Color(white: 0.4))
+            .foregroundStyle(WalletTheme.textTertiary)
     }
 
     @ViewBuilder
@@ -637,7 +634,7 @@ struct WalletSendView: View {
         HStack {
             Text(label)
                 .font(.system(size: 13))
-                .foregroundStyle(Color(white: 0.4))
+                .foregroundStyle(WalletTheme.textTertiary)
             Spacer()
             Text(value)
                 .font(.system(size: 13, weight: .medium, design: mono ? .monospaced : .default))

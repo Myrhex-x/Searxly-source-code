@@ -58,6 +58,15 @@ final class BrowserState {
     var webCurrentURL: URL? = nil
     var showingWebContent = false
 
+    /// A detected `.onion` mirror for the page in the current normal tab (Onion-Location). The banner
+    /// only shows while this offer's host still matches the page on screen (see activeOnionLocationOffer).
+    var onionLocationOffer: OnionLocationOffer?
+
+    /// First-run Tor consent gate: drives the one-time disclosure sheet shown before the user's first
+    /// onion connection. `pendingOnionURL` is the address to open once they acknowledge.
+    var showTorDisclosure = false
+    var pendingOnionURL: URL?
+
     // Reader / Find (minimally wired; passed through to representable)
     var webViewCanGoBack = false
     var webViewCanGoForward = false
@@ -332,4 +341,13 @@ final class BrowserState {
 // Passwords vault special tab notification (preserved non-crypto feature).
 extension Notification.Name {
     static let showPasswordsVaultTabRequested = Notification.Name("Searxly.ShowPasswordsVaultTabRequested")
+    /// Posted by the navigation delegate when a normal page advertises an `Onion-Location` mirror.
+    /// userInfo: ["onion": <onion URL string>, "host": <page host>].
+    static let onionLocationDetected = Notification.Name("Searxly.OnionLocationDetected")
+}
+
+/// A detected `.onion` mirror offer for the page currently shown in a normal tab.
+struct OnionLocationOffer: Equatable {
+    let pageHost: String
+    let onionURL: URL
 }

@@ -16,8 +16,7 @@ enum KnowledgePanelService {
 
         let entity = bestEntity(for: trimmed)
         let subject = displaySubject(from: trimmed, entity: entity)
-        guard let slug = grokipediaSlug(for: trimmed, entity: entity),
-              let snippet = await GrokipediaArticleClient.fetchFirstParagraph(slug: slug) else {
+        guard let (slug, snippet) = await resolveArticle(for: trimmed, entity: entity) else {
             return nil
         }
 
@@ -62,14 +61,37 @@ enum KnowledgePanelService {
         return nil
     }
 
-    private static func grokipediaSlug(
+    /// Finds a Grokipedia article for the query by trying slug candidates in order of confidence,
+    /// returning the first that yields a real article. Two phases so common (curated) entities never
+    /// pay for the Wikipedia resolution:
+    ///   1. Curated/verified + naive-inferred slugs (no extra network for resolution).
+    ///   2. Wikipedia opensearch → canonical titles → slugs (covers the long tail; only when 1 misses).
+    private static func resolveArticle(
         for query: String,
         entity: OfficialEntityDatabase.OfficialEntity?
-    ) -> String? {
-        if let slug = GrokipediaSlugCatalog.slug(for: entity) {
-            return slug
+    ) async -> (slug: String, snippet: GrokipediaArticleSnippet)? {
+        let subject = strippedSubject(from: query)
+        var tried = Set<String>()
+
+        func attempt(_ slug: String?) async -> (String, GrokipediaArticleSnippet)? {
+            guard let slug, !slug.isEmpty, tried.insert(slug).inserted else { return nil }
+            if let snippet = await GrokipediaArticleClient.fetchFirstParagraph(slug: slug) {
+                return (slug, snippet)
+            }
+            return nil
         }
-        return GrokipediaSlugCatalog.slug(forSubject: strippedSubject(from: query))
+
+        // Phase 1: curated + naive-inferred (fast path for the well-known entities).
+        if let hit = await attempt(GrokipediaSlugCatalog.slug(for: entity)) { return hit }
+        if let hit = await attempt(GrokipediaSlugCatalog.slug(forSubject: subject)) { return hit }
+
+        // Phase 2: Wikipedia-resolved canonical titles (the long tail, e.g. "torproject").
+        for title in await WikipediaTitleResolver.canonicalTitles(for: subject) {
+            let slug = title.replacingOccurrences(of: " ", with: "_")
+            if let hit = await attempt(slug) { return hit }
+        }
+
+        return nil
     }
 
     private static func strippedSubject(from query: String) -> String {

@@ -83,15 +83,26 @@ enum SearchResultRanker {
             if snippet.contains(t) { score += 2 }
         }
 
+        // Whether the query is actually ABOUT this host. The official-site bonuses below must only
+        // apply to a relevant host — otherwise every known brand (x.com, tesla.com, …) floats to the
+        // top of unrelated navigational searches (the "torproject → x.com" bug).
+        let hostLabel = cleanHost.split(separator: ".").first.map(String.init) ?? cleanHost
+        let joinedTokens = queryTokens.joined()
+        let hostRelevant =
+            queryTokens.contains { $0.count > 1 && cleanHost.contains($0) }
+            || (hostLabel.count > 1 && !joinedTokens.isEmpty && (joinedTokens.contains(hostLabel) || hostLabel.contains(joinedTokens)))
+
         if intent == .navigational, queryTokens.count <= 3 {
-            let joined = queryTokens.joined(separator: "")
-            if cleanHost.contains(joined) || cleanHost == joined { score += 12 }
+            if !joinedTokens.isEmpty, cleanHost.contains(joinedTokens) || cleanHost == joinedTokens { score += 12 }
+            // Exact official-domain match (e.g. "torproject" → torproject.org) — strongly favored so
+            // the real site beats unrelated big brands.
+            if hostLabel == joinedTokens && !joinedTokens.isEmpty { score += 16 }
         }
 
-        if authorityHosts.contains(cleanHost) || authorityHosts.contains(host) {
+        if hostRelevant, authorityHosts.contains(cleanHost) || authorityHosts.contains(host) {
             score += intent == .navigational ? 32 : 18
         }
-        if cleanHost.contains("terafab.ai") || cleanHost.contains("x.ai") || cleanHost.contains("tesla.com") {
+        if hostRelevant, cleanHost.contains("terafab.ai") || cleanHost.contains("x.ai") || cleanHost.contains("tesla.com") {
             score += intent == .navigational ? 20 : 8
         }
 

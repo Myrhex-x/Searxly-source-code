@@ -56,11 +56,11 @@ struct WalletLineChart: View {
             ForEach(points) { p in
                 LineMark(x: .value("Time", p.t), y: .value("Value", p.v))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(tone)
-                    .lineStyle(StrokeStyle(lineWidth: compact ? 1.5 : 2.5, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(compact ? tone.opacity(0.85) : tone)
+                    .lineStyle(StrokeStyle(lineWidth: compact ? 1.3 : 2.5, lineCap: .round, lineJoin: .round))
                 AreaMark(x: .value("Time", p.t), y: .value("Value", p.v))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(LinearGradient(colors: [tone.opacity(0.22), tone.opacity(0.03), tone.opacity(0.0)],
+                    .foregroundStyle(LinearGradient(colors: [tone.opacity(compact ? 0.13 : 0.22), tone.opacity(0.03), tone.opacity(0.0)],
                                                     startPoint: .top, endPoint: .bottom))
             }
             if let sel = selectedPoint, !compact {

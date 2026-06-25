@@ -22,6 +22,19 @@
 	<true/>
 
 	<!--
+		=== PERSONAL VPN ===
+		Lets the app create and control a system-wide VPN using macOS's BUILT-IN VPN client
+		(NEVPNManager + NEVPNProtocolIPSec / IKEv2). No Packet Tunnel extension is needed — the OS
+		does the tunnelling. Enable the "Personal VPN" capability on the Searxly target in Xcode
+		(Signing & Capabilities) so the provisioning profile grants this; then approve the VPN config
+		once in System Settings on first Connect.
+	-->
+	<key>com.apple.developer.networking.vpn.api</key>
+	<array>
+		<string>allow-vpn</string>
+	</array>
+
+	<!--
 		Keychain access group — REQUIRED for the modern data-protection keychain
 		(kSecUseDataProtectionKeychain), which the wallet uses for the seed phrase, API keys, etc.
 
@@ -41,6 +54,14 @@
 
 	<!-- Downloads folder: read-write access for files the user saves from the browser -->
 	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+
+	<!--
+		User-selected files: REQUIRED for NSSavePanel / NSOpenPanel to work in a sandboxed app
+		(e.g. saving the encrypted wallet backup, or restoring one). Without this, the moment the
+		app opens a Save/Open dialog the sandbox traps the process (EXC_BREAKPOINT).
+	-->
+	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 
 	<!--

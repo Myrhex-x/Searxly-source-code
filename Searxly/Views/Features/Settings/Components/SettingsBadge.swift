@@ -11,15 +11,18 @@ import SwiftUI
 
 struct SettingsBadge: View {
     let text: String
-    var tint: Color = .green
+    var tint: Color = .white
+
+    private var accent: Color { SettingsTheme.resolve(tint) }
 
     var body: some View {
-        Text(text)
-            .font(.caption2.bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(tint.opacity(0.18))
-            .foregroundStyle(tint)
-            .clipShape(Capsule())
+        Text(text.uppercased())
+            .font(.system(size: 9, weight: .bold))
+            .tracking(0.5)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2.5)
+            .background(accent.opacity(0.14), in: Capsule())
+            .overlay(Capsule().strokeBorder(accent.opacity(0.28), lineWidth: 0.5))
+            .foregroundStyle(accent)
     }
 }

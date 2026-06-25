@@ -11,5 +11,5 @@ import Foundation
 
 enum SearxngRuntimeConfig {
     /// Bundled SearXNG version string (date-commit), for display in Settings.
-    static let bundledVersion = "2025.2.12-d456f3dd9"
+    static let bundledVersion = "2026.6.23-e371371"
 }

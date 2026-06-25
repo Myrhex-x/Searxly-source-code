@@ -2,10 +2,11 @@
 //  WalletSetupView.swift
 //  Searxly
 //
-//  Multi-step flow: Choose → Create/Import → PIN → Recovery code → Done.
+//  Multi-step flow: Choose → Create/Import/Restore → PIN → Recovery code → Done.
 //
 
 import SwiftUI
+import AppKit
 
 struct WalletSetupView: View {
     /// Provided when hosted in the wallet overlay (which has no sheet `dismiss`); falls back to the
@@ -22,6 +23,8 @@ struct WalletSetupView: View {
         case seedDisplay([String])          // creating: show generated words
         case seedImport                     // importing: user enters words
         case seedConfirmWarning([String])   // after display: "did you write it down?"
+        case seedVerify([String])           // quiz a few words so we KNOW it was backed up
+        case restorePassword(Data)          // decrypt a chosen encrypted-backup file
         case pinSetup([String])             // set 6-digit PIN
         case recoveryCode(String, [String]) // show one-time recovery code
         case done
@@ -32,6 +35,9 @@ struct WalletSetupView: View {
     @State private var importText = ""
     @State private var importError = ""
     @State private var seedRevealed = false
+    @State private var setupError = false
+    @State private var restorePass = ""
+    @State private var restoreError = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,8 +50,18 @@ struct WalletSetupView: View {
                 case .seedDisplay(let w): seedDisplayView(words: w)
                 case .seedImport:         seedImportView
                 case .seedConfirmWarning(let w): warningView(words: w)
+                case .seedVerify(let w): SeedVerifyStepView(words: w,
+                    onVerified: { step = .pinSetup(w) },
+                    onBack: { step = .seedDisplay(w) })
+                case .restorePassword(let data): restorePasswordView(fileData: data)
                 case .pinSetup(let w):    PINSetupStepView(words: w, wallet: wallet, onDone: { pin, mnemonic in
-                    let code = wallet.prepareNewWallet(mnemonic: mnemonic, pin: pin)
+                    // Only advance if the wallet was actually persisted & verified. On failure nothing
+                    // is configured, so we bounce back to start rather than show an unusable wallet.
+                    guard let code = wallet.prepareNewWallet(mnemonic: mnemonic, pin: pin) else {
+                        setupError = true
+                        step = .choose
+                        return
+                    }
                     step = .recoveryCode(code, mnemonic)
                 })
                 case .recoveryCode(let code, _): recoveryCodeView(code: code)
@@ -53,6 +69,11 @@ struct WalletSetupView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .alert("Couldn’t create your wallet", isPresented: $setupError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Your Mac’s secure storage rejected the wallet, so nothing was saved. Don’t deposit any funds — try again, and if it keeps failing, restart your Mac and retry.")
         }
     }
 
@@ -108,11 +129,80 @@ struct WalletSetupView: View {
                 ) {
                     step = .seedImport
                 }
+
+                setupOptionCard(
+                    icon: "lock.doc",
+                    title: "Restore from a backup file",
+                    subtitle: "Use an encrypted backup you saved, plus its password."
+                ) {
+                    pickBackupFile()
+                }
             }
             .padding(.horizontal, 32)
 
             Spacer()
         }
+    }
+
+    // MARK: - Restore from encrypted backup
+
+    /// Lets the user pick a `.searxlybackup` file, then moves to the password step to decrypt it.
+    private func pickBackupFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = "Choose your encrypted backup"
+        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
+        restorePass = ""
+        restoreError = false
+        step = .restorePassword(data)
+    }
+
+    private func restorePasswordView(fileData: Data) -> some View {
+        VStack(spacing: 20) {
+            Spacer()
+            ZStack {
+                Circle().fill(Color.white.opacity(0.08)).frame(width: 72, height: 72)
+                Image(systemName: "lock.doc").font(.system(size: 30)).foregroundStyle(.white)
+            }
+            VStack(spacing: 8) {
+                Text("Unlock your backup").font(.system(size: 18, weight: .semibold))
+                Text("Enter the password you set when you saved this backup file.")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).padding(.horizontal, 28)
+            }
+            SecureField("Backup password", text: $restorePass)
+                .textFieldStyle(.plain).font(.system(size: 13))
+                .padding(12).walletGlass(radius: 10, fill: WalletTheme.surfaceField)
+                .frame(maxWidth: 280)
+                .onSubmit { tryRestore(fileData: fileData) }
+            if restoreError {
+                Text("Wrong password, or this isn’t a valid Searxly backup file.")
+                    .font(.system(size: 12)).foregroundStyle(WalletTheme.negative)
+                    .multilineTextAlignment(.center).padding(.horizontal, 28)
+            }
+            VStack(spacing: 12) {
+                Button("Restore Wallet") { tryRestore(fileData: fileData) }
+                    .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black).controlSize(.large)
+                    .disabled(restorePass.isEmpty)
+                Button("Back") { restorePass = ""; restoreError = false; step = .choose }
+                    .buttonStyle(.bordered).controlSize(.regular)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 28)
+    }
+
+    private func tryRestore(fileData: Data) {
+        guard let words = WalletBackup.restore(fileData: fileData, password: restorePass) else {
+            restoreError = true
+            return
+        }
+        // Decrypted a valid mnemonic — continue to PIN setup exactly like a normal import.
+        restorePass = ""
+        restoreError = false
+        step = .pinSetup(words)
     }
 
     @ViewBuilder
@@ -149,11 +239,7 @@ struct WalletSetupView: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 16)
-            .background(Color(white: 0.09), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(Color(white: 0.10), lineWidth: 0.8)
-            )
+            .walletGlass(radius: 14, fill: WalletTheme.surface)
         }
         .buttonStyle(.plain)
     }
@@ -176,14 +262,14 @@ struct WalletSetupView: View {
             // Critical warning
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.shield.fill")
-                    .font(.system(size: 13)).foregroundStyle(.orange).padding(.top, 1)
+                    .font(.system(size: 13)).foregroundStyle(WalletTheme.warning).padding(.top, 1)
                 Text("Anyone with these words can take your funds. Never type them into a website and never share them — Searxly will never ask for them.")
-                    .font(.system(size: 11)).foregroundStyle(Color(white: 0.8))
+                    .font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(12)
-            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.22), lineWidth: 0.8))
+            .background(WalletTheme.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(WalletTheme.warning.opacity(0.22), lineWidth: 0.8))
             .padding(.horizontal, 24)
 
             // 12-word grid (3 columns × 4 rows), blurred until revealed
@@ -202,7 +288,7 @@ struct WalletSetupView: View {
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
-                        .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 8))
+                        .walletGlass(radius: 8, fill: WalletTheme.surfaceField)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -213,13 +299,20 @@ struct WalletSetupView: View {
                         VStack(spacing: 6) {
                             Image(systemName: "eye.fill").font(.system(size: 18))
                             Text("Tap to reveal").font(.system(size: 12, weight: .semibold))
-                            Text("Make sure no one is watching").font(.system(size: 10)).foregroundStyle(Color(white: 0.5))
+                            Text("Make sure no one is watching").font(.system(size: 10)).foregroundStyle(WalletTheme.textTertiary)
                         }
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     .buttonStyle(.plain)
                 }
+            }
+
+            // Optional: copy the phrase to the clipboard to stash in a password manager, instead of
+            // (or as well as) writing it down. Shown once revealed, alongside the "I Wrote It Down" path.
+            if seedRevealed {
+                CopyPhraseButton(words: words)
+                    .padding(.horizontal, 24)
             }
 
             HStack(spacing: 10) {
@@ -262,7 +355,7 @@ struct WalletSetupView: View {
             TextEditor(text: $importText)
                 .font(.system(size: 13, design: .monospaced))
                 .scrollContentBackground(.hidden)
-                .background(Color(white: 0.09), in: RoundedRectangle(cornerRadius: 10))
+                .walletGlass(radius: 10, fill: WalletTheme.surfaceField)
                 .frame(height: 120)
                 .padding(.horizontal, 24)
                 .onChange(of: importText) { _, _ in importError = "" }
@@ -270,7 +363,7 @@ struct WalletSetupView: View {
             if !importError.isEmpty {
                 Text(importError)
                     .font(.system(size: 12))
-                    .foregroundStyle(Color(red: 1, green: 0.33, blue: 0.33))
+                    .foregroundStyle(WalletTheme.negative)
             }
 
             HStack(spacing: 10) {
@@ -318,11 +411,11 @@ struct WalletSetupView: View {
             Spacer()
             ZStack {
                 Circle()
-                    .fill(Color.orange.opacity(0.15))
+                    .fill(WalletTheme.warning.opacity(0.15))
                     .frame(width: 72, height: 72)
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 30))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(WalletTheme.warning)
             }
             VStack(spacing: 8) {
                 Text("Have you saved your seed phrase?")
@@ -336,7 +429,7 @@ struct WalletSetupView: View {
             }
 
             VStack(spacing: 12) {
-                Button("Yes, I Saved It — Continue") { step = .pinSetup(words) }
+                Button("Yes, I Saved It — Continue") { step = .seedVerify(words) }
                     .buttonStyle(.borderedProminent)
                     .tint(.white)
                     .foregroundStyle(.black)
@@ -382,7 +475,7 @@ struct WalletSetupView: View {
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .padding(14)
-                    .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 10))
+                    .walletGlass(radius: 10, fill: WalletTheme.surfaceField)
 
                 Button {
                     // Sensitive: concealed copy that auto-clears (won't sync via Universal Clipboard).
@@ -463,14 +556,14 @@ private struct PINSetupStepView: View {
             if !seAvailable && !isConfirming {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "lock.shield.fill")
-                        .font(.system(size: 12)).foregroundStyle(.orange).padding(.top, 1)
+                        .font(.system(size: 12)).foregroundStyle(WalletTheme.warning).padding(.top, 1)
                     Text("This Mac has no Secure Enclave, so a passphrase (not a 6-digit PIN) is required — it's what keeps your seed safe from offline guessing if the encrypted file is ever copied.")
-                        .font(.system(size: 11)).foregroundStyle(Color(white: 0.8))
+                        .font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(12)
-                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.22), lineWidth: 0.8))
+                .background(WalletTheme.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(WalletTheme.warning.opacity(0.22), lineWidth: 0.8))
                 .padding(.horizontal, 24)
             }
 
@@ -479,7 +572,7 @@ private struct PINSetupStepView: View {
                     let displayPin = isConfirming ? confirmPin : pin
                     ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
                         Circle()
-                            .fill(i < displayPin.count ? Color.white : Color(white: 0.20))
+                            .fill(i < displayPin.count ? Color.white : WalletTheme.surfaceStrong)
                             .frame(width: 14, height: 14)
                             .animation(.spring(response: 0.2), value: displayPin.count)
                     }
@@ -489,12 +582,12 @@ private struct PINSetupStepView: View {
             if mismatch {
                 Text("They don't match. Try again.")
                     .font(.system(size: 12))
-                    .foregroundStyle(Color(red: 1, green: 0.33, blue: 0.33))
+                    .foregroundStyle(WalletTheme.negative)
                     .transition(.opacity)
             } else if tooShort {
                 Text("Use at least \(WalletConfig.minPassphraseLength) characters.")
                     .font(.system(size: 12))
-                    .foregroundStyle(Color(red: 1, green: 0.33, blue: 0.33))
+                    .foregroundStyle(WalletTheme.negative)
             }
 
             PINKeypad(pin: isConfirming ? $confirmPin : $pin, maxLength: WalletConfig.pinLength,
@@ -542,6 +635,103 @@ private struct PINSetupStepView: View {
                     pin = ""
                 }
             }
+        }
+    }
+}
+
+// MARK: - Seed backup verification
+//
+// Proves the user actually wrote the phrase down before we let them set a PIN. Quizzes three random
+// positions multiple-choice (each: the correct word + three decoys from the BIP-39 list). This guards
+// against the single biggest cause of crypto loss: clicking "I saved it" without saving anything.
+private struct SeedVerifyStepView: View {
+    let words: [String]
+    let onVerified: () -> Void
+    let onBack: () -> Void
+
+    private struct Challenge: Identifiable {
+        let id = UUID()
+        let position: Int          // 0-based index into the phrase
+        let options: [String]
+    }
+
+    @State private var challenges: [Challenge] = []
+    @State private var picks: [Int: String] = [:]   // position → chosen word
+    @State private var showError = false
+
+    private var allAnswered: Bool { picks.count == challenges.count && !challenges.isEmpty }
+    private var allCorrect: Bool { challenges.allSatisfy { picks[$0.position] == words[$0.position] } }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Spacer()
+            VStack(spacing: 8) {
+                Text("Confirm your backup")
+                    .font(.system(size: 18, weight: .semibold))
+                Text("Tap the correct word for each position to prove you saved your phrase.")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).padding(.horizontal, 28)
+            }
+
+            VStack(spacing: 16) {
+                ForEach(challenges) { ch in
+                    VStack(spacing: 8) {
+                        Text("Word #\(ch.position + 1)")
+                            .font(.system(size: 12, weight: .medium)).foregroundStyle(WalletTheme.textTertiary)
+                        HStack(spacing: 8) {
+                            ForEach(ch.options, id: \.self) { opt in
+                                Button {
+                                    picks[ch.position] = opt; showError = false
+                                } label: {
+                                    Text(opt)
+                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(picks[ch.position] == opt ? .black : .white)
+                                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                                        .background(picks[ch.position] == opt ? Color.white : WalletTheme.surfaceStrong,
+                                                    in: RoundedRectangle(cornerRadius: 8))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 28)
+
+            if showError {
+                Text("That doesn’t match your phrase. Check what you wrote down.")
+                    .font(.system(size: 12)).foregroundStyle(WalletTheme.negative)
+                    .multilineTextAlignment(.center).padding(.horizontal, 28)
+            }
+
+            VStack(spacing: 12) {
+                Button("Continue") {
+                    if allCorrect { onVerified() } else { showError = true }
+                }
+                .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black).controlSize(.large)
+                .disabled(!allAnswered)
+
+                Button("Show my phrase again") { onBack() }
+                    .buttonStyle(.bordered).controlSize(.regular)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 28)
+        .onAppear { if challenges.isEmpty { buildChallenges() } }
+    }
+
+    private func buildChallenges() {
+        let positions = Array(words.indices).shuffled().prefix(3).sorted()
+        challenges = positions.map { idx in
+            var options = Set<String>([words[idx]])
+            // Decoys are words NOT in the user's phrase, so a "wrong" option is never ambiguously
+            // also one of their real words.
+            while options.count < 4 {
+                if let decoy = BIP39.wordList.randomElement(), !words.contains(decoy) {
+                    options.insert(decoy)
+                }
+            }
+            return Challenge(position: idx, options: Array(options).shuffled())
         }
     }
 }

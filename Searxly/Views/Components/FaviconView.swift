@@ -34,25 +34,28 @@ struct FaviconView: View {
     /// This eliminates any network request that could leak the domains the user is visiting.
     private var faviconURLs: [URL] {
         guard let host else { return [] }
+        let h = host.replacingOccurrences(of: "www.", with: "")
+
+        // Never make favicon requests for .onion hosts: they only resolve over Tor (a plain request
+        // would fail and could leak the address), so just show the monogram.
+        if h.hasSuffix(".onion") { return [] }
 
         var urls: [URL] = []
-        let h = host.replacingOccurrences(of: "www.", with: "")
-        let schemes: [String] = pageURLHasHTTPScheme ? ["http", "https"] : ["https", "http"]
-        let paths = [
-            "/favicon.ico",
-            "/favicon.png",
-            "/favicon.svg",
-            "/apple-touch-icon.png",
-            "/apple-touch-icon-precomposed.png"
-        ]
 
-        for scheme in schemes {
-            let base = "\(scheme)://\(h)"
-            for path in paths {
-                if let u = URL(string: base + path) {
-                    urls.append(u)
-                }
-            }
+        // 1. Direct, privacy-preserving attempts on the target host itself (no third party). Covers
+        //    the common case where a site serves /favicon.ico at the root.
+        let primaryScheme = pageURLHasHTTPScheme ? "http" : "https"
+        for path in ["/favicon.ico", "/apple-touch-icon.png", "/favicon.png", "/favicon.svg"] {
+            if let u = URL(string: "\(primaryScheme)://\(h)\(path)") { urls.append(u) }
+        }
+
+        // 2. Resolver fallback (only reached when the direct attempts fail). Many sites declare their
+        //    favicon via <link rel="icon"> at a non-standard path (e.g. torproject.org serves no
+        //    /favicon.ico) — the direct attempts can't see that without fetching the page. DuckDuckGo's
+        //    icon service resolves it. It is privacy-respecting (run by DDG, stated no tracking) and is
+        //    only used for non-private contexts (loadRemote is already false for private tabs).
+        if let resolver = URL(string: "https://icons.duckduckgo.com/ip3/\(h).ico") {
+            urls.append(resolver)
         }
 
         return urls

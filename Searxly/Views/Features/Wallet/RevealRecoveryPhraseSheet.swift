@@ -3,9 +3,10 @@
 //  Searxly
 //
 //  Re-displays the wallet's 12-word recovery phrase so a user can back it up again. Gated by
-//  biometrics (when enabled) or the rate-limited PIN, then blur-to-reveal and never copyable —
-//  the words are decrypted from the Keychain only after a successful auth and live only in this
-//  sheet's state while it's open.
+//  biometrics (when enabled) or the rate-limited PIN, then blur-to-reveal — the words are decrypted
+//  from the Keychain only after a successful auth and live only in this sheet's state while it's open.
+//  Once authenticated, the user can also copy the phrase to the clipboard (CopyPhraseButton) to stash
+//  in a password manager; the clipboard is auto-cleared after a short window.
 //
 
 import SwiftUI
@@ -37,14 +38,7 @@ struct RevealRecoveryPhraseSheet: View {
             Text("Recovery Phrase")
                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
             Spacer()
-            Button { onClose() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(WalletTheme.textSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(WalletTheme.surfaceStrong, in: Circle())
-            }
-            .buttonStyle(.plain)
+            WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { onClose() }
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
     }
@@ -83,7 +77,7 @@ struct RevealRecoveryPhraseSheet: View {
 
             HStack(spacing: 12) {
                 ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? Color.white : Color(white: 0.2)).frame(width: 11, height: 11)
+                    Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                 }
             }
             if pinError {
@@ -117,7 +111,7 @@ struct RevealRecoveryPhraseSheet: View {
                             Spacer(minLength: 0)
                         }
                         .padding(.horizontal, 10).padding(.vertical, 8)
-                        .background(WalletTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .walletGlass(radius: 8)
                     }
                 }
                 .blur(radius: revealed ? 0 : 9)
@@ -137,6 +131,10 @@ struct RevealRecoveryPhraseSheet: View {
                 }
             }
 
+            // Copy the phrase to the clipboard (paste it into a password manager / safe note). Shared
+            // with setup. Auto-clears the clipboard after a short window.
+            CopyPhraseButton(words: words)
+
             Button { onClose() } label: {
                 Text("Done")
                     .font(.system(size: 14, weight: .semibold)).foregroundStyle(.black)
@@ -154,7 +152,7 @@ struct RevealRecoveryPhraseSheet: View {
             Image(systemName: "exclamationmark.shield.fill")
                 .font(.system(size: 13)).foregroundStyle(WalletTheme.warning).padding(.top, 1)
             Text(text)
-                .font(.system(size: 11)).foregroundStyle(Color(white: 0.8))
+                .font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)

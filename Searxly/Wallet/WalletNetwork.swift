@@ -105,6 +105,50 @@ enum WalletNetwork {
         return (price, change)
     }
 
+    // MARK: - Token metadata ("Add coin" by contract address)
+
+    struct TokenMeta: Equatable { let symbol: String; let name: String; let decimals: Int }
+
+    /// Reads an ERC-20's symbol / name / decimals straight from the contract in ONE batched RPC call
+    /// (the user's own node — no external service, no name search, nothing leaves to a third party).
+    /// Returns nil when the address doesn't behave like an ERC-20 (so the UI can fall back to manual
+    /// entry). symbol/name are ABI-decoded; older bytes32-style tokens are handled too.
+    static func tokenMetadata(contract: String, rpc: String) async -> TokenMeta? {
+        let results = await jsonRPCBatch(rpc: rpc, calls: [
+            (1, "eth_call", [["to": contract, "data": "0x95d89b41"], "latest"]),   // symbol()
+            (2, "eth_call", [["to": contract, "data": "0x06fdde03"], "latest"]),   // name()
+            (3, "eth_call", [["to": contract, "data": "0x313ce567"], "latest"]),   // decimals()
+        ])
+        // decimals() is the discriminator: a real ERC-20 answers with a uint8. No answer → not a token.
+        guard let decHex = results[3] as? String,
+              let dec = UInt64(String(decHex.hasPrefix("0x") ? decHex.dropFirst(2) : Substring(decHex)).suffix(16), radix: 16),
+              dec <= 36
+        else { return nil }
+        let symbol = (results[1] as? String).flatMap { decodeABIString($0) } ?? ""
+        let name   = (results[2] as? String).flatMap { decodeABIString($0) } ?? symbol
+        return TokenMeta(symbol: symbol, name: name.isEmpty ? symbol : name, decimals: Int(dec))
+    }
+
+    /// Decodes an ABI-encoded `string` return (`[32 offset][32 length][bytes]`), with a fallback for
+    /// older tokens that return a fixed `bytes32` symbol.
+    private static func decodeABIString(_ hex: String) -> String? {
+        let data = RLP.dataFromHex(hex)
+        func be(_ d: Data) -> Int { d.suffix(8).reduce(0) { ($0 << 8) | Int($1) } }
+        guard data.count >= 64 else {
+            let trimmed = data.prefix { $0 != 0 }            // bytes32: trim zero padding
+            let s = String(decoding: trimmed, as: UTF8.self)
+            return s.isEmpty ? nil : s
+        }
+        let offset = be(data.subdata(in: 0..<32))
+        guard offset >= 0, offset + 32 <= data.count else { return nil }
+        let length = be(data.subdata(in: offset..<offset + 32))
+        let start = offset + 32
+        guard length > 0, length < 256, start + length <= data.count else { return nil }
+        let s = String(decoding: data.subdata(in: start..<start + length), as: UTF8.self)
+        let cleaned = s.trimmingCharacters(in: CharacterSet.controlCharacters.union(.whitespaces))
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
     // MARK: - Price history (charts)
     //
     // PRIVACY: every request here is keyed only by a PUBLIC token contract / pool address (or the
@@ -407,12 +451,85 @@ enum WalletNetwork {
         req.httpBody = bodyData
         req.timeoutInterval = 12
 
-        guard let (data, _) = try? await URLSession.shared.data(for: req) else { return (nil, "Network error", false) }
+        guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return (nil, "Network error", false) }
+        // A rate-limited (429) or overloaded (5xx) node hasn't really answered — mark it unreachable
+        // so we fail over to the next endpoint instead of returning a nil balance that shows as "0".
+        if let http = resp as? HTTPURLResponse, http.statusCode == 429 || http.statusCode >= 500 {
+            return (nil, "HTTP \(http.statusCode)", false)
+        }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return (nil, "Invalid response", false) }
         if let error = json["error"] as? [String: Any] {
             return (nil, error["message"] as? String ?? "RPC error", true)
         }
         return (json["result"], nil, true)
+    }
+
+    // MARK: - Batched JSON-RPC (one HTTP round-trip for many calls)
+
+    /// All token balances in a SINGLE batched RPC round-trip — `eth_getBalance` for the native coin
+    /// and `eth_call(balanceOf)` for each ERC-20, sent as one JSON array. Public Base/ETH nodes all
+    /// support batching, so this collapses a refresh's 7+ reads into one request and stops a
+    /// rate-limited node from throttling the burst (which surfaced as a stuck "0" balance). Returns
+    /// balances keyed by the caller's token id; a token whose call failed is simply absent, so the
+    /// caller can keep its previous value rather than wipe it to 0.
+    static func batchBalances(walletAddress: String,
+                              tokens: [(id: String, contract: String?, decimals: Int)],
+                              rpc: String) async -> [String: Decimal] {
+        guard !tokens.isEmpty else { return [:] }
+        var calls: [(id: Int, method: String, params: [Any])] = []
+        var meta: [Int: (id: String, decimals: Int, native: Bool)] = [:]
+        for (i, t) in tokens.enumerated() {
+            let cid = i + 1
+            if let contract = t.contract {
+                let paddedAddr = walletAddress.dropFirst(2).lowercased().leftPadded(toLength: 64)
+                let callObj: [String: String] = ["to": contract, "data": "0x70a08231" + paddedAddr]
+                calls.append((cid, "eth_call", [callObj, "latest"]))
+                meta[cid] = (t.id, t.decimals, false)
+            } else {
+                calls.append((cid, "eth_getBalance", [walletAddress, "latest"]))
+                meta[cid] = (t.id, t.decimals, true)
+            }
+        }
+        let results = await jsonRPCBatch(rpc: rpc, calls: calls)
+        var out: [String: Decimal] = [:]
+        for (cid, m) in meta {
+            guard let hex = results[cid] as? String else { continue }
+            let value = m.native ? hexWeiToDecimalETH(hex)
+                                 : (hex.count > 2 ? hexToDecimal(hex.dropFirst(2), decimals: m.decimals) : nil)
+            if let value { out[m.id] = value }
+        }
+        return out
+    }
+
+    /// Sends a batch, failing over across same-chain endpoints (same policy as `jsonRPCFull`).
+    private static func jsonRPCBatch(rpc: String, calls: [(id: Int, method: String, params: [Any])]) async -> [Int: Any] {
+        guard !calls.isEmpty else { return [:] }
+        var candidates = [rpc]
+        for u in failoverList(for: rpc) where !candidates.contains(u) { candidates.append(u) }
+        for url in candidates {
+            if let r = await singleBatch(rpc: url, calls: calls) { return r }
+        }
+        return [:]
+    }
+
+    private static func singleBatch(rpc: String, calls: [(id: Int, method: String, params: [Any])]) async -> [Int: Any]? {
+        guard let url = URL(string: rpc) else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = calls.map { ["jsonrpc": "2.0", "id": $0.id, "method": $0.method, "params": $0.params] }
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        req.httpBody = bodyData
+        req.timeoutInterval = 15
+
+        guard let (data, resp) = try? await URLSession.shared.data(for: req) else { return nil }
+        if let http = resp as? HTTPURLResponse, http.statusCode == 429 || http.statusCode >= 500 { return nil }
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
+        var out: [Int: Any] = [:]
+        for item in arr {
+            if let id = item["id"] as? Int, let result = item["result"] { out[id] = result }
+        }
+        return out.isEmpty ? nil : out   // nothing usable → let the caller fail over
     }
 
     // MARK: - Hex → UInt64

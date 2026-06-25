@@ -66,7 +66,11 @@ scripts/regenerate_ublock_filters.py
 Searxly/VPN/
 SearxlyWireGuardTunnel/
 Searxly/Views/Features/VPNOwnServersView.swift
+Searxly/Views/Features/VPNManagedView.swift
 Searxly/Views/Components/VPNBrowserControl.swift
+Searxly/Views/Components/SearxlyVPNPill.swift
+# Operator-side VPN control plane (BitLaunch exit node + USDC payment verification) — kept private
+vpn-control-plane/
 
 # Real-celebrity photos + generators — publicity/copyright; kept private
 Searxly/Resources/CelebrityFaces/
@@ -91,3 +95,7 @@ gateway/.env
 *.pem
 *.mobileprovision
 *.provisionprofile
+
+# Local editor tooling + Xcode caches (not part of the source)
+.claude/
+27.0-27A5194q/

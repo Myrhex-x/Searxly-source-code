@@ -19,9 +19,7 @@ struct OnboardingFlow: View {
     @State private var stepDirection = 1
     @State private var setup = OnboardingSetupController()
 
-    @State private var selectedEncryptionChoice: Bool?
-    @State private var usedSecureMacPreset = false
-    @State private var usedMaximumPrivacyPreset = false
+    @State private var selectedLevel: OnboardingPrivacyLevel?
     @State private var recoveryCodeInOnboarding: String?
     @State private var encryptionSetupError: String?
     @State private var showRecoveryCopied = false
@@ -34,17 +32,26 @@ struct OnboardingFlow: View {
     @State private var appLockSetupError: String?
     @State private var appLockAuthContext: LAContext?
 
-    @State private var isStartingLocalSearch = false
+    /// Drives the "launch into the app" flourish on the final step.
+    @State private var isLaunching = false
+
+    /// SearXNG is bundled and provisions itself, so there's no manual "set up local search" step
+    /// anymore. We kick provisioning + first boot off in the background as soon as onboarding appears
+    /// so the private instance is ready (or nearly so) by the time the user reaches the Ready step.
+    @State private var didKickOffLocalSearch = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var existingInstanceURLs: [String] {
-        searxInstances.map(\.url)
-    }
 
     var body: some View {
         ZStack {
             HomeAmbientBackground(glassEnabled: glassEnabled, homeStarsEnabled: true)
+
+            // Extra cinematic flourish on the opening + closing screens.
+            if currentStep == 0 || currentStep == OnboardingStyle.stepCount - 1 {
+                OnboardingShootingStars()
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            }
 
             GeometryReader { geo in
                 let isCompact = geo.size.width < 680
@@ -59,8 +66,34 @@ struct OnboardingFlow: View {
                 .padding(.vertical, isCompact ? 12 : 18)
             }
         }
+        // Launch flourish: the whole onboarding dips, then zooms out + blurs + fades,
+        // revealing the app, while a bloom + shockwave flash from the center.
+        .keyframeAnimator(initialValue: OnboardingLaunchPose(), trigger: isLaunching) { view, pose in
+            view
+                .scaleEffect(pose.scale)
+                .blur(radius: pose.blur)
+                .opacity(pose.opacity)
+        } keyframes: { _ in
+            KeyframeTrack(\.scale) {
+                CubicKeyframe(0.97, duration: 0.16)
+                SpringKeyframe(1.18, duration: 0.52)
+            }
+            KeyframeTrack(\.opacity) {
+                CubicKeyframe(1.0, duration: 0.20)
+                CubicKeyframe(0.0, duration: 0.46)
+            }
+            KeyframeTrack(\.blur) {
+                CubicKeyframe(0.0, duration: 0.22)
+                CubicKeyframe(7.0, duration: 0.44)
+            }
+        }
+        .overlay {
+            if isLaunching && !reduceMotion {
+                OnboardingLaunchBurst()
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .frame(minWidth: 620, minHeight: 560)
+        .frame(minWidth: 620, minHeight: 580)
         .onboardingGlassEnabled(glassEnabled)
         .onChange(of: setup.isConnectionSuccessful) { _, success in
             if success {
@@ -72,6 +105,21 @@ struct OnboardingFlow: View {
         }
         .onAppear {
             syncStepState(for: currentStep)
+            startLocalSearchInBackground()
+        }
+    }
+
+    /// Provisions + starts the bundled SearXNG once, off the main flow. Idempotent and silent:
+    /// failures surface later via the Ready step status (and Settings → Instances troubleshooting),
+    /// never as a blocking onboarding step.
+    private func startLocalSearchInBackground() {
+        guard !didKickOffLocalSearch else { return }
+        didKickOffLocalSearch = true
+        Task { @MainActor in
+            await setup.startLocalSearch()
+            if setup.isConnectionSuccessful {
+                applyInstanceFromSetup()
+            }
         }
     }
 
@@ -83,8 +131,14 @@ struct OnboardingFlow: View {
         case 1:
             localSearchShell
         case 2:
-            securityShell
+            encryptionShell
         case 3:
+            walletShell
+        case 4:
+            vpnShell
+        case 5:
+            securityShell
+        case 6:
             readyShell
         default:
             welcomeShell
@@ -92,14 +146,14 @@ struct OnboardingFlow: View {
     }
 
     private var welcomeShell: some View {
-        OnboardingShell(step: 0, showProgress: false, useGlassCard: false) {
+        OnboardingShell(step: 0, showProgress: false, useGlassCard: false, maxContentWidth: OnboardingStyle.centeredContentWidth) {
             OnboardingWelcomeStep(glassEnabled: glassEnabled)
         } actionBar: {
             OnboardingActionBar(
                 showBack: false,
-                skipTitle: "Set up later",
+                skipTitle: "Skip intro",
                 skipAction: dismissOnboardingEarly,
-                primaryTitle: "Get started",
+                primaryTitle: "Take the tour",
                 primarySystemImage: "arrow.right",
                 primaryAction: { advance(to: 1) }
             )
@@ -107,52 +161,91 @@ struct OnboardingFlow: View {
     }
 
     private var localSearchShell: some View {
-        OnboardingShell(
-            step: 1,
-            instruction: "Nothing starts until you tap Start local search. SearXNG is built in — nothing to install. First boot takes a few seconds.",
-            scrollable: true,
-            showProgress: true
-        ) {
-            OnboardingLocalSearchStep(setup: setup)
+        OnboardingShell(step: 1, scrollable: false, showProgress: true, useGlassCard: false) {
+            OnboardingLocalSearchStep()
         } actionBar: {
             OnboardingActionBar(
                 showBack: true,
                 backAction: goBack,
-                skipTitle: "Later",
+                skipTitle: "Skip intro",
                 skipAction: dismissOnboardingEarly,
-                primaryTitle: localSearchPrimaryTitle,
-                primarySystemImage: setup.isConnectionSuccessful ? "arrow.right" : "sparkles",
-                primaryDisabled: localSearchPrimaryDisabled,
-                primaryLoading: isStartingLocalSearch,
-                primaryAction: handleLocalSearchPrimary
+                primaryTitle: "Next",
+                primarySystemImage: "arrow.right",
+                primaryAction: { advance(to: 2) }
+            )
+        }
+    }
+
+    private var encryptionShell: some View {
+        OnboardingShell(step: 2, scrollable: false, showProgress: true, useGlassCard: false) {
+            OnboardingEncryptionStep()
+        } actionBar: {
+            OnboardingActionBar(
+                showBack: true,
+                backAction: goBack,
+                skipTitle: "Skip intro",
+                skipAction: dismissOnboardingEarly,
+                primaryTitle: "Next",
+                primarySystemImage: "arrow.right",
+                primaryAction: { advance(to: 3) }
+            )
+        }
+    }
+
+    private var walletShell: some View {
+        OnboardingShell(step: 3, scrollable: false, showProgress: true, useGlassCard: false) {
+            OnboardingWalletStep()
+        } actionBar: {
+            OnboardingActionBar(
+                showBack: true,
+                backAction: goBack,
+                skipTitle: "Skip intro",
+                skipAction: dismissOnboardingEarly,
+                primaryTitle: "Next",
+                primarySystemImage: "arrow.right",
+                primaryAction: { advance(to: 4) }
+            )
+        }
+    }
+
+    private var vpnShell: some View {
+        OnboardingShell(step: 4, scrollable: false, showProgress: true, useGlassCard: false) {
+            OnboardingVPNStep()
+        } actionBar: {
+            OnboardingActionBar(
+                showBack: true,
+                backAction: goBack,
+                skipTitle: "Skip intro",
+                skipAction: dismissOnboardingEarly,
+                primaryTitle: "Next",
+                primarySystemImage: "arrow.right",
+                primaryAction: { advance(to: 5) }
             )
         }
     }
 
     private var securityShell: some View {
         OnboardingShell(
-            step: 2,
-            instruction: "Pick a privacy level below. App Lock is optional, but recommended for shared Macs.",
+            step: 5,
+            instruction: "Pick a protection level below. App Lock is optional, but recommended for shared Macs.",
             scrollable: true,
-            showProgress: true
+            showProgress: true,
+            useGlassCard: false,
+            maxContentWidth: OnboardingStyle.centeredContentWidth
         ) {
             OnboardingSecurityStep(
-                selectedEncryptionChoice: $selectedEncryptionChoice,
-                usedMaximumPrivacyPreset: $usedMaximumPrivacyPreset,
-                usedSecureMacPreset: $usedSecureMacPreset,
-                recoveryCodeInOnboarding: $recoveryCodeInOnboarding,
+                selectedLevel: $selectedLevel,
+                recoveryCode: $recoveryCodeInOnboarding,
                 encryptionSetupError: $encryptionSetupError,
                 showRecoveryCopied: $showRecoveryCopied,
                 showRecoveryDownloaded: $showRecoveryDownloaded,
                 recoveryDownloadError: $recoveryDownloadError,
                 isSavingRecoveryFile: $isSavingRecoveryFile,
-                appLockEnabledInThisSession: $appLockEnabledInThisSession,
+                appLockEnabled: $appLockEnabledInThisSession,
                 isPerformingAppLockAuth: $isPerformingAppLockAuth,
                 appLockSetupError: $appLockSetupError,
-                onMaximumPrivacy: enableMaximumPrivacyDuringOnboarding,
-                onSecureMac: enableSecureMacDuringOnboarding,
-                onUseDefaults: acceptDefaultPrivacyDuringOnboarding,
-                onEnableAppLock: enableAppLockDuringOnboarding
+                onSelectLevel: applyPrivacyLevel,
+                onToggleAppLock: toggleAppLock
             )
         } actionBar: {
             OnboardingActionBar(
@@ -162,14 +255,14 @@ struct OnboardingFlow: View {
                 skipAction: dismissOnboardingEarly,
                 primaryTitle: "Continue",
                 primarySystemImage: "arrow.right",
-                primaryDisabled: selectedEncryptionChoice == nil && !usedMaximumPrivacyPreset,
-                primaryAction: { advance(to: 3) }
+                primaryDisabled: selectedLevel == nil,
+                primaryAction: { advance(to: 6) }
             )
         }
     }
 
     private var readyShell: some View {
-        OnboardingShell(step: 3, showProgress: false, useGlassCard: false) {
+        OnboardingShell(step: 6, showProgress: false, useGlassCard: false, maxContentWidth: OnboardingStyle.centeredContentWidth) {
             OnboardingReadyStep(
                 glassEnabled: glassEnabled,
                 localSearchReady: setup.isConnectionSuccessful,
@@ -182,32 +275,19 @@ struct OnboardingFlow: View {
                 backAction: goBack,
                 primaryTitle: "Start browsing",
                 primarySystemImage: "arrow.right",
-                primaryAction: finishOnboarding
+                primaryAction: launchIntoApp
             )
         }
     }
 
-    private var localSearchPrimaryTitle: String {
-        if isStartingLocalSearch {
-            return "Setting up…"
-        }
-        if setup.isConnectionSuccessful {
-            return "Continue"
-        }
-        return "Start local search"
-    }
-
-    private var localSearchPrimaryDisabled: Bool {
-        if setup.isConnectionSuccessful { return false }
-        if isStartingLocalSearch { return true }
-        return false
-    }
-
     private var privacySummaryLabel: String {
-        if usedMaximumPrivacyPreset { return "Maximum Privacy enabled" }
-        if usedSecureMacPreset { return "Secure this Mac enabled" }
-        if selectedEncryptionChoice == false { return "Default privacy settings" }
-        return PrivacyManager.shared.dataEncryptionEnabled ? "Encryption on" : "Default privacy settings"
+        switch selectedLevel {
+        case .maximum:   return "Maximum protection enabled"
+        case .encrypted: return "Encrypted on this Mac"
+        case .standard:  return "Standard privacy enabled"
+        case nil:
+            return PrivacyManager.shared.dataEncryptionEnabled ? "Encryption on" : "Default privacy settings"
+        }
     }
 
     private var stepTransition: AnyTransition {
@@ -219,23 +299,6 @@ struct OnboardingFlow: View {
         )
     }
 
-    private func handleLocalSearchPrimary() {
-        if setup.isConnectionSuccessful {
-            applyInstanceFromSetup()
-            advance(to: 2)
-            return
-        }
-        setup.cancelAllTasks()
-        isStartingLocalSearch = true
-        Task { @MainActor in
-            defer { isStartingLocalSearch = false }
-            await setup.startLocalSearch()
-            if setup.isConnectionSuccessful {
-                applyInstanceFromSetup()
-            }
-        }
-    }
-
     private func goBack() {
         isPerformingAppLockAuth = false
         appLockSetupError = nil
@@ -244,9 +307,6 @@ struct OnboardingFlow: View {
 
     private func advance(to step: Int) {
         stepDirection = step > currentStep ? 1 : -1
-        if step == 1 {
-            setup.resetForStepEntry()
-        }
         var transaction = Transaction(animation: OnboardingStyle.stepSpring)
         transaction.disablesAnimations = reduceMotion
         withTransaction(transaction) {
@@ -256,13 +316,10 @@ struct OnboardingFlow: View {
 
     private func syncStepState(for step: Int) {
         switch step {
-        case 1:
-            if !setup.hasTriggeredAutoSetup {
-                setup.scheduleSetupProbe(activeStep: step, existingInstanceURLs: existingInstanceURLs)
-            }
-        case 2:
-            if PrivacyManager.shared.dataEncryptionEnabled, selectedEncryptionChoice == nil {
-                selectedEncryptionChoice = true
+        case 5:
+            // Security/privacy step. Reflect any already-applied state.
+            if PrivacyManager.shared.dataEncryptionEnabled, selectedLevel == nil {
+                selectedLevel = .encrypted
                 recoveryCodeInOnboarding = PrivacyManager.shared.exportEncryptionRecoveryCode()
             }
             appLockEnabledInThisSession = AppLockManager.shared.isAppLockEnabled
@@ -273,17 +330,15 @@ struct OnboardingFlow: View {
     }
 
     private func dismissOnboardingEarly() {
-        if setup.isConnectionSuccessful {
-            applyInstanceFromSetup()
-        }
-        finishOnboarding()
+        completeOnboarding()
     }
 
     private func applyInstanceFromSetup() {
         setup.applyInstance(searxInstances: &searxInstances, currentInstanceID: &currentInstanceID)
     }
 
-    private func finishOnboarding() {
+    /// Immediate completion (used when skipping). No flourish.
+    private func completeOnboarding() {
         if setup.isConnectionSuccessful {
             applyInstanceFromSetup()
         }
@@ -291,67 +346,81 @@ struct OnboardingFlow: View {
         hasCompletedOnboarding = true
     }
 
-    // MARK: - Security actions
-
-    private func enableMaximumPrivacyDuringOnboarding() {
-        encryptionSetupError = nil
-        showRecoveryCopied = false
-        showRecoveryDownloaded = false
-        usedMaximumPrivacyPreset = true
-        usedSecureMacPreset = false
-
-        PrivacyManager.shared.enableStrictPrivacyMode()
-        selectedEncryptionChoice = true
-        recoveryCodeInOnboarding = PrivacyManager.shared.exportEncryptionRecoveryCode()
-    }
-
-    private func acceptDefaultPrivacyDuringOnboarding() {
-        withAnimation(OnboardingStyle.cardSpring) {
-            usedMaximumPrivacyPreset = false
-            usedSecureMacPreset = false
-            selectedEncryptionChoice = false
-            encryptionSetupError = nil
-            showRecoveryCopied = false
-            showRecoveryDownloaded = false
-
-            if PrivacyManager.shared.dataEncryptionEnabled {
-                recoveryCodeInOnboarding = PrivacyManager.shared.exportEncryptionRecoveryCode()
-            } else {
-                recoveryCodeInOnboarding = nil
-            }
+    /// Final "Start browsing": plays the launch flourish, then hands off to the app.
+    private func launchIntoApp() {
+        guard !isLaunching else { return }
+        if setup.isConnectionSuccessful {
+            applyInstanceFromSetup()
         }
-    }
+        PrivacyManager.shared.setDefaultNewTabsToPrivate(true)
 
-    private func enableSecureMacDuringOnboarding() {
-        encryptionSetupError = nil
-        showRecoveryCopied = false
-        showRecoveryDownloaded = false
-        usedSecureMacPreset = true
-        usedMaximumPrivacyPreset = false
-
-        let result = PrivacyManager.shared.enableSecureMacPreset(enableAppLock: false)
-        guard result.encryptionEnabled else {
-            selectedEncryptionChoice = nil
-            recoveryCodeInOnboarding = nil
-            usedSecureMacPreset = false
-            encryptionSetupError = result.partialError ?? "Could not enable encryption. Searxly may not have Keychain access."
+        guard !reduceMotion else {
+            hasCompletedOnboarding = true
             return
         }
 
-        selectedEncryptionChoice = true
-        recoveryCodeInOnboarding = result.recoveryCode
-
-        if recoveryCodeInOnboarding == nil {
-            encryptionSetupError = "Encryption is on, but the recovery code could not be read. Try Settings → Privacy."
+        // Toggling the keyframe trigger plays the launch transform; hand off to the app
+        // as it finishes fading.
+        isLaunching = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            hasCompletedOnboarding = true
         }
     }
 
-    private func enableAppLockDuringOnboarding() {
+    // MARK: - Security actions
+
+    /// Applies a privacy tier. Each tier is a superset of the previous one, so the
+    /// underlying PrivacyManager calls stack accordingly.
+    private func applyPrivacyLevel(_ level: OnboardingPrivacyLevel) {
+        encryptionSetupError = nil
+        showRecoveryCopied = false
+        showRecoveryDownloaded = false
+
+        // Session privacy (Standard and up): private tabs + no history.
+        PrivacyManager.shared.setDefaultNewTabsToPrivate(true)
+        PrivacyManager.shared.setHistoryEnabled(false)
+
+        // Maximum additionally clears existing web data and disables Local AI.
+        if level == .maximum {
+            PrivacyManager.shared.enableStrictPrivacyMode()
+        }
+
+        // Encrypted and Maximum add at-rest encryption + a recovery code.
+        if level.includesEncryption {
+            let result = PrivacyManager.shared.enableSecureMacPreset(enableAppLock: false)
+            guard result.encryptionEnabled else {
+                selectedLevel = nil
+                recoveryCodeInOnboarding = nil
+                encryptionSetupError = result.partialError
+                    ?? "Could not enable encryption. Searxly may not have Keychain access."
+                return
+            }
+            recoveryCodeInOnboarding = result.recoveryCode
+            if recoveryCodeInOnboarding == nil {
+                encryptionSetupError = "Encryption is on, but the recovery code could not be read. Try Settings → Privacy."
+            }
+        } else {
+            recoveryCodeInOnboarding = nil
+        }
+
+        selectedLevel = level
+    }
+
+    /// Real on/off App Lock toggle. Turning on authenticates first; turning off is immediate.
+    private func toggleAppLock(_ desired: Bool) {
         appLockSetupError = nil
+        guard desired != appLockEnabledInThisSession else { return }
+
+        guard desired else {
+            AppLockManager.shared.setAppLockEnabled(false)
+            appLockEnabledInThisSession = false
+            return
+        }
+
         let context = LAContext()
         var error: NSError?
-
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            // No biometrics/password available — enable without a prompt.
             AppLockManager.shared.setAppLockEnabled(true)
             appLockEnabledInThisSession = true
             return
@@ -368,7 +437,7 @@ struct OnboardingFlow: View {
                     self.appLockEnabledInThisSession = true
                     self.appLockSetupError = nil
                 } else {
-                    self.appLockSetupError = "Authentication cancelled. You can try again or skip."
+                    self.appLockSetupError = "Authentication cancelled. App Lock is still off."
                     if let authError {
                         Log.app.error("Onboarding app lock auth failed: \(authError.localizedDescription)")
                     }

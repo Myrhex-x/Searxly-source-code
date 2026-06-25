@@ -15,6 +15,14 @@ extension BrowserState {
     }
 
     func loadInWebView(_ url: URL, recordInHistory: Bool) {
+        // .onion services are only reachable over Tor. Any stray .onion load (address bar, history,
+        // bookmarks, restored session, programmatic) is handed off to a dedicated Tor-routed onion
+        // tab — unless we're already in one, in which case it navigates in place below.
+        if url.isOnionService, selectedTab?.privacyMode != .onion {
+            openOnionURL(url)
+            return
+        }
+
         if recordInHistory {
             pushCurrentBrowseStateToBackStack()
         }
@@ -74,6 +82,12 @@ extension BrowserState {
 
     func openSearchResultInNewTab(_ result: SearXNGResult) {
         guard let targetURL = URL(string: result.url) else { return }
+
+        // .onion results are only reachable over Tor — open them in a Tor-routed onion tab.
+        if targetURL.isOnionService {
+            openOnionURL(targetURL)
+            return
+        }
 
         let newTab = BrowserTab(kind: .web)   // standard (see policy comment above)
         newTab.currentURL = targetURL

@@ -77,7 +77,7 @@ struct WalletSettingsSection: View {
                         .foregroundStyle(.secondary)
 
                 case .locked:
-                    statusRow(icon: "lock.fill", label: "Locked", color: .orange)
+                    statusRow(icon: "lock.fill", label: "Locked", color: WalletTheme.warning)
                     if let address = wallet.activeAddress {
                         addressRow(address)
                     }
@@ -153,7 +153,7 @@ struct WalletSettingsSection: View {
                 if !wallet.customRPCURL.isEmpty {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Color(white: 0.7))
+                            .foregroundStyle(WalletTheme.textSecondary)
                             .font(.system(size: 11))
                         Text("Using: \(wallet.customRPCURL)")
                             .font(.system(size: 11, design: .monospaced))
@@ -254,12 +254,12 @@ struct WalletSettingsSection: View {
                     Button {
                         showRevealPhrase = true
                     } label: {
-                        Label("Show recovery phrase", systemImage: "eye")
+                        Label("Show recovery phrase or save a backup", systemImage: "eye")
                             .font(.system(size: 12))
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    Text("Re-displays your 12-word backup phrase after you confirm it's you. Make sure no one is watching.")
+                    Text("Confirm it's you, then view your 12 words or save a password-encrypted backup file. Make sure no one is watching.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -312,13 +312,13 @@ struct WalletSettingsSection: View {
                     if wc.enabled {
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 11)).foregroundStyle(.orange).padding(.top, 1)
+                                .font(.system(size: 11)).foregroundStyle(WalletTheme.warning).padding(.top, 1)
                             Text("Not fully private: WalletConnect routes through a public relay server that sees connection metadata and your IP. Message contents stay end-to-end encrypted and your keys never leave this device.")
                                 .font(.system(size: 11)).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(10)
-                        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                        .background(WalletTheme.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("WalletConnect project id (free, from cloud.walletconnect.com)")
@@ -458,7 +458,11 @@ struct WalletSettingsSection: View {
         }
         .sheet(isPresented: $showDeleteConfirm) {
             DeleteWalletSheet(
-                requiresPIN: true,
+                // Normally PIN-gated (anti-accident). But if the seed can't be read at all (a storage /
+                // Secure-Enclave failure), requiring a PIN that can never succeed would trap the user —
+                // so in that case allow the delete without a PIN. No funds are at risk: an unreadable
+                // seed can't sign anyway, and the recovery code / 12-word phrase still restores.
+                requiresPIN: WalletKeychain.seedCiphertextReadable(),
                 onCancel: { showDeleteConfirm = false },
                 onConfirmed: { wallet.deleteWallet(); showDeleteConfirm = false }
             )

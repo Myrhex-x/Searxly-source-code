@@ -64,6 +64,53 @@ struct WalletToken: Identifiable, Equatable, Codable {
                     chainId: WalletChain.base.id)
     }
 
+    /// Native Circle USDC on Base (6 decimals). Used for in-app payments (e.g. Managed-VPN passes).
+    static var usdc: WalletToken {
+        WalletToken(id: ManagedVPNConfig.usdcContract, symbol: ManagedVPNConfig.usdcSymbol,
+                    name: "USD Coin",
+                    contractAddress: ManagedVPNConfig.usdcContract,
+                    decimals: ManagedVPNConfig.usdcDecimals, isCustom: false,
+                    chainId: WalletChain.base.id)
+    }
+
+    /// Wrapped Ether on Base (OP-stack WETH9 predeploy, 18 decimals).
+    static var weth: WalletToken {
+        WalletToken(id: "0x4200000000000000000000000000000000000006",
+                    symbol: "WETH", name: "Wrapped Ether",
+                    contractAddress: "0x4200000000000000000000000000000000000006",
+                    decimals: 18, isCustom: false, chainId: WalletChain.base.id)
+    }
+
+    /// Bridged Tether USD on Base (6 decimals).
+    static var usdt: WalletToken {
+        WalletToken(id: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
+                    symbol: "USDT", name: "Tether USD",
+                    contractAddress: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
+                    decimals: 6, isCustom: false, chainId: WalletChain.base.id)
+    }
+
+    /// Dai Stablecoin on Base (18 decimals).
+    static var dai: WalletToken {
+        WalletToken(id: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+                    symbol: "DAI", name: "Dai Stablecoin",
+                    contractAddress: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
+                    decimals: 18, isCustom: false, chainId: WalletChain.base.id)
+    }
+
+    /// Coinbase Wrapped BTC on Base (8 decimals).
+    static var cbBTC: WalletToken {
+        WalletToken(id: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+                    symbol: "cbBTC", name: "Coinbase Wrapped BTC",
+                    contractAddress: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+                    decimals: 8, isCustom: false, chainId: WalletChain.base.id)
+    }
+
+    /// Canonical Base-mainnet ERC-20s tracked out of the box (in display order) so funds received
+    /// without a manual "Add Token" still show up. Balances are read over the user's own RPC — the
+    /// same surface as ETH/SEARXLY — so this adds no explorer/discovery network call. Each row stays
+    /// hidden until it holds a balance (see `WalletManager.visibleTokens`).
+    static var baseBuiltInERC20s: [WalletToken] { [weth, usdc, usdt, dai, cbBTC] }
+
     // MARK: - Icon color (used by TokenIconView)
 
     var iconColor: Color {
@@ -85,6 +132,10 @@ struct WalletToken: Identifiable, Equatable, Codable {
     var isStablecoin: Bool {
         ["USDC", "USDBC", "USDT", "DAI", "USDS", "PYUSD"].contains(symbol.uppercased())
     }
+
+    /// Identity that stays unique even across chains — the same coin (e.g. ETH, USDC) exists on
+    /// several networks, so the aggregated "All Networks" list keys rows by chain + id.
+    var aggregatedID: String { "\(chainId):\(id)" }
 }
 
 extension WalletToken {

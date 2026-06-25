@@ -183,6 +183,19 @@ checkBool("frame→unframe round-trip (2 packets)", LedgerHID.frame(big).count =
 let (body, sw) = (try? LedgerHID.splitStatus(Data([0xab, 0xcd, 0x90, 0x00]))) ?? (Data(), 0)
 checkBool("splitStatus 0x9000", sw == 0x9000 && [UInt8](body) == [0xab, 0xcd])
 
+// 14. Encrypted backup (export → restore round-trip + wrong-password rejection)
+print("\n[14] WalletBackup (encrypted seed export/restore)")
+let backupPhrase = words("legal winner thank year wave sausage worth useful legal winner thank yellow")
+checkBool("backup phrase is valid BIP-39", BIP39.isValid(backupPhrase))
+if let blob = WalletBackup.export(words: backupPhrase, password: "correct horse battery") {
+    checkBool("restore with right password == original", WalletBackup.restore(fileData: blob, password: "correct horse battery") == backupPhrase)
+    checkBool("restore with WRONG password → nil", WalletBackup.restore(fileData: blob, password: "wrong password") == nil)
+    checkBool("restore of tampered blob → nil", WalletBackup.restore(fileData: blob + Data([0x00]), password: "correct horse battery") == nil)
+    checkBool("two exports use different salts (ciphertext differs)", WalletBackup.export(words: backupPhrase, password: "correct horse battery") != blob)
+} else {
+    failed += 1; print("  ❌ backup export returned nil")
+}
+
 print("\n────────────────────────────────────────")
 print("  RESULT: \(passed) passed, \(failed) failed")
 print("────────────────────────────────────────")

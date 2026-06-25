@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct WalletSwapView: View {
+    /// Pre-selects the coin to swap from (set when opened from a coin's detail). nil → default.
+    var initialSellID: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var wallet = WalletManager.shared
 
@@ -40,6 +42,7 @@ struct WalletSwapView: View {
         .frame(minHeight: 460, maxHeight: 640)
         .background(WalletTheme.canvas)
         .preferredColorScheme(.dark)
+        .onAppear { if let initialSellID { sellID = initialSellID } }
     }
 
     private var header: some View {
@@ -47,12 +50,7 @@ struct WalletSwapView: View {
             SearxlyWalletBadge(size: 30, cornerRadius: 8, glassEnabled: false)
             Text("Swap").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
             Spacer()
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(WalletTheme.textSecondary).frame(width: 30, height: 30)
-                    .background(WalletTheme.surface, in: Circle())
-            }
-            .buttonStyle(.plain)
+            WalletGlassIconButton(systemName: "xmark", help: "Close") { dismiss() }
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
     }
@@ -66,14 +64,19 @@ struct WalletSwapView: View {
                 if !swapsReady { swapSetupBanner }
                 tokenPicker(title: "From", selection: $sellID)
                 amountField
-                Image(systemName: "arrow.down").font(.system(size: 13)).foregroundStyle(Color(white: 0.4))
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(WalletTheme.textSecondary)
+                    .frame(width: 30, height: 30)
+                    .background(WalletTheme.surface, in: Circle())
+                    .overlay(Circle().strokeBorder(WalletTheme.hairline, lineWidth: 1))
                 tokenPicker(title: "To", selection: $buyID)
 
                 if let q = quote {
                     quoteBox(q)
                 }
                 if !error.isEmpty {
-                    Text(error).font(.system(size: 11)).foregroundStyle(Color(red: 1, green: 0.35, blue: 0.35))
+                    Text(error).font(.system(size: 11)).foregroundStyle(WalletTheme.negative)
                         .multilineTextAlignment(.center)
                 }
 
@@ -116,26 +119,31 @@ struct WalletSwapView: View {
 
     private func tokenPicker(title: String, selection: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(Color(white: 0.4))
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(WalletTheme.textTertiary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(wallet.visibleTokens) { token in
+                        let isSel = selection.wrappedValue == token.id
                         Button { selection.wrappedValue = token.id; quote = nil; error = "" } label: {
                             HStack(spacing: 6) {
                                 TokenIconView(token: token, size: 18)
-                                Text(token.symbol).font(.system(size: 12, weight: selection.wrappedValue == token.id ? .semibold : .regular))
-                                    .foregroundStyle(selection.wrappedValue == token.id ? .white : Color(white: 0.45))
+                                Text(token.symbol)
+                                    .font(.system(size: 12, weight: isSel ? .semibold : .regular))
+                                    .foregroundStyle(isSel ? WalletTheme.textPrimary : WalletTheme.textTertiary)
                             }
                             .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(selection.wrappedValue == token.id ? Color(white: 0.18) : Color.clear,
-                                        in: RoundedRectangle(cornerRadius: 8))
+                            .background(isSel ? WalletTheme.surfaceSelected : Color.clear,
+                                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(4)
             }
-            .background(Color(white: 0.09), in: RoundedRectangle(cornerRadius: 10))
+            .walletGlass(radius: WalletTheme.radiusField, fill: WalletTheme.surfaceField)
         }
     }
 
@@ -144,29 +152,36 @@ struct WalletSwapView: View {
             TextField("0.00", text: $amountText)
                 .textFieldStyle(.plain).font(.system(size: 15, weight: .medium, design: .monospaced)).foregroundStyle(.white)
                 .onChange(of: amountText) { _, _ in quote = nil }
-            Text(sellToken?.symbol ?? "").font(.system(size: 12)).foregroundStyle(Color(white: 0.4))
+            Text(sellToken?.symbol ?? "").font(.system(size: 12)).foregroundStyle(WalletTheme.textTertiary)
         }
-        .padding(12).background(Color(white: 0.09), in: RoundedRectangle(cornerRadius: 9))
+        .padding(12)
+        .walletGlass(radius: WalletTheme.radiusField, fill: WalletTheme.surfaceField)
     }
 
     private func quoteBox(_ q: SwapQuote) -> some View {
         VStack(spacing: 0) {
             row("You receive", "\(q.buyAmountDisplay) \(q.buyToken.symbol)")
-            Divider().opacity(0.08)
+            rowDivider
             row("Minimum received", "\(q.minBuyAmountDisplay) \(q.buyToken.symbol)")
+            rowDivider
+            row("Searxly fee", q.feePercentText)
             if q.needsAllowanceTo != nil {
-                Divider().opacity(0.08)
+                rowDivider
                 row("Note", "Approval tx first")
             }
         }
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .walletGlass(radius: WalletTheme.radiusField, fill: WalletTheme.surfaceField)
+    }
+
+    private var rowDivider: some View {
+        Rectangle().fill(WalletTheme.divider).frame(height: 1).padding(.horizontal, 14)
     }
 
     private var authSection: some View {
         VStack(spacing: 10) {
             if swapping {
                 ProgressView().padding(.vertical, 12)
-                Text("Submitting swap…").font(.system(size: 11)).foregroundStyle(Color(white: 0.4))
+                Text("Submitting swap…").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             } else {
                 if wallet.biometricUnlockEnabled && wallet.biometricAvailable {
                     actionButton("Authorize with \(WalletBiometric.label)", enabled: true) {
@@ -174,23 +189,23 @@ struct WalletSwapView: View {
                             if let p = await wallet.authorizeSigningWithBiometrics(reason: "Authorize swap") { await doSwap(pin: p) }
                         }
                     }
-                    Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(Color(white: 0.4))
+                    Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
                 } else {
-                    Text("Enter your PIN to authorize").font(.system(size: 12)).foregroundStyle(Color(white: 0.4))
+                    Text("Enter your PIN to authorize").font(.system(size: 12)).foregroundStyle(WalletTheme.textTertiary)
                 }
                 HStack(spacing: 12) {
                     ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                        Circle().fill(i < pin.count ? Color.white : Color(white: 0.2)).frame(width: 11, height: 11)
+                        Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                     }
                 }
-                if pinError { Text("Incorrect PIN").font(.system(size: 12)).foregroundStyle(Color(red: 1, green: 0.35, blue: 0.35)) }
+                if pinError { Text("Incorrect PIN").font(.system(size: 12)).foregroundStyle(WalletTheme.negative) }
                 PINKeypad(pin: $pin, maxLength: WalletConfig.pinLength) {
                     guard wallet.attemptPIN(pin) else { pinError = true; pin = ""; return }
                     let p = pin; pin = ""
                     Task { await doSwap(pin: p) }
                 }
                 .frame(maxWidth: 220)
-                Button("Edit swap") { quote = nil }.font(.system(size: 11)).foregroundStyle(Color(white: 0.4)).buttonStyle(.plain)
+                Button("Edit swap") { quote = nil }.font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary).buttonStyle(.plain)
             }
         }
     }
@@ -200,25 +215,19 @@ struct WalletSwapView: View {
             Image(systemName: "checkmark.circle.fill").font(.system(size: 44)).foregroundStyle(.white).padding(.top, 30)
             Text("Swap submitted").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
             Button { if let u = URL(string: wallet.explorerTxURL(hash)) { NSWorkspace.shared.open(u) } } label: {
-                Text("View on \(wallet.activeChain.explorerName)").font(.system(size: 12)).foregroundStyle(Color(white: 0.6))
+                Text("View on \(wallet.activeChain.explorerName)").font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary)
             }.buttonStyle(.plain)
             actionButton("Done", enabled: true) { dismiss() }
         }
     }
 
     private func actionButton(_ title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(enabled ? .black : Color(white: 0.3))
-                .frame(maxWidth: .infinity).padding(.vertical, 13)
-                .background(enabled ? Color.white : Color(white: 0.12), in: RoundedRectangle(cornerRadius: 11))
-        }
-        .buttonStyle(.plain).disabled(!enabled)
+        WalletPrimaryButton(title: title, enabled: enabled, action: action)
     }
 
     private func row(_ l: String, _ v: String) -> some View {
         HStack {
-            Text(l).font(.system(size: 12)).foregroundStyle(Color(white: 0.4))
+            Text(l).font(.system(size: 12)).foregroundStyle(WalletTheme.textTertiary)
             Spacer()
             Text(v).font(.system(size: 12, weight: .medium, design: .monospaced)).foregroundStyle(.white)
         }

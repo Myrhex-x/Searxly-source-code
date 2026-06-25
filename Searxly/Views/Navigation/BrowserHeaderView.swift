@@ -51,6 +51,22 @@ struct BrowserHeaderView: View {
         Group {
         if !isPureHomeState {
             HStack(spacing: 8) {
+                SearxlyVPNPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
+
+                SearxlyTorPill(
+                    glassEnabled: glassEnabled,
+                    toolbarMaterial: toolbarMaterial,
+                    onionHost: browserState.selectedTab?.privacyMode == .onion
+                        ? browserState.selectedTab?.currentURL?.host : nil,
+                    onNewCircuit: {
+                        Task { @MainActor in
+                            if await TorManager.shared.newCircuit() {
+                                browserState.activeWebView.reload()
+                            }
+                        }
+                    }
+                )
+
                 Spacer()
 
                 AddressBar(
@@ -61,6 +77,7 @@ struct BrowserHeaderView: View {
                     toolbarMaterial: toolbarMaterial,
                     onSubmit: onSubmit,
                     isHero: false,
+                    isOnionTab: browserState.selectedTab?.privacyMode == .onion,
                     onSuggestionsArrowDown: {
                         if !browserState.suggestions.isEmpty {
                             browserState.suggestionsSelectedIndex = min(browserState.suggestionsSelectedIndex + 1, browserState.suggestions.count - 1)
@@ -114,6 +131,13 @@ struct BrowserHeaderView: View {
             .frame(height: AdaptiveChrome.slimToolbarRowHeight)
         } else {
             HStack {
+                SearxlyVPNPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
+                SearxlyTorPill(
+                    glassEnabled: glassEnabled,
+                    toolbarMaterial: toolbarMaterial,
+                    onionHost: browserState.selectedTab?.privacyMode == .onion
+                        ? browserState.selectedTab?.currentURL?.host : nil
+                )
                 Spacer()
                 RightToolbarControls(
                     activeWebView: activeWebView,

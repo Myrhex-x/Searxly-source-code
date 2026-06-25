@@ -182,6 +182,21 @@ final class WalletManager {
     var isSending = false
     var lastError: String? = nil
 
+    // MARK: - All Networks (aggregated, read-only home view)
+
+    /// When on, the home shows funded balances across EVERY supported chain in one list, instead of
+    /// just the active chain. Persisted so it sticks across launches. Purely a display mode — Send /
+    /// Swap / Receive still operate on `activeChain`.
+    var showAllNetworks: Bool = (UserDefaults.standard.object(forKey: "Wallet.showAllNetworks") == nil
+                                 ? true   // default ON so the whole portfolio shows without hunting chains
+                                 : UserDefaults.standard.bool(forKey: "Wallet.showAllNetworks")) {
+        didSet { UserDefaults.standard.set(showAllNetworks, forKey: "Wallet.showAllNetworks") }
+    }
+    /// Funded coins (balance > 0) across all chains, priced and chain-tagged, highest value first.
+    private(set) var aggregatedTokens: [WalletToken] = []
+    private(set) var isAggregating = false
+    var aggregatedTotalUSD: Double { aggregatedTokens.reduce(0) { $0 + $1.usdValue } }
+
     var ethPriceUSD: Double = 0
     var searxlyPriceUSD: Double = 0
     var searxlyChange24h: Double = 0
@@ -226,16 +241,38 @@ final class WalletManager {
 
     /// Token IDs the user hid (spam/airdrop junk). ETH and SEARXLY can never be hidden.
     private(set) var hiddenTokenIDs: Set<String> = []
-    var visibleTokens: [WalletToken] { tokens.filter { !hiddenTokenIDs.contains($0.id) } }
+    /// Built-in coins the user explicitly added/pinned (e.g. USDC) — kept visible even at a $0
+    /// balance, so "Add USDC" actually makes USDC appear.
+    private(set) var revealedTokenIDs: Set<String> = []
+    var visibleTokens: [WalletToken] {
+        tokens.filter { token in
+            guard !hiddenTokenIDs.contains(token.id) else { return false }
+            // Always show the essentials and anything the user explicitly added or pinned; the rest of
+            // the curated built-ins only appear once they hold a balance, so the list isn't padded
+            // with empty rows by default.
+            if token.isNative || token.id == "SEARXLY" || token.isCustom { return true }
+            return token.balance > 0 || revealedTokenIDs.contains(token.id)
+        }
+    }
 
     func hideToken(id: String) {
         // Never hide SEARXLY or the active chain's native gas token.
         guard id != "SEARXLY", id != activeChain.nativeSymbol else { return }
-        hiddenTokenIDs.insert(id); saveHiddenTokens()
+        hiddenTokenIDs.insert(id); revealedTokenIDs.remove(id)
+        saveHiddenTokens(); saveRevealedTokens()
     }
     func unhideAllTokens() { hiddenTokenIDs.removeAll(); saveHiddenTokens() }
+    /// Pins a built-in coin visible (used when the user adds, e.g., USDC, which already exists as a
+    /// built-in so it can't be added as "custom").
+    func revealToken(id: String) {
+        hiddenTokenIDs.remove(id); revealedTokenIDs.insert(id)
+        saveHiddenTokens(); saveRevealedTokens()
+    }
     private func saveHiddenTokens() {
         UserDefaults.standard.set(Array(hiddenTokenIDs), forKey: WalletConfig.Keys.hiddenTokens)
+    }
+    private func saveRevealedTokens() {
+        UserDefaults.standard.set(Array(revealedTokenIDs), forKey: WalletConfig.Keys.revealedTokens)
     }
 
     var totalPortfolioUSD: Double { visibleTokens.reduce(0) { $0 + $1.usdValue } }
@@ -298,6 +335,7 @@ final class WalletManager {
         let lockTS = UserDefaults.standard.double(forKey: WalletConfig.Keys.pinLockedUntil)
         if lockTS > 0 { pinLockedUntil = Date(timeIntervalSince1970: lockTS) }
         hiddenTokenIDs = Set(UserDefaults.standard.stringArray(forKey: WalletConfig.Keys.hiddenTokens) ?? [])
+        revealedTokenIDs = Set(UserDefaults.standard.stringArray(forKey: WalletConfig.Keys.revealedTokens) ?? [])
         rebuildTokenList()
         startAutoLockObservers()
     }
@@ -465,12 +503,24 @@ final class WalletManager {
     // MARK: - Token list
 
     func rebuildTokenList() {
-        // On Base, $SEARXLY is the hero asset and leads; then the chain's native gas token; then
-        // this chain's custom tokens. On other chains there's no SEARXLY, so native leads.
+        // On Base, $SEARXLY is the hero asset and leads; then the chain's native gas token; then the
+        // curated built-in ERC-20s (WETH/USDC/USDT/DAI/cbBTC) so received funds always surface; then
+        // this chain's custom tokens. On other chains there's no SEARXLY/built-ins, so native leads.
         var list: [WalletToken] = []
-        if activeChain.id == WalletChain.base.id { list.append(.searxly) }
-        list.append(.native(for: activeChain))
-        list.append(contentsOf: loadCustomTokens().filter { $0.chainId == activeChain.id })
+        if activeChain.id == WalletChain.base.id {
+            list.append(.searxly)
+            list.append(.native(for: activeChain))
+            list.append(contentsOf: WalletToken.baseBuiltInERC20s)
+        } else {
+            list.append(.native(for: activeChain))
+        }
+        // Append user-added tokens for this chain, skipping any already covered by a built-in
+        // (e.g. a user who manually added WETH before this shipped).
+        let present = Set(list.compactMap { $0.contractAddress?.lowercased() })
+        for custom in loadCustomTokens() where custom.chainId == activeChain.id {
+            if let ca = custom.contractAddress?.lowercased(), present.contains(ca) { continue }
+            list.append(custom)
+        }
         tokens = list
     }
 
@@ -478,7 +528,13 @@ final class WalletManager {
 
     func addCustomToken(contractAddress: String, symbol: String, name: String, decimals: Int) {
         let trimmed = contractAddress.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !tokens.contains(where: { $0.contractAddress?.lowercased() == trimmed }) else { return }
+        // Already tracked (e.g. a built-in like USDC)? Don't no-op silently — pin it visible so it
+        // actually shows up in the list, then we're done.
+        if let existing = tokens.first(where: { $0.contractAddress?.lowercased() == trimmed }) {
+            revealToken(id: existing.id)
+            refreshAggregatedIfNeeded()
+            return
+        }
         let token = WalletToken(id: trimmed, symbol: symbol.uppercased(),
                                 name: name, contractAddress: trimmed,
                                 decimals: decimals, isCustom: true, chainId: activeChain.id)
@@ -486,6 +542,40 @@ final class WalletManager {
         customs.append(token)
         saveCustomTokens(customs)
         rebuildTokenList()
+        refreshAggregatedIfNeeded()
+    }
+
+    /// After pinning/adding a coin, re-run the All-Networks merge (when it's shown) so the coin appears
+    /// there too — the aggregated list is otherwise only rebuilt on refresh.
+    private func refreshAggregatedIfNeeded() {
+        guard showAllNetworks else { return }
+        Task { await refreshAllNetworks() }
+    }
+
+    /// After a broadcast, on-chain balances take a moment to settle (and a swap can be approval + swap,
+    /// i.e. two txs), so a single immediate refresh catches an in-between state. Refresh several times
+    /// at increasing delays — and the All-Networks list too — so the new balance reappears on its own
+    /// instead of the user reloading and waiting.
+    private func scheduleBalanceCatchUp() {
+        Task {
+            for delay in [UInt64(0), 6, 15, 30, 60] {
+                if delay > 0 { try? await Task.sleep(nanoseconds: delay * 1_000_000_000) }
+                await refreshBalancesAndPrices()
+                if showAllNetworks { await refreshAllNetworks() }
+            }
+        }
+    }
+
+    /// The active account's USDC balance ON BASE, fetched directly. Managed-VPN passes always pay in
+    /// USDC on Base, so this can't read from `tokens` — that reflects whatever chain the wallet UI is
+    /// currently showing and isn't refreshed while All-Networks is active.
+    func baseUSDCBalance() async -> Decimal {
+        guard let address = activeAddress else { return 0 }
+        return await WalletNetwork.erc20Balance(
+            tokenAddress: ManagedVPNConfig.usdcContract,
+            walletAddress: address,
+            decimals: ManagedVPNConfig.usdcDecimals,
+            rpc: rpcURL(forChain: WalletChain.base.id)) ?? 0
     }
 
     func removeCustomToken(id: String) {
@@ -516,25 +606,41 @@ final class WalletManager {
 
     // MARK: - Wallet setup
 
-    /// Creates a new wallet: saves seed in Keychain, derives address, stores PIN.
-    func prepareNewWallet(mnemonic: [String], pin: String) -> String {
-        // 1. Derive real address from seed
+    /// Creates a new wallet: saves seed in Keychain, derives address, stores PIN. Returns the recovery
+    /// code, or `nil` if the wallet could NOT be safely persisted — in which case nothing is marked
+    /// configured, so the user is never handed an address whose seed can't be decrypted.
+    func prepareNewWallet(mnemonic: [String], pin: String) -> String? {
+        // 1. Derive the real address from the seed. If derivation fails, abort — never declare a
+        //    wallet configured with a placeholder/zero address that would silently swallow deposits.
         let seed = BIP39.toSeed(mnemonic)
-        let address = EthereumAddress.derive(fromSeed: seed)
-                      ?? "0x0000000000000000000000000000000000000000"
+        guard let address = EthereumAddress.derive(fromSeed: seed) else { return nil }
 
-        // 2. Save encrypted seed in Keychain (PIN-encrypted)
-        WalletKeychain.saveSeed(mnemonic, pin: pin)
+        // 2. Save the PIN-encrypted seed AND prove it reads back under this PIN before going further.
+        //    A silent Keychain write failure would otherwise leave a "configured" wallet whose seed
+        //    can't be decrypted — any funds sent to its address would be permanently unrecoverable.
+        guard WalletKeychain.saveSeed(mnemonic, pin: pin),
+              WalletKeychain.loadSeed(pin: pin) == mnemonic else {
+            WalletKeychain.deleteSeed()
+            return nil
+        }
 
         // 3. PIN setup (no verifier persisted — the seed's AES-GCM tag authenticates the PIN)
         setupPIN(pin)
         resetPINAttempts()
 
-        // 4. Recovery code + a recovery-code-encrypted copy of the seed (so a PIN reset can re-key it)
-        let recoveryCode = generateAndStoreRecoveryCode()
-        WalletKeychain.saveRecoverySeed(mnemonic, recoveryCode: recoveryCode)
+        // 4. Recovery code + a recovery-code-encrypted copy of the seed (so a PIN reset can re-key it).
+        //    Verify the recovery copy round-trips too — it's the user's last line of defense, so a
+        //    half-written recovery copy must fail setup rather than ship a broken safety net.
+        guard let recoveryCode = generateAndStoreRecoveryCode(),
+              WalletKeychain.saveRecoverySeed(mnemonic, recoveryCode: recoveryCode),
+              WalletKeychain.loadRecoverySeed(recoveryCode: recoveryCode) == mnemonic else {
+            WalletKeychain.deleteSeed()
+            UserDefaults.standard.removeObject(forKey: WalletConfig.Keys.recoveryHash)
+            return nil
+        }
 
-        // 5. Persist as account 0 (Keychain — keeps the device↔address link out of plaintext/backups)
+        // 5. Persist as account 0 (Keychain — keeps the device↔address link out of plaintext/backups).
+        //    `walletConfigured` is set LAST so a failure above can never leave a half-configured wallet.
         accounts = [WalletAccount(index: 0, address: address, label: "Account 1")]
         activeAccountIndex = 0
         UserDefaults.standard.set(0, forKey: WalletConfig.Keys.activeAccount)
@@ -552,8 +658,8 @@ final class WalletManager {
         Task { await refreshBalancesAndPrices() }
     }
 
-    func importWallet(mnemonic: [String], pin: String) -> String {
-        let code = prepareNewWallet(mnemonic: mnemonic, pin: pin)
+    func importWallet(mnemonic: [String], pin: String) -> String? {
+        guard let code = prepareNewWallet(mnemonic: mnemonic, pin: pin) else { return nil }
         activateUnlock()
         return code
     }
@@ -666,6 +772,22 @@ final class WalletManager {
         return true
     }
 
+    /// Why an unlock attempt failed, so the UI can show an honest message instead of always saying
+    /// "incorrect PIN".
+    enum UnlockOutcome: Equatable { case unlocked, wrongPIN, storageUnreadable, locked }
+
+    /// Unlock, reporting the precise reason on failure. A storage / Secure-Enclave read failure (the
+    /// seed exists but its ciphertext can't be read at all) is reported as `.storageUnreadable` and is
+    /// NOT counted as a failed PIN attempt — it isn't the user's fault, and the UI routes them to
+    /// recovery rather than toward lockout.
+    func unlockDetailed(pin: String) -> UnlockOutcome {
+        if isPINLocked { return .locked }
+        if WalletKeychain.seedItemPresent() && !WalletKeychain.seedCiphertextReadable() {
+            return .storageUnreadable
+        }
+        return unlock(pin: pin) ? .unlocked : .wrongPIN
+    }
+
     // MARK: - Biometric unlock
 
     var biometricUnlockEnabled: Bool {
@@ -730,7 +852,11 @@ final class WalletManager {
     func unlockWithRecoveryCode(_ code: String, newPIN: String) -> Bool {
         // The recovery code decrypts the recovery copy of the seed; re-encrypt it under the new PIN.
         guard let words = WalletKeychain.loadRecoverySeed(recoveryCode: code) else { return false }
-        WalletKeychain.saveSeed(words, pin: newPIN)
+        // Prove the seed re-saves AND reads back under the new PIN before committing the reset — never
+        // leave the wallet in a state where the new PIN can't decrypt the seed (which would lock the
+        // user out despite a valid recovery code). The recovery copy stays intact, so they can retry.
+        guard WalletKeychain.saveSeed(words, pin: newPIN),
+              WalletKeychain.loadSeed(pin: newPIN) == words else { return false }
         setupPIN(newPIN)
         resetPINAttempts()
         // The stashed biometric PIN is now stale; disable until the user re-enables it.
@@ -742,9 +868,12 @@ final class WalletManager {
         return true
     }
 
-    func generateAndStoreRecoveryCode() -> String {
+    /// Generates a 128-bit recovery code and stores only its SHA-256 (the plaintext is shown once and
+    /// never persisted). Returns `nil` if the system CSPRNG fails — we must never fall back to the
+    /// all-zero buffer, which would be a predictable code that lets anyone restore the wallet.
+    func generateAndStoreRecoveryCode() -> String? {
         var bytes = [UInt8](repeating: 0, count: 16)
-        _ = SecRandomCopyBytes(kSecRandomDefault, 16, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, 16, &bytes) == errSecSuccess else { return nil }
         let code = bytes.map { String(format: "%02X", $0) }.joined()
         UserDefaults.standard.set(sha256(code), forKey: WalletConfig.Keys.recoveryHash)
         return code
@@ -769,48 +898,52 @@ final class WalletManager {
         if WalletFeatures.tokenDiscovery {
             let discovered = await WalletNetwork.discoverTokens(address: address, chainId: chain.id)
             for t in discovered where !tokens.contains(where: { $0.contractAddress?.lowercased() == t.contract.lowercased() }) {
+                // Skip scam look-alikes: an airdropped token that copies a coin we already track
+                // (same SYMBOL, different contract — e.g. a fake "WETH"/"USDC") or claims to be a
+                // native coin. This is the classic way auto-discovery surfaces spam.
+                let sym = t.symbol.uppercased()
+                let isImpostor = sym == "ETH" || sym == activeChain.nativeSymbol.uppercased()
+                    || tokens.contains { $0.symbol.uppercased() == sym
+                                         && $0.contractAddress?.lowercased() != t.contract.lowercased() }
+                if isImpostor { continue }
                 addCustomToken(contractAddress: t.contract, symbol: t.symbol, name: t.name, decimals: t.decimals)
             }
         }
 
-        // Fetch native balance + (Base-only) SEARXLY + prices concurrently.
-        async let nativeBal = WalletNetwork.ethBalance(address: address, rpc: rpc)
-        async let searxlyBal = onBase ? WalletNetwork.erc20Balance(
-            tokenAddress: WalletConfig.searxlyTokenAddress,
-            walletAddress: address,
-            decimals: WalletConfig.searxlyTokenDecimals,
-            rpc: rpc) : nil
+        // Prices come from external price APIs; ALL on-chain balances (native coin + SEARXLY + every
+        // ERC-20) come from ONE batched RPC round-trip, so a rate-limited public node can't throttle
+        // the burst — the bug that left balances stuck at "0" until a manual reload.
+        let balanceTokens: [(id: String, contract: String?, decimals: Int)] =
+            tokens.map { ($0.id, $0.contractAddress, $0.decimals) }
         async let prices = WalletNetwork.fetchPrices(
             nativeCoinGeckoID: chain.coinGeckoNativeID,
             searxlyAddress: onBase ? WalletConfig.searxlyTokenAddress : nil)
+        async let balances = WalletNetwork.batchBalances(
+            walletAddress: address, tokens: balanceTokens, rpc: rpc)
 
-        let (nb, sb, pr) = await (nativeBal, searxlyBal, prices)
+        let (pr, bals) = await (prices, balances)
 
         ethPriceUSD = pr.ethUSD
         searxlyPriceUSD = pr.searxlyUSD
         searxlyChange24h = pr.searxlyChange24h
 
-        updateToken(id: chain.nativeSymbol, balance: nb ?? 0, price: pr.ethUSD, change: 0)
-        if onBase { updateToken(id: "SEARXLY", balance: sb ?? 0, price: pr.searxlyUSD, change: pr.searxlyChange24h) }
-
-        // Custom ERC-20 balances
-        let customs = tokens.filter { $0.isCustom }
-        await withTaskGroup(of: (String, Decimal, Double).self) { group in
-            for token in customs {
-                guard let ca = token.contractAddress else { continue }
-                // Read the (MainActor-isolated) token fields here, then capture plain values into the
-                // concurrent child task — avoids touching actor-isolated state off the main actor.
-                let tid = token.id, decimals = token.decimals, isStable = token.isStablecoin
-                group.addTask {
-                    let bal = await WalletNetwork.erc20Balance(
-                        tokenAddress: ca, walletAddress: address, decimals: decimals, rpc: rpc)
-                    // Known stablecoins are pegged to $1; unknown tokens have no price feed.
-                    return (tid, bal ?? 0, isStable ? 1.0 : 0)
-                }
+        // Apply balances + prices in one pass. A token absent from `bals` (its node call failed) keeps
+        // its previous balance rather than being wiped to 0. Native = ETH/gas price; SEARXLY = its DEX
+        // price; stablecoins peg $1; WETH tracks ETH; anything else has no price feed yet.
+        for token in tokens {   // value-type snapshot; updateToken mutates self.tokens by id
+            let price: Double, change: Double
+            if token.isNative {
+                price = pr.ethUSD; change = 0
+            } else if token.id == "SEARXLY" {
+                price = pr.searxlyUSD; change = pr.searxlyChange24h
+            } else if token.isStablecoin {
+                price = 1.0; change = 0
+            } else if token.symbol.uppercased() == "WETH" {
+                price = pr.ethUSD; change = 0
+            } else {
+                price = 0; change = 0
             }
-            for await (id, bal, price) in group {
-                updateToken(id: id, balance: bal, price: price, change: 0)
-            }
+            updateToken(id: token.id, balance: bals[token.id] ?? token.balance, price: price, change: change)
         }
 
         // Snapshot the (displayed) total for the portfolio-over-time graph. On-device only.
@@ -819,6 +952,87 @@ final class WalletManager {
         // Local-only alerts: notify on inbound transfers and on crossed price targets.
         detectIncomingFunds()
         checkPriceAlerts()
+    }
+
+    // MARK: - All Networks refresh
+
+    /// Toggles the aggregated "All Networks" home and kicks off a cross-chain balance fetch when on.
+    func setAllNetworks(_ on: Bool) {
+        showAllNetworks = on
+        if on {
+            registerActivity()
+            Task { await refreshAllNetworks() }
+        }
+    }
+
+    /// Fetches funded balances on every supported chain in parallel and merges them into one list, so
+    /// the home can show the whole portfolio at once. Additive and read-only — it never disturbs the
+    /// single-chain `tokens` that Send / Swap depend on.
+    func refreshAllNetworks() async {
+        guard unlockState == .unlocked, let address = activeAddress,
+              address != "0x0000000000000000000000000000000000000000" else { return }
+        isAggregating = true
+        defer { isAggregating = false }
+        await refreshFXRate()
+
+        // Fetch one chain at a time and fill the list in as each finishes. A 5-way concurrent burst
+        // (×3 failover endpoints each) hammered the public RPCs into rate-limiting, which dropped whole
+        // chains — e.g. Base — out of the merged result. Sequential is a touch slower but reliable, and
+        // rows now appear progressively as each chain loads.
+        var merged: [WalletToken] = []
+        for chain in WalletChain.all {
+            merged.append(contentsOf: await fundedTokens(forChain: chain, address: address))
+            aggregatedTokens = merged.sorted {
+                $0.usdValue != $1.usdValue ? $0.usdValue > $1.usdValue : $0.symbol < $1.symbol
+            }
+        }
+    }
+
+    /// The funded tokens (balance > 0) an address holds on one chain, priced and chain-tagged. Mirrors
+    /// the single-chain price/balance logic but returns a value instead of mutating `tokens`.
+    private func fundedTokens(forChain chain: WalletChain, address: String) async -> [WalletToken] {
+        var list: [WalletToken] = [.native(for: chain)]
+        if chain.id == WalletChain.base.id {
+            list.append(.searxly)
+            list.append(contentsOf: WalletToken.baseBuiltInERC20s)
+        }
+        let present = Set(list.compactMap { $0.contractAddress?.lowercased() })
+        for custom in loadCustomTokens() where custom.chainId == chain.id {
+            if let ca = custom.contractAddress?.lowercased(), present.contains(ca) { continue }
+            list.append(custom)
+        }
+
+        let rpc = rpcURL(forChain: chain.id)
+        let onBase = chain.id == WalletChain.base.id
+        // Snapshot the balance inputs into a `let` so the concurrent `async let` below doesn't capture
+        // the mutable `list` (a Swift 6 data-race error). Mirrors refreshBalancesAndPrices.
+        let balanceInputs = list.map { ($0.id, $0.contractAddress, $0.decimals) }
+        async let pricesA = WalletNetwork.fetchPrices(
+            nativeCoinGeckoID: chain.coinGeckoNativeID,
+            searxlyAddress: onBase ? WalletConfig.searxlyTokenAddress : nil)
+        async let balsA = WalletNetwork.batchBalances(
+            walletAddress: address, tokens: balanceInputs, rpc: rpc)
+        let (pr, bals) = await (pricesA, balsA)
+
+        // Price/balance everything first, then decide which rows to keep.
+        var priced: [WalletToken] = []
+        for var token in list {
+            token.balance = bals[token.id] ?? 0
+            token.chainId = chain.id
+            if token.isNative { token.priceUSD = pr.ethUSD }
+            else if token.id == "SEARXLY" { token.priceUSD = pr.searxlyUSD; token.change24h = pr.searxlyChange24h }
+            else if token.isStablecoin { token.priceUSD = 1.0 }
+            else if token.symbol.uppercased() == "WETH" { token.priceUSD = pr.ethUSD }
+            priced.append(token)
+        }
+
+        // A coin counts as "held" if funded, or explicitly added (custom) / pinned (revealed).
+        func held(_ t: WalletToken) -> Bool { t.balance > 0 || t.isCustom || revealedTokenIDs.contains(t.id) }
+        // Show the native GAS coin even at $0 when the user holds anything on this chain (so e.g. "ETH
+        // on Base" is visible — and tappable to receive — when you hold WETH there but no gas), or it's
+        // the chain you're currently on. Non-native coins still show only when actually held.
+        let showNative = priced.contains(where: held) || chain.id == activeChain.id
+        return priced.filter { $0.isNative ? ($0.balance > 0 || showNative) : held($0) }
     }
 
     /// The active account's portfolio-value history (on-device snapshots), oldest-first.
@@ -997,8 +1211,7 @@ final class WalletManager {
                                        maxPriorityFeePerGas: gasFee.maxPriorityFeePerGas,
                                        accountIndex: activeAccountIndex)))
             WalletActivityStore.shared.trackPending(hash: hash, rpc: rpc)
-            // Refresh balances shortly after broadcast
-            Task { await refreshBalancesAndPrices() }
+            scheduleBalanceCatchUp()
             return true
         } else {
             lastError = result.error ?? "Transaction failed to broadcast."
@@ -1099,7 +1312,7 @@ final class WalletManager {
                                        maxPriorityFeePerGas: gasFee.maxPriorityFeePerGas,
                                        accountIndex: idx)))
             WalletActivityStore.shared.trackPending(hash: hash, rpc: rpc)
-            Task { await refreshBalancesAndPrices() }
+            scheduleBalanceCatchUp()
         }
         return (hash: result.txHash, error: result.error)
     }
@@ -1185,6 +1398,24 @@ final class WalletManager {
     func executeSwap(quote: SwapQuote, pin: String) async -> (hash: String?, error: String?) {
         let rpc = activeRPCURL
 
+        // Gas on every EVM chain is paid in the NATIVE coin (ETH on Base) — never in the token being
+        // sold. Selling an ERC-20 (e.g. WETH) also needs a separate approval tx first, so it's TWO
+        // gas-paying txs. If the address holds no native coin, fail fast with a plain-language reason
+        // instead of the raw "insufficient funds for gas" the node would return. Only block on a
+        // confirmed zero (a fetch failure proceeds, so a network hiccup can't wrongly stop a swap).
+        let sym = activeChain.nativeSymbol
+        if let nativeBal = await WalletNetwork.ethBalance(address: activeAddress ?? "", rpc: rpc),
+           nativeBal <= 0 {
+            // Gas is PER-NETWORK: ETH on another chain (or wrapped WETH) can't pay for a swap here. If
+            // we already know they hold the gas coin elsewhere, name that chain so the fix is obvious.
+            let elsewhere = aggregatedTokens.first { $0.isNative && $0.chainId != activeChain.id && $0.balance > 0 }
+                .flatMap { WalletChain.by(id: $0.chainId)?.name }
+            let fix = elsewhere.map {
+                "Your \(sym) is on \($0) — that can't pay \(activeChain.name) gas. Bridge or send a little \(sym) to \(activeChain.name), then try again."
+            } ?? "Add a little \(sym) on \(activeChain.name) (bridge from another network, buy, or receive it) and try again."
+            return (nil, "No \(sym) on \(activeChain.name) to pay the network fee (gas). \(fix) (WETH is wrapped ETH and can't pay gas.)")
+        }
+
         if let spender = quote.needsAllowanceTo, let sellContract = quote.sellToken.contractAddress {
             let amountBytes = WeiConverter.baseUnitBytes(amount: quote.sellAmount, decimals: quote.sellToken.decimals)
             let approveData = EthereumTransaction.erc20ApproveData(spender: spender, amountBytes: amountBytes)
@@ -1198,7 +1429,8 @@ final class WalletManager {
             }
         }
 
-        return await dappSendTransaction(toHex: quote.to, valueHex: quote.value, dataHex: quote.data, gasHex: nil, pin: pin)
+        // Use 0x's route-aware gas limit (falls back to a local estimate if absent).
+        return await dappSendTransaction(toHex: quote.to, valueHex: quote.value, dataHex: quote.data, gasHex: quote.gas, pin: pin)
     }
 
     // MARK: - Revoke a token approval

@@ -59,7 +59,7 @@ struct DAppApprovalSheet: View {
             HStack(spacing: 6) {
                 Image(systemName: "globe")
                     .font(.system(size: 10))
-                    .foregroundStyle(Color(white: 0.5))
+                    .foregroundStyle(WalletTheme.textTertiary)
                 Text(displayOrigin)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white)
@@ -123,7 +123,7 @@ struct DAppApprovalSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .walletGlass(radius: 12, fill: WalletTheme.surface)
 
             safetyNote
 
@@ -149,7 +149,7 @@ struct DAppApprovalSheet: View {
                 Text("Warning: possible scam site")
                     .font(.system(size: 12, weight: .bold)).foregroundStyle(WalletTheme.negative)
                 Text(text)
-                    .font(.system(size: 11)).foregroundStyle(Color(white: 0.85))
+                    .font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -169,7 +169,7 @@ struct DAppApprovalSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .walletGlass(radius: 12, fill: WalletTheme.surface)
 
             safetyNote
 
@@ -197,7 +197,7 @@ struct DAppApprovalSheet: View {
     private func typedDataBody(_ p: TypedDataPreview) -> some View {
         VStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("SIGNING").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color(white: 0.4))
+                Text("SIGNING").font(.system(size: 10, weight: .semibold)).foregroundStyle(WalletTheme.textTertiary)
                 Text(p.domainName.map { "\($0) · \(p.primaryType)" } ?? p.primaryType)
                     .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)
@@ -214,7 +214,7 @@ struct DAppApprovalSheet: View {
                         HStack(alignment: .top, spacing: 8) {
                             Text(line.label)
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Color(white: 0.55))
+                                .foregroundStyle(WalletTheme.textSecondary)
                                 .padding(.leading, CGFloat(line.indent) * 12)
                             Spacer(minLength: 8)
                             VStack(alignment: .trailing, spacing: 1) {
@@ -226,7 +226,7 @@ struct DAppApprovalSheet: View {
                                         .textSelection(.enabled)
                                 }
                                 if let flag = line.flag, flag != "UNLIMITED" {
-                                    Text(flag).font(.system(size: 9)).foregroundStyle(Color(white: 0.45))
+                                    Text(flag).font(.system(size: 9)).foregroundStyle(WalletTheme.textTertiary)
                                 }
                             }
                         }
@@ -234,7 +234,7 @@ struct DAppApprovalSheet: View {
                         if idx < p.lines.count - 1 { Divider().opacity(0.06) }
                     }
                 }
-                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                .walletGlass(radius: 12, fill: WalletTheme.surface)
             }
 
             if p.hasUnlimited {
@@ -251,15 +251,15 @@ struct DAppApprovalSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(detailTitle.uppercased())
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color(white: 0.4))
+                    .foregroundStyle(WalletTheme.textTertiary)
                 Text(detail.isEmpty ? "(empty)" : detail)
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(Color(white: 0.8))
+                    .foregroundStyle(WalletTheme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
             .padding(14)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .walletGlass(radius: 12, fill: WalletTheme.surface)
 
             safetyNote
             authSection
@@ -276,7 +276,7 @@ struct DAppApprovalSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
-                .padding(12).walletCard(radius: 12)
+                .padding(12).walletGlass(radius: 12)
             }
 
             VStack(spacing: 0) {
@@ -287,7 +287,7 @@ struct DAppApprovalSheet: View {
                 Divider().opacity(0.08)
                 detailRow("Network", value: wallet.activeChain.name)
             }
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .walletGlass(radius: 12, fill: WalletTheme.surface)
 
             simulationStatus
 
@@ -308,7 +308,7 @@ struct DAppApprovalSheet: View {
         if simLoading {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini).scaleEffect(0.7)
-                Text("Simulating transaction…").font(.system(size: 11)).foregroundStyle(Color(white: 0.45))
+                Text("Simulating transaction…").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             }
         } else if let sim {
             switch sim {
@@ -407,15 +407,15 @@ struct DAppApprovalSheet: View {
                         .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .buttonStyle(.plain)
-                    Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(Color(white: 0.4))
+                    Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
                 } else {
-                    Text("Enter your PIN to authorize").font(.system(size: 12)).foregroundStyle(Color(white: 0.4))
+                    Text("Enter your PIN to authorize").font(.system(size: 12)).foregroundStyle(WalletTheme.textTertiary)
                 }
 
                 if !WalletFeatures.usesPassphrase {
                     HStack(spacing: 12) {
                         ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                            Circle().fill(i < pin.count ? Color.white : Color(white: 0.2)).frame(width: 11, height: 11)
+                            Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                         }
                     }
                     .accessibilityElement(children: .ignore)
@@ -423,7 +423,7 @@ struct DAppApprovalSheet: View {
                     .accessibilityValue("\(pin.count) of \(WalletConfig.pinLength) digits entered")
                 }
                 if pinError {
-                    Text("Incorrect").font(.system(size: 12)).foregroundStyle(Color(red: 1, green: 0.35, blue: 0.35))
+                    Text("Incorrect").font(.system(size: 12)).foregroundStyle(WalletTheme.negative)
                 }
                 PINKeypad(pin: $pin, maxLength: WalletConfig.pinLength) { authorizePIN() }
                     .frame(maxWidth: 220)
@@ -460,8 +460,8 @@ struct DAppApprovalSheet: View {
 
     private func permissionRow(icon: String, text: String) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 12)).foregroundStyle(Color(white: 0.6)).frame(width: 18)
-            Text(text).font(.system(size: 12)).foregroundStyle(Color(white: 0.75))
+            Image(systemName: icon).font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary).frame(width: 18)
+            Text(text).font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary)
         }
     }
 
@@ -469,7 +469,7 @@ struct DAppApprovalSheet: View {
     private func detailRow(_ label: String, value: String, mono: Bool = false,
                            accessibilityValueOverride: String? = nil) -> some View {
         HStack {
-            Text(label).font(.system(size: 12)).foregroundStyle(Color(white: 0.4))
+            Text(label).font(.system(size: 12)).foregroundStyle(WalletTheme.textTertiary)
             Spacer()
             Text(value).font(.system(size: 12, weight: .medium, design: mono ? .monospaced : .default))
                 .foregroundStyle(.white)
@@ -482,21 +482,21 @@ struct DAppApprovalSheet: View {
 
     private var safetyNote: some View {
         HStack(spacing: 6) {
-            Image(systemName: "lock.shield").font(.system(size: 10)).foregroundStyle(Color(white: 0.4))
+            Image(systemName: "lock.shield").font(.system(size: 10)).foregroundStyle(WalletTheme.textTertiary)
             Text("Only approve requests from sites you trust. Searxly never shares your keys.")
-                .font(.system(size: 10)).foregroundStyle(Color(white: 0.4))
+                .font(.system(size: 10)).foregroundStyle(WalletTheme.textTertiary)
         }
     }
 
     private func warningBanner(_ text: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12)).foregroundStyle(.orange)
-            Text(text).font(.system(size: 11)).foregroundStyle(Color(white: 0.8))
+                .font(.system(size: 12)).foregroundStyle(WalletTheme.warning)
+            Text(text).font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
         }
         .padding(12)
-        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.8))
+        .background(WalletTheme.warning.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(WalletTheme.warning.opacity(0.25), lineWidth: 0.8))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isStaticText)
     }

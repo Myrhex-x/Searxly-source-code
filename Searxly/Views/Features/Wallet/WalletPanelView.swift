@@ -21,8 +21,16 @@ struct WalletPanelView: View {
     @State private var showSwap = false
     @State private var showAccounts = false
     @State private var showSettings = false
+    /// Coin a flow was opened for (from a coin's detail), so Send/Receive/Swap pre-select it. nil when
+    /// opened from the generic home buttons.
+    @State private var pendingTokenID: String? = nil
 
     enum WalletTab { case portfolio, send, receive, activity, discover }
+
+    /// In All-Networks mode the hero/refresh read from the aggregated cross-chain state instead of the
+    /// single active chain.
+    private var isRefreshing: Bool { wallet.showAllNetworks ? wallet.isAggregating : wallet.isFetchingPrices }
+    private var displayedTotal: Double { wallet.showAllNetworks ? wallet.aggregatedTotalUSD : wallet.totalPortfolioUSD }
 
     var body: some View {
         Group {
@@ -50,11 +58,11 @@ struct WalletPanelView: View {
                         VStack(spacing: 0) {
                             balanceBlock
                             homeActionRow
-                            WalletPortfolioView()
+                            WalletPortfolioView(onTokenAction: handleTokenAction)
                         }
                     }
-                case .send:      WalletSendView()
-                case .receive:   WalletReceiveView()
+                case .send:      WalletSendView(initialTokenID: pendingTokenID)
+                case .receive:   WalletReceiveView(initialTokenID: pendingTokenID)
                 case .activity:  WalletActivityView()
                 case .discover:  WalletDiscoverView(onOpen: onOpenURL)
                 }
@@ -65,10 +73,18 @@ struct WalletPanelView: View {
             if activeTab == .portfolio || activeTab == .activity || activeTab == .discover { bottomNav }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showSwap) { WalletSwapView() }
+        .sheet(isPresented: $showSwap) { WalletSwapView(initialSellID: pendingTokenID) }
         .sheet(isPresented: $showAccounts) { WalletAccountsSheet(onClose: { showAccounts = false }) }
         .sheet(isPresented: $showSettings) { walletSettingsSheet }
-        .onAppear { wallet.registerActivity() }
+        .onAppear {
+            wallet.registerActivity()
+            // Pull fresh balances every time the panel opens so funds received while it was closed
+            // show up without the user having to do anything. No-ops if the wallet is locked.
+            Task {
+                if wallet.showAllNetworks { await wallet.refreshAllNetworks() }
+                else { await wallet.refreshBalancesAndPrices() }
+            }
+        }
         .onChange(of: activeTab) { _, _ in wallet.registerActivity() }
     }
 
@@ -86,7 +102,10 @@ struct WalletPanelView: View {
 
             Spacer()
 
-            if activeTab == .portfolio || activeTab == .activity { chainChip }
+            if activeTab == .portfolio || activeTab == .activity {
+                chainChip
+                refreshButton
+            }
             headerIconButton("lock", help: "Lock wallet") { wallet.lock() }
             headerIconButton("xmark", help: "Close") { onClose() }
         }
@@ -98,9 +117,17 @@ struct WalletPanelView: View {
     /// RPC, native token, explorer, and prices. (Brand: monochrome; no per-chain colors.)
     private var chainChip: some View {
         Menu {
+            Button { wallet.setAllNetworks(true) } label: {
+                if wallet.showAllNetworks { Label("All Networks", systemImage: "checkmark") }
+                else { Text("All Networks") }
+            }
+            Divider()
             ForEach(WalletChain.all) { chain in
-                Button { wallet.switchChain(to: chain) } label: {
-                    if chain.id == wallet.activeChain.id {
+                Button {
+                    wallet.setAllNetworks(false)
+                    wallet.switchChain(to: chain)
+                } label: {
+                    if !wallet.showAllNetworks && chain.id == wallet.activeChain.id {
                         Label(chain.name, systemImage: "checkmark")
                     } else {
                         Text(chain.name)
@@ -109,9 +136,9 @@ struct WalletPanelView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: wallet.showAllNetworks ? "square.grid.2x2.fill" : "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 10, weight: .semibold))
-                Text(wallet.activeChain.shortName)
+                Text(wallet.showAllNetworks ? "All Networks" : wallet.activeChain.shortName)
                     .font(.system(size: 12, weight: .semibold))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .bold))
@@ -121,6 +148,7 @@ struct WalletPanelView: View {
             .padding(.horizontal, 11)
             .frame(height: 30)
             .background(WalletTheme.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(WalletTheme.hairline, lineWidth: 1))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -145,7 +173,12 @@ struct WalletPanelView: View {
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(WalletTheme.textTertiary)
             }
-            .contentShape(Rectangle())
+            .padding(.leading, 6)
+            .padding(.trailing, 11)
+            .padding(.vertical, 5)
+            .background(WalletTheme.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(WalletTheme.hairline, lineWidth: 1))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -166,52 +199,87 @@ struct WalletPanelView: View {
         .buttonStyle(.plain)
     }
 
-    private func headerIconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(WalletTheme.textSecondary)
-                .frame(width: 30, height: 30)
-                .background(WalletTheme.surface, in: Circle())
+    /// Manual balance refresh. Balances also refresh automatically on open, unlock, and after a send,
+    /// but a received token can land while the panel sits open — this lets the user pull fresh data
+    /// on demand. Spins (and disables) while a fetch is in flight.
+    private var refreshButton: some View {
+        Button {
+            wallet.registerActivity()
+            Task {
+                if wallet.showAllNetworks { await wallet.refreshAllNetworks() }
+                else { await wallet.refreshBalancesAndPrices() }
+            }
+        } label: {
+            Group {
+                if isRefreshing {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(WalletTheme.textSecondary)
+                }
+            }
+            .frame(width: 30, height: 30)
+            .background(WalletTheme.surface, in: Circle())
+            .overlay(Circle().strokeBorder(WalletTheme.hairline, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .help(help)
+        .disabled(isRefreshing)
+        .help("Refresh balances")
+    }
+
+    private func headerIconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
+        WalletGlassIconButton(systemName: systemName, help: help, action: action)
     }
 
     // MARK: - Balance (centered hero, no band / label / chip)
 
     private var balanceBlock: some View {
-        VStack(spacing: 6) {
-            if wallet.isFetchingPrices {
-                ProgressView().scaleEffect(0.7).padding(.vertical, 22)
+        VStack(spacing: 9) {
+            // Keep the number on screen during a refresh — show a spinner only on the very first load
+            // (when there's genuinely nothing yet), so routine refreshes don't blank the hero.
+            if isRefreshing && displayedTotal == 0 {
+                ProgressView().scaleEffect(0.7).padding(.vertical, 30)
             } else {
-                Text(wallet.formatFiat(wallet.totalPortfolioUSD))
-                    .font(.system(size: 40, weight: .bold, design: .rounded))
+                Text(wallet.formatFiat(displayedTotal))
+                    .font(.system(size: 46, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .background(balanceGlow)
 
-                if wallet.hasHoldings {
-                    let change = wallet.portfolioChange24h
-                    if change != 0 {
-                        let tone = change >= 0 ? WalletTheme.positive : WalletTheme.negative
-                        HStack(spacing: 3) {
-                            Image(systemName: change >= 0 ? "arrow.up.right" : "arrow.down.right")
-                                .font(.system(size: 10, weight: .bold))
-                            Text(String(format: "%.2f%%", abs(change)))
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundStyle(tone)
-                    }
+                // The 24h change pill + sparkline track the active chain's on-device series, so they're
+                // shown only in single-chain mode; All Networks shows the combined total alone.
+                if !wallet.showAllNetworks {
+                    changePill
+                    portfolioMiniChart
                 }
-
-                portfolioMiniChart
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
+        .padding(.top, 26)
+        .padding(.bottom, 18)
+    }
+
+    /// 24h change as a soft direction-colored capsule (green up / red down). Color only ever carries
+    /// meaning here — hidden entirely when there's no movement, so the hero stays calm.
+    @ViewBuilder
+    private var changePill: some View {
+        let change = wallet.portfolioChange24h
+        if wallet.hasHoldings && change != 0 {
+            let tone = change >= 0 ? WalletTheme.positive : WalletTheme.negative
+            HStack(spacing: 4) {
+                Image(systemName: change >= 0 ? "arrow.up.right" : "arrow.down.right")
+                    .font(.system(size: 9, weight: .bold))
+                Text(String(format: "%@%.2f%% · today", change >= 0 ? "+" : "−", abs(change)))
+                    .font(.system(size: 12, weight: .semibold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(tone)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(tone.opacity(0.13)))
+        }
     }
 
     /// Compact portfolio-value sparkline. Built from on-device snapshots only (no network); hidden
@@ -221,9 +289,10 @@ struct WalletPanelView: View {
         let series = wallet.portfolioSeries
         if series.count >= 2, (series.map(\.usd).max() ?? 0) > 0 {
             WalletLineChart(points: series.map { PricePoint(t: $0.t, v: $0.usd) }, compact: true)
-                .frame(height: 44)
-                .padding(.horizontal, 28)
-                .padding(.top, 14)
+                .frame(height: 36)
+                .padding(.horizontal, 40)
+                .padding(.top, 10)
+                .opacity(0.85)
         }
     }
 
@@ -244,9 +313,9 @@ struct WalletPanelView: View {
         // Watch-only accounts have no key — Send and Swap are disabled (Receive/Buy still work).
         let canSign = !wallet.activeAccountIsWatchOnly
         return HStack(spacing: 0) {
-            actionButton("Receive", icon: "arrow.down") { withAnimation(.easeInOut(duration: 0.14)) { activeTab = .receive } }
-            actionButton("Send", icon: "arrow.up", enabled: canSign) { withAnimation(.easeInOut(duration: 0.14)) { activeTab = .send } }
-            actionButton("Swap", icon: "arrow.2.squarepath", enabled: canSign) { showSwap = true }
+            actionButton("Receive", icon: "arrow.down") { pendingTokenID = nil; withAnimation(.easeInOut(duration: 0.14)) { activeTab = .receive } }
+            actionButton("Send", icon: "arrow.up", enabled: canSign) { pendingTokenID = nil; withAnimation(.easeInOut(duration: 0.14)) { activeTab = .send } }
+            actionButton("Swap", icon: "arrow.2.squarepath", enabled: canSign) { pendingTokenID = nil; showSwap = true }
             actionButton("Buy", icon: "creditcard") { openBuy() }
         }
         .padding(.horizontal, 22)
@@ -256,11 +325,14 @@ struct WalletPanelView: View {
 
     private func actionButton(_ label: String, icon: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 9) {
                 ZStack {
                     Circle()
-                        .fill(WalletTheme.surfaceStrong)
-                        .frame(width: 54, height: 54)
+                        .fill(LinearGradient(colors: [Color.white.opacity(0.11), Color.white.opacity(0.05)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .frame(width: 56, height: 56)
+                        .overlay(Circle().strokeBorder(WalletTheme.hairline, lineWidth: 1))
+                        .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
                     Image(systemName: icon)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.white)
@@ -274,6 +346,19 @@ struct WalletPanelView: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+    }
+
+    /// The network follows the asset: switch to the coin's chain, then open the flow pre-targeted to it.
+    private func handleTokenAction(_ action: WalletTokenAction, _ token: WalletToken) {
+        if let chain = WalletChain.by(id: token.chainId), chain.id != wallet.activeChain.id {
+            wallet.switchChain(to: chain)
+        }
+        pendingTokenID = token.id
+        switch action {
+        case .send:    withAnimation(.easeInOut(duration: 0.14)) { activeTab = .send }
+        case .receive: withAnimation(.easeInOut(duration: 0.14)) { activeTab = .receive }
+        case .swap:    showSwap = true
+        }
     }
 
     private func openBuy() {
@@ -299,8 +384,9 @@ struct WalletPanelView: View {
         }
         .padding(.top, 9)
         .padding(.bottom, 11)
+        .background(WalletTheme.canvasRaised)
         .overlay(alignment: .top) {
-            Rectangle().fill(WalletTheme.hairline).frame(height: 0.5)
+            Rectangle().fill(WalletTheme.hairline).frame(height: 1)
         }
     }
 
@@ -324,13 +410,7 @@ struct WalletPanelView: View {
             HStack {
                 Text("Wallet Settings").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
                 Spacer()
-                Button { showSettings = false } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28)
-                        .background(WalletTheme.surface, in: Circle())
-                }
-                .buttonStyle(.plain)
+                WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { showSettings = false }
             }
             .padding(.horizontal, 20).padding(.vertical, 14)
             ScrollView { WalletSettingsSection().padding(20) }
@@ -347,6 +427,7 @@ private struct WalletLockView: View {
     var onClose: () -> Void
     @State private var pin = ""
     @State private var showError = false
+    @State private var storageUnreadable = false   // seed couldn't be read — NOT a wrong PIN
     @State private var isRecovering = false
     @State private var recoveryCode = ""
     @State private var newPIN = ""
@@ -368,14 +449,7 @@ private struct WalletLockView: View {
         VStack(spacing: 0) {
             HStack {
                 Spacer()
-                Button { onClose() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(WalletTheme.textTertiary)
-                        .frame(width: 28, height: 28)
-                        .background(WalletTheme.surface, in: Circle())
-                }
-                .buttonStyle(.plain)
+                WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { onClose() }
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
@@ -394,6 +468,7 @@ private struct WalletLockView: View {
                     Circle()
                         .fill(WalletTheme.surfaceStrong)
                         .frame(width: 64, height: 64)
+                        .overlay(Circle().strokeBorder(WalletTheme.hairline, lineWidth: 1))
                     Image(systemName: "lock.fill")
                         .font(.system(size: 26, weight: .medium))
                         .foregroundStyle(WalletTheme.textSecondary)
@@ -455,7 +530,7 @@ private struct WalletLockView: View {
                     .buttonStyle(.plain)
                 }
 
-                Button("Use recovery code") {
+                Button("Can’t unlock?") {
                     withAnimation { isRecovering = true }
                 }
                 .font(.system(size: 11))
@@ -474,12 +549,26 @@ private struct WalletLockView: View {
 
     private var recoveryView: some View {
         VStack(spacing: 16) {
-            Text("Recovery Code")
-                .font(.system(size: 17, weight: .semibold))
-            Text("Enter the recovery code you saved during setup.")
-                .font(.system(size: 12))
-                .foregroundStyle(WalletTheme.textTertiary)
-                .multilineTextAlignment(.center)
+            if storageUnreadable {
+                // Honest explanation: this isn't a wrong PIN — the seed couldn't be read from this Mac.
+                VStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(.system(size: 22)).foregroundStyle(WalletTheme.warning)
+                    Text("Your wallet couldn’t be opened")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("This Mac’s secure storage couldn’t unlock your wallet — your PIN is likely fine. Reset your PIN with the recovery code below, or start fresh. Your funds are safe on-chain as long as you have your recovery code or 12-word phrase.")
+                        .font(.system(size: 12)).foregroundStyle(WalletTheme.textTertiary)
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.bottom, 4)
+            } else {
+                Text("Recovery Code")
+                    .font(.system(size: 17, weight: .semibold))
+                Text("Enter the recovery code you saved during setup.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(WalletTheme.textTertiary)
+                    .multilineTextAlignment(.center)
+            }
 
             SecureField("Recovery code (32 characters)", text: $recoveryCode)
                 .textFieldStyle(.plain)
@@ -507,7 +596,7 @@ private struct WalletLockView: View {
             }
 
             HStack(spacing: 12) {
-                Button("Back") { withAnimation { isRecovering = false; recoveryError = false } }
+                Button("Back") { withAnimation { isRecovering = false; recoveryError = false; storageUnreadable = false } }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
                 Button("Reset PIN") { attemptRecovery() }
@@ -538,9 +627,16 @@ private struct WalletLockView: View {
 
     private func attemptUnlock() {
         guard pin.count == WalletConfig.pinLength else { return }
-        if wallet.unlock(pin: pin) {
+        switch wallet.unlockDetailed(pin: pin) {
+        case .unlocked:
             showError = false
-        } else {
+        case .storageUnreadable:
+            // The PIN may well be correct — secure storage just couldn't be read. Don't blame the PIN;
+            // route to recovery (reset with code, or start fresh) with an explanation.
+            pin = ""
+            showError = false
+            withAnimation { storageUnreadable = true; isRecovering = true }
+        case .wrongPIN, .locked:
             showError = true
             pin = ""
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showError = false }
@@ -556,49 +652,80 @@ private struct WalletLockView: View {
 // MARK: - Portfolio tab (one flat, uniform token list — SEARXLY pinned first)
 
 private struct WalletPortfolioView: View {
+    var onTokenAction: (WalletTokenAction, WalletToken) -> Void = { _, _ in }
     @State private var wallet = WalletManager.shared
     @State private var showAddToken = false
     @State private var detailToken: WalletToken? = nil
 
-    /// SEARXLY first, then everything else — one consistent row style for all (no special card).
+    /// Sorted by holding value — the coin you hold the most of (in $) leads. Zero-value rows fall to
+    /// the bottom in a stable order (SEARXLY as the home asset, then the native gas coin, then A–Z).
     private var orderedTokens: [WalletToken] {
-        let hero = wallet.visibleTokens.filter { $0.symbol == "SEARXLY" }
-        let rest = wallet.visibleTokens.filter { $0.symbol != "SEARXLY" }
-        return hero + rest
+        wallet.visibleTokens.sorted { a, b in
+            if a.usdValue != b.usdValue { return a.usdValue > b.usdValue }
+            func rank(_ t: WalletToken) -> Int { t.symbol == "SEARXLY" ? 0 : (t.isNative ? 1 : 2) }
+            if rank(a) != rank(b) { return rank(a) < rank(b) }
+            return a.symbol < b.symbol
+        }
+    }
+
+    /// What the list renders: the active chain's tokens, or every chain's funded coins in All Networks.
+    private var displayedTokens: [WalletToken] {
+        wallet.showAllNetworks ? wallet.aggregatedTokens : orderedTokens
+    }
+    private var isEmpty: Bool {
+        wallet.showAllNetworks ? wallet.aggregatedTokens.isEmpty : !wallet.hasHoldings
     }
 
     var body: some View {
-        VStack(spacing: 2) {
-            if !wallet.hasHoldings {
-                Text("Your wallet is empty — tap Receive to get your address.")
+        VStack(spacing: 12) {
+            if isEmpty {
+                Text(wallet.showAllNetworks
+                     ? "No coins found on any network yet — tap Receive to get your address."
+                     : "Your wallet is empty — tap Receive to get your address.")
                     .font(.system(size: 12))
                     .foregroundStyle(WalletTheme.textTertiary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 36)
-                    .padding(.bottom, 6)
             }
 
-            ForEach(orderedTokens) { token in
-                tokenRow(token)
+            // One liquid-glass card holds the whole list; rows are split by inset hairlines (the VPN
+            // popup's "rows in a card" rhythm) so the portfolio reads as a single cohesive surface.
+            if !displayedTokens.isEmpty {
+                WalletGlassCard(padding: 6) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(displayedTokens.enumerated()), id: \.element.aggregatedID) { index, token in
+                            if index > 0 {
+                                Rectangle()
+                                    .fill(WalletTheme.divider)
+                                    .frame(height: 1)
+                                    .padding(.leading, 65)
+                            }
+                            tokenRow(token, showChain: wallet.showAllNetworks)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
             }
 
-            if !wallet.hiddenTokenIDs.isEmpty {
+            if !wallet.showAllNetworks, !wallet.hiddenTokenIDs.isEmpty {
                 Button { wallet.unhideAllTokens() } label: {
                     Text("Show \(wallet.hiddenTokenIDs.count) hidden token\(wallet.hiddenTokenIDs.count == 1 ? "" : "s")")
                         .font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 6)
             }
 
             addCoinButton
+                .padding(.horizontal, 16)
         }
-        .padding(.top, 2)
-        .padding(.bottom, 10)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
         .sheet(isPresented: $showAddToken) { AddTokenSheet() }
-        .sheet(item: $detailToken) { token in TokenDetailView(token: token) }
+        .sheet(item: $detailToken) { token in
+            TokenDetailView(token: token, onAction: onTokenAction)
+        }
     }
 
     private var addCoinButton: some View {
@@ -606,37 +733,52 @@ private struct WalletPortfolioView: View {
             HStack(spacing: 13) {
                 ZStack {
                     Circle()
-                        .fill(WalletTheme.surface)
-                        .frame(width: 40, height: 40)
+                        .fill(WalletTheme.surfaceStrong)
+                        .frame(width: 36, height: 36)
+                        .overlay(Circle().strokeBorder(WalletTheme.hairline, lineWidth: 1))
                     Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(WalletTheme.textSecondary)
                 }
                 Text("Add another coin")
-                    .font(.system(size: 14))
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(WalletTheme.textSecondary)
                 Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WalletTheme.textTertiary)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .walletGlass(radius: WalletTheme.radiusInner)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.top, 4)
     }
 
     /// A clean, flat token row. Tap → detail; right-click → copy / hide / remove (kept off the row to
     /// reduce visual noise, Phantom-style).
     @ViewBuilder
-    private func tokenRow(_ token: WalletToken) -> some View {
+    private func tokenRow(_ token: WalletToken, showChain: Bool = false) -> some View {
+        let funded = token.usdValue > 0
         Button { detailToken = token } label: {
             HStack(spacing: 13) {
                 TokenIconView(token: token, size: 40)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(token.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(WalletTheme.textPrimary)
+                    HStack(spacing: 6) {
+                        Text(token.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(WalletTheme.textPrimary)
+                            .lineLimit(1)
+                        if showChain {
+                            Text((WalletChain.by(id: token.chainId) ?? .base).shortName)
+                                .font(.system(size: 9, weight: .bold)).tracking(0.3)
+                                .foregroundStyle(WalletTheme.textTertiary)
+                                .padding(.horizontal, 5).padding(.vertical, 1.5)
+                                .background(WalletTheme.surfaceStrong, in: Capsule())
+                        }
+                    }
                     Text("\(token.formattedBalance) \(token.symbol)")
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(WalletTheme.textTertiary)
@@ -647,7 +789,7 @@ private struct WalletPortfolioView: View {
                 VStack(alignment: .trailing, spacing: 3) {
                     Text(wallet.formatFiat(token.usdValue))
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(WalletTheme.textPrimary)
+                        .foregroundStyle(funded ? WalletTheme.textPrimary : WalletTheme.textTertiary)
                         .monospacedDigit()
                     if token.balance > 0 && token.change24h != 0 {
                         Text(String(format: "%+.2f%%", token.change24h))
@@ -656,8 +798,11 @@ private struct WalletPortfolioView: View {
                     }
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            // Funded assets read at full strength; empty rows recede so the portfolio's real weight
+            // is legible at a glance (SEARXLY stays a touch brighter as the home asset).
+            .opacity(funded ? 1 : (token.symbol == "SEARXLY" ? 0.7 : 0.5))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -696,6 +841,8 @@ struct PINKeypad: View {
     var passphraseOverride: Bool? = nil
 
     @State private var reveal = false
+    @State private var keyMonitor: Any?
+    @Environment(\.isEnabled) private var isEnabled
 
     private var usesPassphrase: Bool { passphraseOverride ?? WalletFeatures.usesPassphrase }
 
@@ -725,7 +872,7 @@ struct PINKeypad: View {
 
                 Button { reveal.toggle() } label: {
                     Image(systemName: reveal ? "eye.slash" : "eye")
-                        .font(.system(size: 13)).foregroundStyle(Color(white: 0.5))
+                        .font(.system(size: 13)).foregroundStyle(WalletTheme.textTertiary)
                 }
                 .buttonStyle(.plain)
             }
@@ -735,7 +882,7 @@ struct PINKeypad: View {
             Button { if !pin.isEmpty { onComplete() } } label: {
                 Text("Continue")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(pin.isEmpty ? Color(white: 0.5) : .black)
+                    .foregroundStyle(pin.isEmpty ? WalletTheme.textTertiary : .black)
                     .frame(maxWidth: .infinity).padding(.vertical, 11)
                     .background(pin.isEmpty ? WalletTheme.surfaceStrong : Color.white,
                                 in: RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -752,6 +899,51 @@ struct PINKeypad: View {
                     ForEach(row, id: \.self) { key in keyButton(key) }
                 }
             }
+        }
+        // Also accept the physical keyboard (including the numeric keypad). A local key monitor is far
+        // more reliable than SwiftUI focus inside sheets. The on-screen keys never reveal the typed
+        // number — only the masked dots fill, exactly as if the buttons were tapped.
+        .onAppear { startKeyMonitor() }
+        .onDisappear { stopKeyMonitor() }
+    }
+
+    private func startKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handleKeyEvent(event)
+        }
+    }
+
+    private func stopKeyMonitor() {
+        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+    }
+
+    /// Maps a physical key to the PIN: a plain digit (main row or numpad) appends, backspace deletes,
+    /// Return/Enter submits. Returns nil to consume the key, or the event to let it pass through (so
+    /// e.g. Esc still closes the wallet). No-ops when the keypad is disabled (PIN lockout).
+    private func handleKeyEvent(_ event: NSEvent) -> NSEvent? {
+        guard isEnabled,
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
+
+        if let chars = event.charactersIgnoringModifiers, chars.count == 1,
+           let ch = chars.first, ch.isNumber {
+            if pin.count < maxLength {
+                pin.append(ch)
+                if pin.count == maxLength {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { onComplete() }
+                }
+            }
+            return nil
+        }
+        switch event.keyCode {
+        case 51:        // delete / backspace
+            if !pin.isEmpty { pin.removeLast() }
+            return nil
+        case 36, 76:    // return / numpad enter
+            if pin.count == maxLength { onComplete() }
+            return nil
+        default:
+            return event
         }
     }
 

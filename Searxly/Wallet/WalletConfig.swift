@@ -47,6 +47,16 @@ enum WalletConfig {
     static let historyAPIBase        = "https://api.etherscan.io/v2/api"
     /// 0x Swap API (v2) host. Requires a free 0x API key (entered in Settings → Wallet).
     static let swapAPIBase           = "https://api.0x.org"
+
+    // MARK: - Swap fee (Searxly's revenue)
+    /// Searxly's swap fee in basis points (65 = 0.65%, under Phantom's ~0.85%). Collected ON-CHAIN by
+    /// the 0x settlement contract and routed to `swapFeeRecipient` — there is NO extra transaction and
+    /// no fee-handling in our signing code. Charged on SWAPS ONLY, never on plain sends/transfers, and
+    /// waived entirely for any swap involving SEARXLY (see WalletSwap.quote). Disclosed in the swap UI.
+    static let swapFeeBps: Int       = 65
+    /// Treasury address that receives the swap fee. EIP-55 checksummed; verified before shipping.
+    /// Same address collects on every supported EVM chain. Change here to rotate the treasury.
+    static let swapFeeRecipient      = "0x491Af9aA3C6Fae935D20FfeE254eA16822392976"
     /// On-ramp widget (no card data ever touches Searxly; the provider's own UI handles it).
     static func onrampURL(address: String) -> String {
         "https://buy.onramper.com/?mode=buy&onlyCryptos=eth_base,usdc_base&wallets=eth_base:\(address),usdc_base:\(address)&themeName=dark"
@@ -86,6 +96,7 @@ enum WalletConfig {
         static let activeAccount     = "Wallet.activeAccount"  // active HD account index
         static let activeChain       = "Wallet.activeChain"    // active EVM chain id
         static let hiddenTokens      = "Wallet.hiddenTokens"   // token IDs hidden from the list
+        static let revealedTokens    = "Wallet.revealedTokens" // built-in coins the user pinned visible at $0
         static let fiatCurrency      = "Wallet.fiatCurrency"   // display currency code
         static let priceAlerts       = "Wallet.priceAlerts"    // JSON-encoded [WalletPriceAlert]
         static let incomingAlerts    = "Wallet.feature.incomingAlerts"  // notify on received funds
@@ -183,8 +194,18 @@ enum WalletFeatures {
     static var fullHistory: Bool {
         get { flag(WalletConfig.Keys.enableFullHistory) } set { setFlag(WalletConfig.Keys.enableFullHistory, newValue) }
     }
+    /// Auto-find coins an address holds. Discovery sends the address to an explorer, so it stays
+    /// opt-in by default — EXCEPT when the Searxly gateway is configured, where the lookup is fronted
+    /// by Searxly's own infra (Blockscout), not a third party. In that case it defaults ON so coins you
+    /// receive simply appear, instead of silently missing until you paste a contract address by hand.
+    /// An explicit choice in Settings → Wallet always wins over the default.
     static var tokenDiscovery: Bool {
-        get { flag(WalletConfig.Keys.enableTokenDiscovery) } set { setFlag(WalletConfig.Keys.enableTokenDiscovery, newValue) }
+        get {
+            UserDefaults.standard.object(forKey: WalletConfig.Keys.enableTokenDiscovery) == nil
+                ? SearxlyGateway.isConfigured
+                : flag(WalletConfig.Keys.enableTokenDiscovery)
+        }
+        set { setFlag(WalletConfig.Keys.enableTokenDiscovery, newValue) }
     }
     static var swaps: Bool {
         get { flag(WalletConfig.Keys.enableSwaps) } set { setFlag(WalletConfig.Keys.enableSwaps, newValue) }

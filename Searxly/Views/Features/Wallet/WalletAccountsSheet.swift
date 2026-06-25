@@ -87,14 +87,7 @@ struct WalletAccountsSheet: View {
             Text(headerTitle)
                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
             Spacer()
-            Button { onClose() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(WalletTheme.textSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(WalletTheme.surfaceStrong, in: Circle())
-            }
-            .buttonStyle(.plain)
+            WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { onClose() }
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
     }
@@ -180,7 +173,7 @@ struct WalletAccountsSheet: View {
                 }
             }
             .padding(12)
-            .walletCard(radius: 12)
+            .walletGlass(radius: 12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(isActive ? Color.white.opacity(0.35) : .clear, lineWidth: 1)
@@ -227,7 +220,7 @@ struct WalletAccountsSheet: View {
 
             HStack(spacing: 12) {
                 ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? Color.white : Color(white: 0.2)).frame(width: 11, height: 11)
+                    Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                 }
             }
             if pinError {
@@ -283,15 +276,15 @@ struct WalletAccountsSheet: View {
 
             SecureField("Private key (0x…)", text: $keyText)
                 .textFieldStyle(.plain).font(.system(size: 12, design: .monospaced))
-                .padding(10).background(WalletTheme.surfaceField, in: RoundedRectangle(cornerRadius: WalletTheme.radiusField))
+                .padding(10).walletGlass(radius: WalletTheme.radiusField, fill: WalletTheme.surfaceField)
             TextField("Label (optional)", text: $labelText)
                 .textFieldStyle(.plain).font(.system(size: 12))
-                .padding(10).background(WalletTheme.surfaceField, in: RoundedRectangle(cornerRadius: WalletTheme.radiusField))
+                .padding(10).walletGlass(radius: WalletTheme.radiusField, fill: WalletTheme.surfaceField)
 
             Text("Enter your PIN to confirm").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             HStack(spacing: 12) {
                 ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? Color.white : Color(white: 0.2)).frame(width: 11, height: 11)
+                    Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                 }
             }
             if let importError {
@@ -327,10 +320,10 @@ struct WalletAccountsSheet: View {
 
             TextField("Address (0x…)", text: $watchAddress)
                 .textFieldStyle(.plain).font(.system(size: 12, design: .monospaced))
-                .padding(10).background(WalletTheme.surfaceField, in: RoundedRectangle(cornerRadius: WalletTheme.radiusField))
+                .padding(10).walletGlass(radius: WalletTheme.radiusField, fill: WalletTheme.surfaceField)
             TextField("Label (optional)", text: $labelText)
                 .textFieldStyle(.plain).font(.system(size: 12))
-                .padding(10).background(WalletTheme.surfaceField, in: RoundedRectangle(cornerRadius: WalletTheme.radiusField))
+                .padding(10).walletGlass(radius: WalletTheme.radiusField, fill: WalletTheme.surfaceField)
 
             if let watchError {
                 Text(watchError).font(.system(size: 12)).foregroundStyle(WalletTheme.negative).multilineTextAlignment(.center)

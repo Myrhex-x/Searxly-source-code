@@ -265,6 +265,17 @@ struct ContentView: View {
                     onPerformFind: { browserState.performFindInPage($0) },
                     onExitFind: { browserState.dismissFindInPage() }
                 )
+                .overlay(alignment: .top) {
+                    if let offer = browserState.activeOnionLocationOffer {
+                        OnionLocationBanner(
+                            host: offer.pageHost,
+                            onOpen: { browserState.acceptOnionLocationOffer() },
+                            onDismiss: { browserState.dismissOnionLocationOffer() }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.2), value: browserState.activeOnionLocationOffer)
                 .onChange(of: browserState.webCurrentURL) { _, _ in
                     syncAddressBarWithWebURL()
                     if browserState.showingWebContent {

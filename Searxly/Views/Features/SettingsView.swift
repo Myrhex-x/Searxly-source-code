@@ -25,7 +25,7 @@ enum SettingsSidebarGroup: String, CaseIterable, Identifiable {
         case .general:
             return [.appearance]
         case .privacy:
-            return [.privacy, .security, .passwords]
+            return [.privacy, .security, .passwords, .vpn, .tor]
         case .search:
             return [.search, .instances]
         case .features:
@@ -43,6 +43,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case security = "App Security"
     case passwords = "Passwords"
     case vpn = "VPN"
+    case tor = "Tor"
     case performance = "Performance"
     case search = "Search"
     case instances = "SearXNG Instances"
@@ -60,6 +61,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .security: return "lock.fill"
         case .passwords: return "key.fill"
         case .vpn: return "network.badge.shield.half.filled"
+        case .tor: return "point.3.connected.trianglepath.dotted"
         case .wallet:      return "hexagon.fill"
         case .performance: return "speedometer"
         case .search: return "text.magnifyingglass"
@@ -77,6 +79,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .security:    return Localization.string("security_title", defaultValue: "App Security")
         case .passwords:   return Localization.string("passwords_title", defaultValue: "Passwords")
         case .vpn:         return Localization.string("vpn_title", defaultValue: "VPN")
+        case .tor:         return Localization.string("tor_title", defaultValue: "Tor / Onion")
         case .performance: return Localization.string("performance_title", defaultValue: "Performance")
         case .search:      return Localization.string("search_settings_title", defaultValue: "Search")
         case .instances:   return Localization.string("instances_title", defaultValue: "SearXNG Instances")
@@ -131,93 +134,18 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header bar (spans full width above the split) - old design
-            HStack {
-                Text(Localization.string("settings_title", defaultValue: "Settings"))
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                Button(Localization.string("settings_done", defaultValue: "Done")) {
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 13)
-            .background(.regularMaterial)
+            headerBar
 
-            Divider()
+            Rectangle().fill(SettingsTheme.hairline).frame(height: 1)
 
             HStack(spacing: 0) {
-                // Left sidebar with category buttons - old custom design
                 sidebarView
-
-                Divider()
-
-                // Main content pane - old detail scroll
-                ScrollView(.vertical, showsIndicators: true) {
-                    Group {
-                        switch selectedCategory {
-                        case .appearance:
-                            AppearanceSettingsView(reduceLiquidGlass: $reduceLiquidGlass, appearanceModeRaw: $appearanceModeRaw)
-                        case .privacy:
-                            PrivacySettingsView(
-                                historyEnabled: $historyEnabled,
-                                defaultNewTabsToPrivate: $defaultNewTabsToPrivate,
-                                dataEncryptionEnabled: $dataEncryptionEnabled,
-                                clearedMessage: $clearedMessage,
-                                showClearConfirmation: $showClearConfirmation,
-                                showingClearData: $showingClearData,
-                                requestReauth: requestReauthForSensitiveAction,
-                                onExportRecovery: {
-                                    if let code = PrivacyManager.shared.exportEncryptionRecoveryCode() {
-                                        NSPasteboard.general.clearContents()
-                                        NSPasteboard.general.setString(code, forType: .string)
-                                        clearedMessage = Localization.string("recovery_code_copied", defaultValue: "Recovery code copied to clipboard. Store it somewhere safe — anyone with this code can decrypt your data.")
-                                        showClearConfirmation = true
-                                    } else {
-                                        clearedMessage = Localization.string("no_encryption_key", defaultValue: "No encryption key found to export.")
-                                        showClearConfirmation = true
-                                    }
-                                }
-                            )
-                        case .security:
-                            SecuritySettingsView(
-                                onCreateBackup: { createBackup() },
-                                onRestoreBackup: { restoreBackup() }
-                            )
-                        case .passwords:
-                            PasswordsSettingsView(onOpenVault: openPasswordVaultFromSettings)
-                        case .vpn:
-                            VPNOwnServersView()
-                        case .performance:
-                            PerformanceSettingsView()
-                        case .search:
-                            SearchSettingsView(knowledgePanelEnabled: $knowledgePanelEnabled)
-                        case .instances:
-                            InstancesSettingsView(
-                                searxInstances: $searxInstances,
-                                currentInstanceID: $currentInstanceID
-                            )
-                        case .wallet:
-                            WalletSettingsSection()
-                        case .localAI:
-                            LocalAISettingsView()
-                        case .feedback:
-                            FeedbackSettingsView(
-                                searxInstances: $searxInstances,
-                                currentInstanceID: $currentInstanceID
-                            )
-                        case .about:
-                            AboutSettingsView()
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                contentColumn
             }
         }
-        .frame(minWidth: 780, idealWidth: 820, maxWidth: 960, minHeight: 540, idealHeight: 640)
-        .background(.regularMaterial)
+        .frame(minWidth: 800, idealWidth: 860, maxWidth: 920, minHeight: 580, idealHeight: 700)
+        .background(SettingsTheme.canvas)
+        .environment(\.colorScheme, .dark)
         .onAppear { selectedCategory = initialCategory }
         .alert("Notice", isPresented: $showClearConfirmation) {
             Button("OK") { }
@@ -244,17 +172,128 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Sidebar (restored old custom design)
+    // MARK: - Header
+
+    private var headerBar: some View {
+        HStack(spacing: 10) {
+            Text(Localization.string("settings_title", defaultValue: "Settings"))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(SettingsTheme.textPrimary)
+            Spacer()
+            Button {
+                dismiss()
+            } label: {
+                Text(Localization.string("settings_done", defaultValue: "Done"))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(.white, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 20)
+        // Clear the macOS floating-sheet titlebar drag strip that otherwise clips the top row.
+        .padding(.top, 42)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity)
+        .background(SettingsTheme.canvasRaised)
+    }
+
+    // MARK: - Content column (one centered reading column shared by every pane)
+
+    private var contentColumn: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            paneContent
+                .frame(maxWidth: 540, alignment: .leading)   // the reading column
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 24)
+                .padding(.top, 28)
+                .padding(.bottom, 44)
+                .tint(.white)
+                .toggleStyle(PremiumToggleStyle())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(SettingsTheme.canvas)
+    }
+
+    @ViewBuilder
+    private var paneContent: some View {
+        switch selectedCategory {
+        case .appearance:
+            AppearanceSettingsView(reduceLiquidGlass: $reduceLiquidGlass, appearanceModeRaw: $appearanceModeRaw)
+        case .privacy:
+            PrivacySettingsView(
+                historyEnabled: $historyEnabled,
+                defaultNewTabsToPrivate: $defaultNewTabsToPrivate,
+                dataEncryptionEnabled: $dataEncryptionEnabled,
+                clearedMessage: $clearedMessage,
+                showClearConfirmation: $showClearConfirmation,
+                showingClearData: $showingClearData,
+                requestReauth: requestReauthForSensitiveAction,
+                onExportRecovery: {
+                    if let code = PrivacyManager.shared.exportEncryptionRecoveryCode() {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(code, forType: .string)
+                        clearedMessage = Localization.string("recovery_code_copied", defaultValue: "Recovery code copied to clipboard. Store it somewhere safe — anyone with this code can decrypt your data.")
+                        showClearConfirmation = true
+                    } else {
+                        clearedMessage = Localization.string("no_encryption_key", defaultValue: "No encryption key found to export.")
+                        showClearConfirmation = true
+                    }
+                }
+            )
+        case .security:
+            SecuritySettingsView(
+                onCreateBackup: { createBackup() },
+                onRestoreBackup: { restoreBackup() }
+            )
+        case .passwords:
+            PasswordsSettingsView(onOpenVault: openPasswordVaultFromSettings)
+        case .vpn:
+            VStack(alignment: .leading, spacing: 24) {
+                VPNManagedView()
+                SettingsDivider()
+                VPNOwnServersView()
+            }
+        case .tor:
+            TorSettingsView()
+        case .performance:
+            PerformanceSettingsView()
+        case .search:
+            SearchSettingsView(knowledgePanelEnabled: $knowledgePanelEnabled)
+        case .instances:
+            InstancesSettingsView(
+                searxInstances: $searxInstances,
+                currentInstanceID: $currentInstanceID
+            )
+        case .wallet:
+            WalletSettingsSection()
+        case .localAI:
+            LocalAISettingsView()
+        case .feedback:
+            FeedbackSettingsView(
+                searxInstances: $searxInstances,
+                currentInstanceID: $currentInstanceID
+            )
+        case .about:
+            AboutSettingsView()
+        }
+    }
+
+    // MARK: - Sidebar
+
     private var sidebarView: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             ForEach(SettingsSidebarGroup.allCases) { group in
                 Text(group.rawValue.uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .tracking(0.5)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .tracking(0.7)
+                    .foregroundStyle(SettingsTheme.textTertiary)
                     .padding(.horizontal, 12)
-                    .padding(.top, group == SettingsSidebarGroup.allCases.first ? 0 : 14)
-                    .padding(.bottom, 4)
+                    .padding(.top, group == SettingsSidebarGroup.allCases.first ? 2 : 16)
+                    .padding(.bottom, 5)
 
                 ForEach(group.categories) { category in
                     SidebarCategoryRow(
@@ -266,26 +305,18 @@ struct SettingsView: View {
                 }
             }
 
-            Spacer(minLength: 30)
+            Spacer(minLength: 20)
         }
-        .frame(width: 196)
-        .padding(.top, 16)
-        .padding(.bottom, 12)
+        .frame(width: 208, alignment: .leading)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
         .padding(.horizontal, 10)
-        .background {
-            UnevenRoundedRectangle(cornerRadii: .init(
-                topLeading: 0,
-                bottomLeading: 0,
-                bottomTrailing: 0,
-                topTrailing: 9
-            ))
-            .fill(Color.primary.opacity(0.04))
-        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(SettingsTheme.canvasRaised)
         .overlay(alignment: .trailing) {
             Rectangle()
-                .fill(Color.primary.opacity(0.08))
+                .fill(SettingsTheme.hairline)
                 .frame(width: 1)
-                .padding(.top, 7)
         }
     }
 
@@ -409,24 +440,30 @@ private struct SidebarCategoryRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: category.icon)
-                    .font(.system(size: 13.5, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .frame(width: 18, alignment: .center)
-                    .foregroundStyle(isSelected ? Color.primary : .secondary)
+                    .foregroundStyle(isSelected ? SettingsTheme.textPrimary : SettingsTheme.textSecondary)
 
                 Text(category.localizedTitle)
                     .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.primary : .secondary)
+                    .foregroundStyle(isSelected ? SettingsTheme.textPrimary : SettingsTheme.textSecondary)
+                    .lineLimit(1)
 
                 Spacer(minLength: 4)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 11)
             .padding(.vertical, 8)
             .background(
-                isSelected
-                    ? Color.primary.opacity(0.1)
-                    : (isHovering ? Color.primary.opacity(0.05) : Color.clear)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected
+                          ? Color.white.opacity(0.09)
+                          : (isHovering ? Color.white.opacity(0.045) : Color.clear))
             )
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(isSelected ? SettingsTheme.hairline : Color.clear, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in

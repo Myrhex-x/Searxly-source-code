@@ -30,6 +30,8 @@ extension BrowserState {
         }
 
         if let url = smartURL(from: trimmed) {
+            // .onion is only reachable over Tor. loadInWebView routes it into a dedicated onion tab
+            // (unless the current tab is already an onion tab, where it navigates in place).
             loadInWebView(url)
             clearNativeSearch()
         } else {
@@ -339,7 +341,14 @@ extension BrowserState {
         var input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if input.contains("://") { return URL(string: input) }
         if input.contains(".") && !input.contains(" ") {
-            if !input.hasPrefix("http") { input = "https://" + input }
+            if !input.hasPrefix("http") {
+                // Onion services are HTTP-only by convention — Tor encrypts + authenticates traffic
+                // via the .onion address itself, and most onions don't serve TLS. Forcing https://
+                // hangs them (the TLS handshake never completes), so default bare .onion hosts to http://.
+                let hostPart = input.split(separator: "/", maxSplits: 1).first.map(String.init) ?? input
+                let bareHost = hostPart.split(separator: ":").first.map(String.init) ?? hostPart
+                input = (bareHost.lowercased().hasSuffix(".onion") ? "http://" : "https://") + input
+            }
             return URL(string: input)
         }
         if input.hasPrefix("localhost") || input.hasPrefix("127.0.0.1") || input.hasPrefix("::1") {

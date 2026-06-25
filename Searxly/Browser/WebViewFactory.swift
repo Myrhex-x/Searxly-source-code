@@ -8,6 +8,7 @@
 
 import WebKit
 import os
+import Network   // ProxyConfiguration / NWEndpoint — SOCKS5 proxy for onion tabs (macOS 14+)
 
 /// Represents the privacy level of a browser tab.
 /// - .standard: Normal persistent cookies, storage, and cache (default)
@@ -24,11 +25,15 @@ import os
 enum TabPrivacyMode: String, CaseIterable, Codable {
     case standard
     case privateEphemeral
+    /// Onion tab: ephemeral data store routed through the bundled Tor client's SOCKS5 proxy so
+    /// `.onion` hidden services are reachable and the real IP is hidden. See TorManager.
+    case onion
 
     var displayName: String {
         switch self {
         case .standard: return "Standard"
         case .privateEphemeral: return "Private"
+        case .onion: return "Tor"
         }
     }
 
@@ -36,6 +41,7 @@ enum TabPrivacyMode: String, CaseIterable, Codable {
         switch self {
         case .standard: return "globe"
         case .privateEphemeral: return "shield.fill"
+        case .onion: return "point.3.connected.trianglepath.dotted"
         }
     }
 }
@@ -186,8 +192,77 @@ struct WebViewFactory {
             // we can decide here (or in the navigation delegate) to swap in
             // the default persistent store for specific hosts even inside a
             // nominally "Private" tab.
+
+        case .onion:
+            // Onion tab: a fresh non-persistent data store (like Private) whose traffic is routed
+            // through the bundled Tor client's local SOCKS5 endpoint. SOCKS5h semantics mean the
+            // hostname — including .onion — is resolved at the proxy, so .onion services become
+            // reachable and there is no DNS leak.
+            //
+            // NOTE: Tor must be bootstrapped before navigations are issued into this view. The
+            // routing path (BrowserState.openOnionURL) awaits TorManager.ensureReadyAndRunning()
+            // before loading the URL.
+            let onionStore = WKWebsiteDataStore.nonPersistent()
+            let endpoint = NWEndpoint.hostPort(
+                host: NWEndpoint.Host(TorRuntimeConfig.socksHost),
+                port: NWEndpoint.Port(rawValue: TorRuntimeConfig.socksPort) ?? 19050
+            )
+            onionStore.proxyConfigurations = [ProxyConfiguration(socksv5Proxy: endpoint)]
+            configuration.websiteDataStore = onionStore
+
+            // Leak hardening: neuter WebRTC (the classic IP-leak vector) + deny geolocation in every
+            // frame, at document start so it wins the race against page scripts.
+            let hardening = WKUserScript(source: Self.onionHardeningSource,
+                                         injectionTime: .atDocumentStart,
+                                         forMainFrameOnly: false)
+            configuration.userContentController.addUserScript(hardening)
+
+            // Uniform user agent: deliberately leave applicationNameForUserAgent UNSET so onion tabs
+            // send the default Safari-like UA with no "Searxly"/"Private" suffix that would single
+            // them out. (Honest scope: this reduces — not eliminates — fingerprinting; not Tor Browser.)
+
+            let webView = SearxlyWebView(frame: .zero, configuration: configuration)
+            return webView
         }
     }
+
+    /// Injected into onion tabs at document start. Removes the highest-signal IP-leak vectors that
+    /// WKWebView still exposes: WebRTC peer connections / media-device enumeration, and geolocation.
+    /// This is defense-in-depth on top of network routing — NOT full Tor Browser fingerprint defense.
+    static let onionHardeningSource: String = """
+    (function(){
+        'use strict';
+        try {
+            ['RTCPeerConnection','webkitRTCPeerConnection','mozRTCPeerConnection','RTCDataChannel','RTCSessionDescription','RTCIceCandidate'].forEach(function(k){
+                try { Object.defineProperty(window, k, { value: undefined, configurable: false, writable: false }); } catch(e){}
+            });
+            if (navigator.mediaDevices) {
+                try { navigator.mediaDevices.getUserMedia = function(){ return Promise.reject(new DOMException('Disabled in Tor tab','NotAllowedError')); }; } catch(e){}
+                try { navigator.mediaDevices.enumerateDevices = function(){ return Promise.resolve([]); }; } catch(e){}
+            }
+        } catch(e){}
+        try {
+            if (navigator.geolocation) {
+                var deny = function(_success, error){ if (typeof error === 'function') { try { error({ code: 1, message: 'Geolocation disabled in Tor tab', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 }); } catch(e){} } };
+                navigator.geolocation.getCurrentPosition = deny;
+                navigator.geolocation.watchPosition = function(){ return 0; };
+                navigator.geolocation.clearWatch = function(){};
+            }
+        } catch(e){}
+        // Reduce the timezone fingerprint: report UTC. (Covers the common checks — Intl + offset —
+        // without rewriting Date's local-time methods, which would break legitimate time display.)
+        try {
+            Date.prototype.getTimezoneOffset = function(){ return 0; };
+            var _resolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+            Intl.DateTimeFormat.prototype.resolvedOptions = function(){ var o = _resolved.call(this); o.timeZone = 'UTC'; return o; };
+        } catch(e){}
+        // Uniform language fingerprint.
+        try {
+            Object.defineProperty(navigator, 'language', { get: function(){ return 'en-US'; } });
+            Object.defineProperty(navigator, 'languages', { get: function(){ return ['en-US', 'en']; } });
+        } catch(e){}
+    })();
+    """
 
     // MARK: - Layout Fixer Source (injected early for all tabs)
 

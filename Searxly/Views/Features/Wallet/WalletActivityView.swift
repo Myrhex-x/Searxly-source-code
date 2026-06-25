@@ -29,12 +29,18 @@ struct WalletActivityView: View {
             if chainEntries.isEmpty {
                 emptyState
             } else {
-                VStack(spacing: 2) {
-                    ForEach(chainEntries) { entry in
-                        row(entry)
+                WalletGlassCard(padding: 6) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(chainEntries.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 {
+                                Rectangle().fill(WalletTheme.divider).frame(height: 1).padding(.leading, 64)
+                            }
+                            row(entry)
+                        }
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
         }
         .task(id: wallet.activeChain.id) {
@@ -77,7 +83,7 @@ struct WalletActivityView: View {
 
             HStack(spacing: 12) {
                 ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? Color.white : Color(white: 0.2)).frame(width: 11, height: 11)
+                    Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                 }
             }
             if let actionError { Text(actionError).font(.system(size: 12)).foregroundStyle(WalletTheme.negative).multilineTextAlignment(.center) }
@@ -161,7 +167,7 @@ struct WalletActivityView: View {
                     .background(WalletTheme.surfaceStrong, in: Capsule())
             }.buttonStyle(.plain).foregroundStyle(WalletTheme.negative)
         }
-        .padding(.horizontal, 20).padding(.bottom, 10).padding(.top, 2)
+        .padding(.horizontal, 12).padding(.bottom, 10).padding(.top, 2)
     }
 
     private func txButton(_ entry: WalletActivityEntry) -> some View {
@@ -196,7 +202,7 @@ struct WalletActivityView: View {
                     statusBadge(entry.status)
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 12)
             .padding(.vertical, 12)
             .contentShape(Rectangle())
         }

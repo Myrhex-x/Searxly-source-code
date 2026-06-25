@@ -58,13 +58,13 @@ struct PrivacySettingsView: View {
 
                 SettingsDivider()
 
-                Button {
+                SettingsActionChip(
+                    title: Localization.string("clear_browsing_data"),
+                    systemImage: "trash",
+                    role: .destructive
+                ) {
                     showingClearData = true
-                } label: {
-                    Label(Localization.string("clear_browsing_data"), systemImage: "trash")
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.bordered)
 
                 Text("Choose exactly what to remove — history, cookies, cache, and more.")
                     .font(.caption)
@@ -166,7 +166,10 @@ struct PrivacySettingsView: View {
                 if dataEncryptionEnabled {
                     SettingsDivider()
 
-                    Button {
+                    SettingsActionChip(
+                        title: Localization.string("copy_recovery_code"),
+                        systemImage: "key"
+                    ) {
                         if let export = onExportRecovery {
                             export()
                         } else if let code = PrivacyManager.shared.exportEncryptionRecoveryCode() {
@@ -178,11 +181,7 @@ struct PrivacySettingsView: View {
                             clearedMessage = Localization.string("no_encryption_key")
                             showClearConfirmation = true
                         }
-                    } label: {
-                        Label(Localization.string("copy_recovery_code"), systemImage: "key")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
             }
             .onAppear {

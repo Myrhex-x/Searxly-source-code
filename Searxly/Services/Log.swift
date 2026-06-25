@@ -22,5 +22,6 @@ nonisolated enum Log {
     static let web = Logger(subsystem: subsystem, category: "web")
     static let adblock = Logger(subsystem: subsystem, category: "adblock")
     static let searxng = Logger(subsystem: subsystem, category: "searxng")
+    static let tor = Logger(subsystem: subsystem, category: "tor")
     static let app = Logger(subsystem: subsystem, category: "general")
 }

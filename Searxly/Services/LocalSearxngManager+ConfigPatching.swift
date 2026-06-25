@@ -19,7 +19,9 @@ extension LocalSearxngManager {
     func ensureSearxngConfigured() async {
         await ensureSettingsYmlBindPort()
         await ensureNativeThemePathsRemoved()
+        await ensureLanguagesSchemaCompatibleIfNeeded()
         await ensureWebEnginesUpgradedIfNeeded()
+        await ensureWebEnginesBroadenedIfNeeded()
         await ensureSearchTuningConfigIfNeeded()
         await ensurePluginsSectionCompatibleIfNeeded()
         await ensureLimiterTomlCompatibleIfNeeded()
@@ -83,7 +85,6 @@ extension LocalSearxngManager {
     - hu-HU
     - el
     - el-GR
-    - he
     - th
     - th-TH
     - vi
@@ -210,6 +211,110 @@ extension LocalSearxngManager {
             UserDefaults.standard.set(true, forKey: migrationKey)
         } else {
             logs.append("⚠️ Could not upgrade web engines (XPC write failed)")
+        }
+    }
+
+    /// The bundled SearXNG runtime's allowed `search.languages` set changes between versions. As of
+    /// the 2026.6 runtime, `he` (Hebrew) is no longer an accepted locale — and a single unknown locale
+    /// in this list makes SearXNG reject the *whole* file ('Invalid settings.yml') and exit instantly,
+    /// which surfaces in the UI as an endless "Starting local SearXNG…". Searxly's older settings.yml
+    /// (and the previous bundled template) listed `he`, so strip any now-unsupported entries on disk.
+    /// Ungated/self-healing (no one-time key): cheap, idempotent, and must succeed before the updated
+    /// runtime can boot at all. Mirrors `ensureNativeThemePathsRemoved`'s "fix-before-launch" role.
+    func ensureLanguagesSchemaCompatibleIfNeeded() async {
+        guard let proxy = HelperClient.shared.proxy() else { return }
+        let settingsPath = projectFolderURL.appendingPathComponent("searxng/settings.yml").path
+        guard await proxy.fileExistsAsync(atPath: settingsPath),
+              let data = await proxy.readFileAsync(atPath: settingsPath),
+              let content = String(data: data, encoding: .utf8) else { return }
+
+        // Locales older Searxly configs listed under search.languages that the current runtime rejects.
+        let unsupported = ["he"]
+        var patched = content
+        for code in unsupported {
+            // Matches a bare list item line `- he` (any indent), which only appears as a language code.
+            if let regex = try? NSRegularExpression(pattern: "(?m)^[ \\t]*-[ \\t]+\(code)[ \\t]*$\\n?", options: []) {
+                patched = regex.stringByReplacingMatches(
+                    in: patched, range: NSRange(patched.startIndex..., in: patched), withTemplate: "")
+            }
+        }
+
+        guard patched != content, let newData = patched.data(using: .utf8) else { return }
+        if await proxy.writeFileAsync(data: newData, toPath: settingsPath) {
+            logs.append("✅ Removed search.languages entries the current SearXNG runtime no longer accepts (\(unsupported.joined(separator: ", "))) — fixes 'Invalid settings.yml' on the updated runtime.")
+        } else {
+            logs.append("⚠️ Could not patch unsupported search.languages entries (XPC write failed)")
+        }
+    }
+
+    /// Corrects the engine set on already-provisioned installs that went through the *earlier*
+    /// `ensureWebEnginesUpgradedIfNeeded` migration, which made the wrong bet: it removed brave +
+    /// startpage (assuming they're blocked from residential IPs) and added google + mojeek + yahoo.
+    /// Live testing shows the opposite on typical home networks — google returns "too many requests",
+    /// mojeek "access denied", and yahoo nothing, while brave/startpage/qwant all respond and
+    /// paginate. The practical result of the old bet was a bing+duckduckgo-only SERP that capped at
+    /// ~16 results and couldn't infinite-scroll. This migration adds startpage (a Google proxy, so
+    /// Google-quality results return without Google's bot-blocking), brave, and qwant, and removes
+    /// the dead mojeek/yahoo entries. google is left in place — harmless and great when it responds.
+    /// One-time, idempotent, only touches Searxly-managed lean lists (detected by `bing images`).
+    func ensureWebEnginesBroadenedIfNeeded() async {
+        let migrationKey = "Searxly.DidBroadenWebEngines2026"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+        guard let proxy = HelperClient.shared.proxy() else { return }
+        let settingsPath = projectFolderURL.appendingPathComponent("searxng/settings.yml").path
+        guard await proxy.fileExistsAsync(atPath: settingsPath),
+              let data = await proxy.readFileAsync(atPath: settingsPath),
+              var content = String(data: data, encoding: .utf8) else { return }
+
+        // Only migrate Searxly-managed lean lists (has the bundled bing-images entry).
+        guard content.contains("  - name: bing images") else {
+            UserDefaults.standard.set(true, forKey: migrationKey)
+            return
+        }
+
+        var changed = false
+
+        // Remove the dead engines (mojeek, yahoo) — whole 3-line block + a trailing blank line.
+        for dead in ["mojeek", "yahoo"] {
+            let pattern = "(?m)^  - name: \(dead)\\n    engine: \(dead)\\n    shortcut: \\w+\\n\\n?"
+            if let regex = try? NSRegularExpression(pattern: pattern, options: []),
+               regex.firstMatch(in: content, range: NSRange(content.startIndex..., in: content)) != nil {
+                content = regex.stringByReplacingMatches(
+                    in: content, range: NSRange(content.startIndex..., in: content), withTemplate: "")
+                changed = true
+            }
+        }
+
+        // Add startpage + brave + qwant right after the duckduckgo block.
+        let ddgBlock = "  - name: duckduckgo\n    engine: duckduckgo\n    shortcut: ddg\n"
+        if let ddgRange = content.range(of: ddgBlock) {
+            var additions = ""
+            if !content.contains("\n    engine: startpage\n") {
+                additions += "\n  - name: startpage\n    engine: startpage\n    shortcut: sp\n"
+            }
+            if !content.contains("\n    engine: brave\n") {
+                additions += "\n  - name: brave\n    engine: brave\n    shortcut: br\n"
+            }
+            if !content.contains("\n    engine: qwant\n") {
+                additions += "\n  - name: qwant\n    engine: qwant\n    shortcut: qw\n"
+            }
+            if !additions.isEmpty {
+                content.insert(contentsOf: additions, at: ddgRange.upperBound)
+                changed = true
+            }
+        }
+
+        guard changed else {
+            UserDefaults.standard.set(true, forKey: migrationKey)
+            return
+        }
+
+        if let newData = content.data(using: .utf8),
+           await proxy.writeFileAsync(data: newData, toPath: settingsPath) {
+            logs.append("✅ Broadened web engines (added startpage/brave/qwant; removed dead mojeek/yahoo) — many more results + working infinite scroll. Startpage returns Google's results without Google's blocking. Restart SearXNG to apply.")
+            UserDefaults.standard.set(true, forKey: migrationKey)
+        } else {
+            logs.append("⚠️ Could not broaden web engines (XPC write failed)")
         }
     }
 

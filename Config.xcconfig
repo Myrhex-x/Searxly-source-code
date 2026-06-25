@@ -1,0 +1,13 @@
+// Searxly — committed base build configuration.
+//
+// SEARXLY_GATEWAY_APP_TOKEN is the *app token* that lets Searxly reach the Searxly gateway
+// (keyless token swaps via 0x, plus history). It is a soft gate, NOT the upstream 0x / io.net
+// secret — those keys live only on the gateway server (see gateway/gateway.mjs) and never ship
+// inside the app. The token is intentionally blank in the public source; the real value is
+// layered in from the gitignored Secrets.xcconfig (copy Secrets.example.xcconfig → Secrets.xcconfig
+// and paste the token). When blank, the wallet falls back to its "bring your own 0x key" path.
+SEARXLY_GATEWAY_APP_TOKEN =
+
+// Optional include: present only on a maintainer's machine (gitignored). The `?` means a clean
+// checkout / CI / the open-source repo build fine without it.
+#include? "Secrets.xcconfig"

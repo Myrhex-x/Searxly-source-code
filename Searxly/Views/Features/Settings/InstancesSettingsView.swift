@@ -81,7 +81,7 @@ struct InstancesSettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.accentColor)
+                .tint(.white)
                 .disabled(
                     newInstanceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                     newInstanceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -371,7 +371,7 @@ struct InstancesSettingsView: View {
             Spacer(minLength: 8)
 
             if inst.id == currentInstanceID {
-                SettingsBadge(text: "In use", tint: .accentColor)
+                SettingsBadge(text: "In use", tint: .white)
             } else {
                 Button("Use") { currentInstanceID = inst.id }
                     .buttonStyle(.bordered)

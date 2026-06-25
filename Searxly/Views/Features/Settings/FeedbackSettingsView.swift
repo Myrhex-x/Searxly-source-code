@@ -122,7 +122,7 @@ struct FeedbackSettingsView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.green)
+            .tint(.white)
             .disabled(!canSend)
 
             if let success = sendSuccessMessage {

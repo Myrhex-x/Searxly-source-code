@@ -62,6 +62,11 @@ struct AppData: Codable {
     /// User-controlled convenience affordance (gated in Settings > VPN).
     var vpnBrowserControlsEnabled: Bool = false
 
+    /// The active paid Managed-VPN pass (BitLaunch exit node), if any. Stored in AppData so it
+    /// participates in optional at-rest encryption (it references a profile holding the tunnel key).
+    /// nil when the user has never bought a pass or after it has been forgotten/expired.
+    var vpnAccessPass: VPNAccessPass? = nil
+
     // Local on-device AI preferences (Phase 0+).
     // Stored inside AppData so it is automatically encrypted when the user enables "Encrypt local data at rest".
     // All individual feature toggles default to false (master off). The manager may still use a transient
@@ -136,6 +141,7 @@ struct AppData: Codable {
 
         vpnProfiles = try container.decodeIfPresent([VPNProfile].self, forKey: .vpnProfiles) ?? []
         vpnBrowserControlsEnabled = try container.decodeIfPresent(Bool.self, forKey: .vpnBrowserControlsEnabled) ?? false
+        vpnAccessPass = try container.decodeIfPresent(VPNAccessPass.self, forKey: .vpnAccessPass)
 
         // NEW Phase 0 — safe decode (older files get the .default which has everything off)
         aiPreferences = try container.decodeIfPresent(AIPreferences.self, forKey: .aiPreferences) ?? .default
@@ -183,6 +189,7 @@ struct AppData: Codable {
         // WireGuard VPN (profiles contain secrets for user's own servers)
         vpnProfiles: [VPNProfile] = [],
         vpnBrowserControlsEnabled: Bool = false,
+        vpnAccessPass: VPNAccessPass? = nil,
 
         // Local on-device AI preferences (Phase 0+). Persisted so encryption applies automatically.
         aiPreferences: AIPreferences = .default,
@@ -226,6 +233,7 @@ struct AppData: Codable {
 
         self.vpnProfiles = vpnProfiles
         self.vpnBrowserControlsEnabled = vpnBrowserControlsEnabled
+        self.vpnAccessPass = vpnAccessPass
 
         self.aiPreferences = aiPreferences
         self.passwordVaultEntries = passwordVaultEntries
@@ -273,6 +281,7 @@ struct AppData: Codable {
         // VPN (own servers only)
         case vpnProfiles
         case vpnBrowserControlsEnabled
+        case vpnAccessPass
 
         // Local on-device AI (Phase 0+)
         case aiPreferences

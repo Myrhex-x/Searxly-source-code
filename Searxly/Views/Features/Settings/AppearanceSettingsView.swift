@@ -111,14 +111,14 @@ private struct AppearanceModeCard: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(
                         isSelected
-                            ? Color.accentColor.opacity(0.14)
-                            : (isHovering ? Color.primary.opacity(0.05) : Color.primary.opacity(0.025))
+                            ? Color.white.opacity(0.12)
+                            : (isHovering ? Color.white.opacity(0.05) : Color.white.opacity(0.025))
                     )
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(
-                        isSelected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08),
+                        isSelected ? Color.white.opacity(0.7) : Color.white.opacity(0.1),
                         lineWidth: isSelected ? 1.5 : 1
                     )
             )

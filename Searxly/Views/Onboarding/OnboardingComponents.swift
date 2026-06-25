@@ -185,6 +185,7 @@ struct OnboardingShell<Content: View>: View {
     var scrollable: Bool = false
     var showProgress: Bool = false
     var useGlassCard: Bool = true
+    var maxContentWidth: CGFloat = OnboardingStyle.contentMaxWidth
     @ViewBuilder let content: Content
     @ViewBuilder let actionBar: () -> OnboardingActionBar
 
@@ -227,7 +228,7 @@ struct OnboardingShell<Content: View>: View {
 
             actionBar()
         }
-        .frame(maxWidth: OnboardingStyle.contentMaxWidth)
+        .frame(maxWidth: maxContentWidth)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

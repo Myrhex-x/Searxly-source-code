@@ -8,8 +8,14 @@
 
 import SwiftUI
 
+/// An action requested from a coin's detail — routed up so the wallet can switch to the coin's chain
+/// and open the flow pre-targeted to it (Phantom-style: the network follows the asset).
+enum WalletTokenAction { case send, receive, swap }
+
 struct TokenDetailView: View {
     let token: WalletToken
+    /// Invoked when the user taps Send / Receive / Swap for this coin. Default no-op for previews.
+    var onAction: (WalletTokenAction, WalletToken) -> Void = { _, _ in }
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
 
@@ -42,14 +48,7 @@ struct TokenDetailView: View {
                 Text("$\(token.symbol)").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             }
             Spacer()
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(WalletTheme.textSecondary)
-                    .frame(width: 30, height: 30)
-                    .background(WalletTheme.surface, in: Circle())
-            }
-            .buttonStyle(.plain)
+            WalletGlassIconButton(systemName: "xmark", help: "Close") { dismiss() }
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
     }
@@ -64,6 +63,9 @@ struct TokenDetailView: View {
                     .font(.system(size: 13, design: .monospaced)).foregroundStyle(WalletTheme.textTertiary)
             }
             .padding(.top, 16)
+
+            actionRow
+                .padding(.horizontal, 16)
 
             if WalletFeatures.priceCharts { chartSection }
 
@@ -93,7 +95,7 @@ struct TokenDetailView: View {
                     .padding(.horizontal, 16).padding(.vertical, 13)
                 }
             }
-            .background(WalletTheme.surface, in: RoundedRectangle(cornerRadius: WalletTheme.radiusCard, style: .continuous))
+            .walletGlass(radius: WalletTheme.radiusCard)
             .padding(.horizontal, 20)
 
             // Price alerts (only meaningful when the token has a price feed)
@@ -104,6 +106,37 @@ struct TokenDetailView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
         }
+    }
+
+    // MARK: - Actions (Send / Receive / Swap for this specific coin)
+
+    private var actionRow: some View {
+        let canSign = !wallet.activeAccountIsWatchOnly
+        return HStack(spacing: 10) {
+            actionButton("Send", icon: "arrow.up", enabled: canSign) { onAction(.send, token); dismiss() }
+            actionButton("Receive", icon: "arrow.down") { onAction(.receive, token); dismiss() }
+            actionButton("Swap", icon: "arrow.2.squarepath", enabled: canSign) { onAction(.swap, token); dismiss() }
+        }
+    }
+
+    private func actionButton(_ label: String, icon: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 7) {
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(colors: [Color.white.opacity(0.11), Color.white.opacity(0.05)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .frame(width: 48, height: 48)
+                        .overlay(Circle().strokeBorder(WalletTheme.hairline, lineWidth: 1))
+                    Image(systemName: icon).font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                }
+                Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(WalletTheme.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+            .opacity(enabled ? 1 : 0.32)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 
     // MARK: - Price alerts
@@ -139,7 +172,7 @@ struct TokenDetailView: View {
                     .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(WalletTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+                .walletGlass(radius: 10)
             }
 
             if showAlertForm {
@@ -163,7 +196,7 @@ struct TokenDetailView: View {
                         .buttonStyle(.borderedProminent).controlSize(.small)
                     }
                     .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(WalletTheme.surfaceField, in: RoundedRectangle(cornerRadius: 10))
+                    .walletGlass(radius: 10, fill: WalletTheme.surfaceField)
                 }
             }
         }
@@ -289,7 +322,7 @@ struct TokenDetailView: View {
             }
             .foregroundStyle(WalletTheme.textPrimary)
             .padding(.horizontal, 14).padding(.vertical, 12)
-            .background(WalletTheme.surfaceStrong, in: RoundedRectangle(cornerRadius: WalletTheme.radiusInner, style: .continuous))
+            .walletGlass(radius: WalletTheme.radiusInner, fill: WalletTheme.surfaceStrong)
         }
         .buttonStyle(.plain)
     }

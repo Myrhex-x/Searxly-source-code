@@ -455,6 +455,7 @@ extension BrowserState {
             showingWebContent = false
             searchText = ""
             clearNativeSearch()
+            stopTorIfNoOnionTabsRemain()   // closing the last tab (e.g. an onion tab) → tear Tor down
             saveCurrentSession()   // Persist immediately so closing the last tab (e.g. speedtest) doesn't resurrect on next launch
             return
         }
@@ -471,6 +472,7 @@ extension BrowserState {
                     showingWebContent = false
                 }
             }
+            stopTorIfNoOnionTabsRemain()   // tear Tor down once the last onion tab is gone
             saveCurrentSession()   // Persist tab list right away — prevents stale sessions (e.g. speedtest) from reappearing after close
         }
     }

@@ -6,13 +6,19 @@
 import SwiftUI
 
 enum OnboardingStyle {
-    static let stepCount = 4
-    static let stepLabels = ["Welcome", "Local search", "Security", "Ready"]
+    static let stepCount = 7
+    static let stepLabels = ["Welcome", "Search", "Encryption", "Wallet", "VPN", "Security", "Ready"]
 
     static let stepSpring = Animation.spring(response: 0.28, dampingFraction: 0.9)
     static let cardSpring = Animation.spring(response: 0.32, dampingFraction: 0.82)
+    static let revealSpring = Animation.spring(response: 0.5, dampingFraction: 0.82)
     static let minTapHeight: CGFloat = 48
-    static let contentMaxWidth: CGFloat = 620
+    /// Width budget for the two-column feature slides.
+    static let contentMaxWidth: CGFloat = 980
+    /// Narrower budget for the centered steps (welcome, security, ready).
+    static let centeredContentWidth: CGFloat = 680
+    /// Below this content width, feature slides stack vertically instead of two-column.
+    static let wideBreakpoint: CGFloat = 840
     static let cardCornerRadius: CGFloat = 16
     static let buttonCardCornerRadius: CGFloat = 12
 }

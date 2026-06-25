@@ -11,7 +11,10 @@ import Foundation
 import CryptoKit
 import CommonCrypto
 
-enum BIP39 {
+// `nonisolated`: the module defaults to MainActor isolation, but this is pure, thread-safe crypto
+// (entropy → mnemonic, PBKDF2 seed derivation, checksum validation) called from nonisolated contexts
+// like WalletBackup and networking. Opting the type out keeps it callable from anywhere.
+nonisolated enum BIP39 {
 
     // MARK: - Public API
 
@@ -347,7 +350,7 @@ enum BIP39 {
 }
 
 private extension String {
-    func leftPadded(toLength length: Int) -> String {
+    nonisolated func leftPadded(toLength length: Int) -> String {
         let pad = length - self.count
         return pad > 0 ? String(repeating: "0", count: pad) + self : self
     }

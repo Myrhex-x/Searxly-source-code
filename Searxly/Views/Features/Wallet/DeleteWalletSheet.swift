@@ -33,8 +33,8 @@ struct DeleteWalletSheet: View {
     var body: some View {
         VStack(spacing: 18) {
             ZStack {
-                Circle().fill(Color(red: 1, green: 0.35, blue: 0.35).opacity(0.12)).frame(width: 64, height: 64)
-                Image(systemName: "trash.fill").font(.system(size: 26)).foregroundStyle(Color(red: 1, green: 0.42, blue: 0.42))
+                Circle().fill(WalletTheme.negative.opacity(0.12)).frame(width: 64, height: 64)
+                Image(systemName: "trash.fill").font(.system(size: 26)).foregroundStyle(WalletTheme.negative)
             }
             .padding(.top, 24)
 
@@ -48,14 +48,14 @@ struct DeleteWalletSheet: View {
                 consequence("The ONLY way back in is your 12-word recovery phrase. Without it, access is gone forever.")
             }
             .padding(14)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .walletGlass(radius: 12, fill: WalletTheme.surface)
             .padding(.horizontal, 24)
 
             // Backup confirmation
             Button { backedUp.toggle() } label: {
                 HStack(spacing: 10) {
                     Image(systemName: backedUp ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 16)).foregroundStyle(backedUp ? .white : Color(white: 0.4))
+                        .font(.system(size: 16)).foregroundStyle(backedUp ? .white : WalletTheme.textTertiary)
                     Text("I've written down my 12-word recovery phrase")
                         .font(.system(size: 12)).foregroundStyle(.white)
                         .multilineTextAlignment(.leading)
@@ -68,14 +68,14 @@ struct DeleteWalletSheet: View {
             // PIN (when known)
             if requiresPIN {
                 VStack(spacing: 8) {
-                    Text("Enter your PIN to confirm").font(.system(size: 11)).foregroundStyle(Color(white: 0.45))
+                    Text("Enter your PIN to confirm").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
                     SecureField("PIN", text: $pin)
                         .textFieldStyle(.plain).multilineTextAlignment(.center)
                         .font(.system(size: 14, design: .monospaced))
                         .frame(width: 120).padding(.vertical, 8)
-                        .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 8))
+                        .walletGlass(radius: 8, fill: WalletTheme.surfaceField)
                     if pinError {
-                        Text("Incorrect PIN").font(.system(size: 11)).foregroundStyle(Color(red: 1, green: 0.35, blue: 0.35))
+                        Text("Incorrect PIN").font(.system(size: 11)).foregroundStyle(WalletTheme.negative)
                     }
                 }
             }
@@ -91,9 +91,9 @@ struct DeleteWalletSheet: View {
                 } label: {
                     Text(secondsLeft > 0 ? "Delete (\(secondsLeft))" : "Delete Wallet")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(canDelete ? .white : Color(white: 0.4))
+                        .foregroundStyle(canDelete ? .white : WalletTheme.textTertiary)
                         .frame(maxWidth: .infinity).padding(.vertical, 10)
-                        .background(canDelete ? Color(red: 0.85, green: 0.25, blue: 0.25) : Color(white: 0.12),
+                        .background(canDelete ? Color(red: 0.85, green: 0.25, blue: 0.25) : WalletTheme.surfaceStrong,
                                     in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain).disabled(!canDelete)
@@ -110,8 +110,8 @@ struct DeleteWalletSheet: View {
     private func consequence(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: 11)).foregroundStyle(Color(white: 0.5)).padding(.top, 1)
-            Text(text).font(.system(size: 12)).foregroundStyle(Color(white: 0.8))
+                .font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary).padding(.top, 1)
+            Text(text).font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

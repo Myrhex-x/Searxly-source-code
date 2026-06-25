@@ -17,7 +17,15 @@ struct SwapQuote {
     let to: String                  // tx target
     let data: String                // tx calldata
     let value: String               // tx value (for native ETH sells)
+    let gas: String?                // 0x-computed gas limit (hex) — accurate for the swap route
+    let feeBps: Int                 // Searxly fee applied to this quote, in basis points (for disclosure)
     let needsAllowanceTo: String?   // spender to approve (nil for native ETH sells)
+
+    /// The disclosed Searxly fee as a percentage string, e.g. "0.8%".
+    var feePercentText: String {
+        let pct = Double(feeBps) / 100
+        return (pct == pct.rounded() ? String(format: "%.0f", pct) : String(format: "%.2g", pct)) + "%"
+    }
 
     var buyAmountDisplay: String { formatBase(buyAmountRaw, decimals: buyToken.decimals) }
     var minBuyAmountDisplay: String { formatBase(minBuyAmountRaw, decimals: buyToken.decimals) }
@@ -51,9 +59,41 @@ enum WalletSwap {
         }
     }
 
-    /// Fetches a swap quote. `taker` is the wallet address.
+    /// Fetches a swap quote. `taker` is the wallet address. If a fee'd quote can't be routed, retries
+    /// once WITHOUT the Searxly fee — some thin-liquidity pairs (e.g. SEARXLY) only quote without the
+    /// extra fee leg, so the user can still swap (Searxly just forgoes its fee on that trade).
     static func quote(sell: WalletToken, buy: WalletToken, sellAmount: Decimal, taker: String,
                       chainId: Int = WalletConfig.baseChainID) async -> Result<SwapQuote, SwapError> {
+        // No Searxly fee on ANY swap that involves SEARXLY — buying it, selling it, anything. A
+        // deliberate incentive to use the token (the swap UI then discloses a 0% fee).
+        let waiveFee = isSearxly(sell) || isSearxly(buy)
+
+        let primary = await fetchQuote(sell: sell, buy: buy, sellAmount: sellAmount,
+                                       taker: taker, chainId: chainId, applyFee: !waiveFee)
+        // If a fee'd quote can't be routed, retry once without the fee (helps thin-liquidity pairs).
+        if !waiveFee, case .failure(.badResponse(let message)) = primary, isNoRoute(message) {
+            let noFee = await fetchQuote(sell: sell, buy: buy, sellAmount: sellAmount,
+                                         taker: taker, chainId: chainId, applyFee: false)
+            if case .success = noFee { return noFee }
+        }
+        return primary
+    }
+
+    /// True for the SEARXLY token (matched by id, symbol, or contract) — swaps involving it are free.
+    private static func isSearxly(_ token: WalletToken) -> Bool {
+        token.id == "SEARXLY"
+            || token.symbol.uppercased() == "SEARXLY"
+            || token.contractAddress?.lowercased() == WalletConfig.searxlyTokenAddress.lowercased()
+    }
+
+    /// Whether a quote failure looks like a routing/liquidity miss (worth retrying without the fee).
+    private static func isNoRoute(_ message: String) -> Bool {
+        let m = message.lowercased()
+        return m.contains("route") || m.contains("liquidity")
+    }
+
+    private static func fetchQuote(sell: WalletToken, buy: WalletToken, sellAmount: Decimal, taker: String,
+                                   chainId: Int, applyFee: Bool) async -> Result<SwapQuote, SwapError> {
         guard WalletFeatures.swaps else { return .failure(.notConfigured) }
         // Prefer the user's own 0x key (talks to 0x directly). Otherwise route through the Searxly
         // gateway, which holds the key server-side — so swaps work with no per-user key.
@@ -63,14 +103,24 @@ enum WalletSwap {
         let base = useGateway ? SearxlyGateway.zeroExBase : WalletConfig.swapAPIBase
 
         let sellAmountBase = WeiConverter.baseUnitDecimalString(amount: sellAmount, decimals: sell.decimals)
-        var comps = URLComponents(string: "\(base)/swap/allowance-holder/quote")
-        comps?.queryItems = [
+        var items: [URLQueryItem] = [
             .init(name: "chainId", value: String(chainId)),
             .init(name: "sellToken", value: token0xAddress(sell)),
             .init(name: "buyToken", value: token0xAddress(buy)),
             .init(name: "sellAmount", value: sellAmountBase),
             .init(name: "taker", value: taker),
         ]
+        if applyFee {
+            // Searxly fee — 0x collects it on-chain (in the buy token) and routes it to the treasury,
+            // so `buyAmount`/`minBuyAmount` come back already net of the fee.
+            items += [
+                .init(name: "swapFeeRecipient", value: WalletConfig.swapFeeRecipient),
+                .init(name: "swapFeeBps", value: String(WalletConfig.swapFeeBps)),
+                .init(name: "swapFeeToken", value: token0xAddress(buy)),
+            ]
+        }
+        var comps = URLComponents(string: "\(base)/swap/allowance-holder/quote")
+        comps?.queryItems = items
         guard let url = comps?.url else { return .failure(.badResponse("Bad URL")) }
 
         var req = URLRequest(url: url)
@@ -94,10 +144,13 @@ enum WalletSwap {
               let to = tx["to"] as? String,
               let callData = tx["data"] as? String,
               let buyAmount = json["buyAmount"] as? String else {
-            return .failure(.badResponse("No route found for this pair/amount"))
+            return .failure(.badResponse("No route to swap \(sell.symbol) → \(buy.symbol) at this amount. Try a different amount, or sell ETH or USDC instead."))
         }
         let minBuy = (json["minBuyAmount"] as? String) ?? buyAmount
         let value = (tx["value"] as? String).map { hexFromDecimalString($0) } ?? "0x0"
+        // 0x returns the route-aware gas limit; prefer it over a local re-estimate (which can revert
+        // or fall back to a too-low default and cost an out-of-gas failure on multi-hop swaps).
+        let gas = (tx["gas"] as? String).map { hexFromDecimalString($0) }
 
         // Allowance needed only when selling an ERC-20 (native ETH needs none).
         var spender: String? = nil
@@ -112,7 +165,8 @@ enum WalletSwap {
             sellToken: sell, buyToken: buy, sellAmount: sellAmount,
             buyAmountRaw: WeiConverter.decimalStringToBytes(buyAmount),
             minBuyAmountRaw: WeiConverter.decimalStringToBytes(minBuy),
-            to: to, data: callData, value: value, needsAllowanceTo: spender))
+            to: to, data: callData, value: value, gas: gas,
+            feeBps: applyFee ? WalletConfig.swapFeeBps : 0, needsAllowanceTo: spender))
     }
 
     /// 0x returns `value` as a decimal string; our tx builder wants hex.

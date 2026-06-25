@@ -31,9 +31,14 @@ engines:
 
   # General-web engines. Multiple independent backends give the SERP both breadth (more results
   # per page) and depth (later pages keep yielding new results, so infinite scroll has somewhere to
-  # go). google is the strongest single source (~20/page + reliable deep pagination); bing/mojeek/
-  # yahoo add diversity and paginate well. brave & startpage were removed — from a residential IP
-  # they consistently return zero (blocked), so they only diluted the set without adding results.
+  # go). From a typical residential IP the reliably-responding set is bing + duckduckgo + startpage
+  # + brave + qwant; each (except duckduckgo) paginates, so scroll keeps finding new results.
+  # Startpage is a Google proxy — it returns Google's own results without Google's bot-blocking, so
+  # users still get Google-quality results even when the raw google engine is rate-limited.
+  # google is kept because it's excellent when it does respond, but on many networks it returns
+  # "too many requests" and is suspended gracefully (startpage covers it). mojeek/yahoo were dropped:
+  # mojeek returns "access denied" and yahoo returns nothing from residential IPs, so they only
+  # added latency without adding results.
   - name: google
     engine: google
     shortcut: go
@@ -61,13 +66,17 @@ engines:
     engine: duckduckgo
     shortcut: ddg
 
-  - name: mojeek
-    engine: mojeek
-    shortcut: mjk
+  - name: startpage
+    engine: startpage
+    shortcut: sp
 
-  - name: yahoo
-    engine: yahoo
-    shortcut: yh
+  - name: brave
+    engine: brave
+    shortcut: br
+
+  - name: qwant
+    engine: qwant
+    shortcut: qw
 
   - name: openverse
     engine: openverse

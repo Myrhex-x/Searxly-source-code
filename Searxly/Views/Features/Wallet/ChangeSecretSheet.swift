@@ -40,13 +40,14 @@ struct ChangeSecretSheet: View {
                 } else {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "lock.shield.fill")
-                            .font(.system(size: 12)).foregroundStyle(.orange).padding(.top, 1)
+                            .font(.system(size: 12)).foregroundStyle(WalletTheme.warning).padding(.top, 1)
                         Text("This Mac has no Secure Enclave, so a passphrase is required — a 6-digit PIN could be brute-forced offline if the encrypted seed is ever copied.")
-                            .font(.system(size: 11)).foregroundStyle(Color(white: 0.8))
+                            .font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(12)
-                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    .background(WalletTheme.warning.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(WalletTheme.warning.opacity(0.25), lineWidth: 0.8))
                     .frame(width: 280)
                 }
             }
@@ -55,7 +56,7 @@ struct ChangeSecretSheet: View {
             if !activeIsPassphrase {
                 HStack(spacing: 12) {
                     ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                        Circle().fill(i < activeCount ? Color.white : Color(white: 0.2)).frame(width: 11, height: 11)
+                        Circle().fill(i < activeCount ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                     }
                 }
             }

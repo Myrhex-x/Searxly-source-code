@@ -61,9 +61,17 @@ nonisolated enum WalletKeychain {
     }
 
     static func loadSeed(pin: String) -> [String]? {
-        guard let encrypted = loadCiphertext(unbound: seedAccount, bound: seedBoundAccount) else { return nil }
+        // Diagnostic: distinguish "no readable ciphertext" (storage/Secure-Enclave failure) from
+        // "ciphertext present but decrypt failed" (wrong PIN OR salt/key mismatch). Without this, both
+        // surface to the UI as the same "incorrect PIN", which masks a keychain read failure.
+        guard let encrypted = loadCiphertext(unbound: seedAccount, bound: seedBoundAccount) else {
+            Log.security.error("WalletKeychain.loadSeed: no readable seed ciphertext (storage/SE failure, NOT a wrong PIN)")
+            return nil
+        }
         if let salt = loadSalt() {
-            return decryptSeed(encrypted, secret: pin, salt: salt)
+            let words = decryptSeed(encrypted, secret: pin, salt: salt)
+            if words == nil { Log.security.error("WalletKeychain.loadSeed: ciphertext present but AES-GCM decrypt failed (wrong PIN or key/salt mismatch)") }
+            return words
         }
         // Legacy wallet (created before per-wallet salts): decrypt with the old fixed-salt/100k KDF,
         // then transparently migrate it to the new random-salt/200k KDF so it's upgraded going forward.
@@ -71,6 +79,7 @@ nonisolated enum WalletKeychain {
             saveSeed(words, pin: pin)
             return words
         }
+        Log.security.error("WalletKeychain.loadSeed: no per-wallet salt and legacy decrypt failed")
         return nil
     }
 
@@ -87,6 +96,19 @@ nonisolated enum WalletKeychain {
               let phrase = String(data: decrypted, encoding: .utf8) else { return nil }
         let words = phrase.components(separatedBy: " ").filter { !$0.isEmpty }
         return words.isEmpty ? nil : words
+    }
+
+    /// Whether the seed CIPHERTEXT can be retrieved at all, independent of the PIN. `false` here means
+    /// a storage / Secure-Enclave read failure — NOT a wrong PIN — so the UI can say so honestly
+    /// instead of blaming the user's PIN. (Used to tell the two failure modes apart at unlock.)
+    static func seedCiphertextReadable() -> Bool {
+        loadCiphertext(unbound: seedAccount, bound: seedBoundAccount) != nil
+    }
+
+    /// Whether any seed item exists in the Keychain at all (bound or unbound), regardless of whether
+    /// it can currently be read back.
+    static func seedItemPresent() -> Bool {
+        loadItem(account: seedBoundAccount) != nil || loadItem(account: seedAccount) != nil
     }
 
     static func deleteSeed() {
@@ -469,14 +491,21 @@ nonisolated enum WalletKeychain {
     private static func loadCiphertext(unbound: String, bound: String) -> Data? {
         if let boundBlob = loadItem(account: bound) {
             if let ct = seUnwrap(boundBlob) { return ct }
-            // Bound copy present but the Enclave couldn't unwrap it (SE changed/unavailable). Use any
-            // remaining unbound copy; otherwise this PIN copy is unreadable → user restores via recovery code.
-            return loadItem(account: unbound)
+            // Bound copy present but the Enclave couldn't unwrap it (SE key inaccessible — common when
+            // the wallet was created by a different code-signing identity / earlier build). Use any
+            // remaining unbound copy; otherwise this PIN copy is unreadable → restore via recovery code.
+            Log.security.error("WalletKeychain: SE-bound \(bound, privacy: .public) present but unwrap FAILED; trying unbound fallback")
+            let fallback = loadItem(account: unbound)
+            if fallback == nil {
+                Log.security.error("WalletKeychain: no unbound fallback for \(bound, privacy: .public) — seed unreadable with PIN (use recovery code)")
+            }
+            return fallback
         }
         if let unboundBlob = loadItem(account: unbound) {
             storeCiphertextBound(unboundBlob, unbound: unbound, bound: bound)   // upgrade in place
             return unboundBlob
         }
+        Log.security.error("WalletKeychain: no seed ciphertext at all (bound=\(bound, privacy: .public), unbound=\(unbound, privacy: .public))")
         return nil
     }
 

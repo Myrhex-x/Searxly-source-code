@@ -9,6 +9,7 @@
 //  Submit (Return) or the parent decides what to do with the text.
 //  Styling matches the rest of the app (glass, focus ring, scale, shadow) with simple hero vs slim sizing.
 
+import AppKit
 import SwiftUI
 
 struct AddressBarHeightPreferenceKey: PreferenceKey {
@@ -43,6 +44,9 @@ struct AddressBar: View {
     /// Larger, more prominent metrics + positioning for the centered bar on pure home/new tab.
     var isHero: Bool = false
 
+    /// When the active tab is a Tor-routed onion tab, the leading icon becomes the onion glyph.
+    var isOnionTab: Bool = false
+
     // Suggestion keyboard hooks are no longer used (suggestions feature DELETED per user request).
     // Params kept with defaults for any remaining call sites during cleanup; they are ignored.
     private let onSuggestionsArrowDown: (() -> Void)?
@@ -59,6 +63,7 @@ struct AddressBar: View {
         bookmarks: [BookmarkItem] = [],
         onSubmit: @escaping () -> Void,
         isHero: Bool = false,
+        isOnionTab: Bool = false,
         isCompact: Bool = false,
         suppressSuggestions: Bool = false,
         drawsOwnSuggestionsOverlay: Bool = true,
@@ -80,6 +85,7 @@ struct AddressBar: View {
         self.toolbarMaterial = toolbarMaterial
         self.onSubmit = onSubmit
         self.isHero = isHero
+        self.isOnionTab = isOnionTab
 
         self.onSuggestionsArrowDown = onSuggestionsArrowDown
         self.onSuggestionsArrowUp = onSuggestionsArrowUp
@@ -124,7 +130,7 @@ struct AddressBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: showingWebContent ? "globe" : "magnifyingglass")
+            Image(systemName: isOnionTab ? "point.3.connected.trianglepath.dotted" : (showingWebContent ? "globe" : "magnifyingglass"))
                 .foregroundStyle(.secondary.opacity(isHero ? 1.0 : 0.9))
                 .font(.system(size: iconSize, weight: .regular))
 
@@ -133,6 +139,11 @@ struct AddressBar: View {
                 .font(.system(size: fontSize, weight: .regular))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .focused($isFocused)
+                // Suppress macOS's native AutoFill/autocomplete (incl. the "AutoFill code from
+                // Messages" security-code suggestion) on the search bar. It's a URL/search field, not
+                // a code field, so that suggestion is just noise. Our own search suggestions are a
+                // separate SwiftUI overlay and are unaffected.
+                .disablesAutoFillCompletion()
                 .onSubmit {
                     onSubmit()
                 }
@@ -239,5 +250,45 @@ struct AddressBar: View {
             )
         }
         return Color.primary.opacity(isFocused ? 0.12 : 0.06)
+    }
+}
+
+// MARK: - Disable macOS native AutoFill / autocomplete on chrome text fields
+
+extension View {
+    /// Turns off macOS's automatic text completion on the AppKit text fields in this view's window.
+    /// That completion path is what surfaces the system "AutoFill code from Messages" suggestion (and
+    /// other autocomplete chrome) on plain text fields — unwanted on a search/URL bar. No-op off macOS.
+    /// The app's own search-suggestion overlay is independent and keeps working.
+    func disablesAutoFillCompletion() -> some View {
+        background(AutoFillCompletionDisabler().frame(width: 0, height: 0))
+    }
+}
+
+private struct AutoFillCompletionDisabler: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.isHidden = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // Defer until the view is in a window so the field-bearing hierarchy exists; SwiftUI calls this
+        // again on focus/text changes, so a momentarily-nil window self-heals on the next pass.
+        DispatchQueue.main.async {
+            guard let root = nsView.window?.contentView else { return }
+            Self.disableCompletion(in: root)
+        }
+    }
+
+    /// Clears `isAutomaticTextCompletionEnabled` on every NSTextField in the chrome view tree. Web-page
+    /// fields live in the WKWebView's own process (not NSTextFields here), so page autofill is untouched.
+    private static func disableCompletion(in view: NSView) {
+        if let field = view as? NSTextField, field.isAutomaticTextCompletionEnabled {
+            field.isAutomaticTextCompletionEnabled = false
+        }
+        for subview in view.subviews {
+            disableCompletion(in: subview)
+        }
     }
 }

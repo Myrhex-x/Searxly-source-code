@@ -42,14 +42,7 @@ struct WalletApprovalsSheet: View {
                 Text("Who can move your tokens").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             }
             Spacer()
-            Button { onClose() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(WalletTheme.textSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(WalletTheme.surfaceStrong, in: Circle())
-            }
-            .buttonStyle(.plain)
+            WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { onClose() }
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
     }
@@ -116,7 +109,7 @@ struct WalletApprovalsSheet: View {
             .buttonStyle(.plain)
         }
         .padding(12)
-        .walletCard(radius: 12)
+        .walletGlass(radius: 12)
     }
 
     // MARK: - Revoke confirm (auth)
@@ -154,7 +147,7 @@ struct WalletApprovalsSheet: View {
 
                 HStack(spacing: 12) {
                     ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                        Circle().fill(i < pin.count ? Color.white : Color(white: 0.2)).frame(width: 11, height: 11)
+                        Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                     }
                 }
                 if pinError {
@@ -186,7 +179,7 @@ struct WalletApprovalsSheet: View {
     private func banner(_ text: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(WalletTheme.positive)
-            Text(text).font(.system(size: 11)).foregroundStyle(Color(white: 0.8))
+            Text(text).font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
             Spacer(minLength: 0)
         }
         .padding(11)

@@ -96,7 +96,7 @@ struct WalletDiscoverView: View {
                     .foregroundStyle(WalletTheme.textTertiary)
             }
             .padding(12)
-            .walletCard(radius: 12)
+            .walletGlass(radius: 12)
         }
         .buttonStyle(.plain)
     }

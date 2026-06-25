@@ -22,7 +22,7 @@ set -euo pipefail
 # ── Pinned versions (bump deliberately, in lockstep with SearxngRuntimeConfig.swift) ──
 PY_VERSION="3.12.13"
 PBS_RELEASE="20260610"                 # astral-sh/python-build-standalone release tag
-SEARXNG_COMMIT="d456f3dd9"             # == upstream docker tag 2025.2.12-d456f3dd9
+SEARXNG_COMMIT="e3713717f"             # upstream master @ 2026-06-23 → version 2026.6.23+e371371
 # Code-signing identity for the runtime. Override with SEARXLY_SIGN_IDENTITY; the default generic
 # "Developer ID Application" prefix lets codesign resolve your single Developer ID cert. To skip
 # signing entirely, export SEARXLY_RUNTIME_SKIP_SIGN=1.

@@ -49,6 +49,45 @@ import Foundation
     /// Reply: true if the tracked SearXNG process (per pidfile) is currently alive.
     func isSearxngRunning(reply: @escaping (Bool) -> Void)
 
+    // MARK: - Tor native process supervision
+    //
+    // Onion support: the bundled, signed `tor` binary is supervised here (unsandboxed) exactly like
+    // SearXNG. The helper owns the Tor state dir + torrc generation; the app only passes bundle paths.
+
+    /// Launches the bundled Tor client: `<torBinaryPath> -f <generated torrc>`. The helper generates
+    /// the torrc under its Tor state dir (SocksPort 127.0.0.1:<socksPort>, ClientOnly, GeoIP files if
+    /// provided, notice log → tor.log). Writes a pidfile so the process is tracked across XPC recycling.
+    /// Idempotent: returns the existing pid if Tor is already running.
+    ///
+    /// - Parameters:
+    ///   - torBinaryPath: absolute path to the bundled `tor` (…/tor-runtime/tor), resolved by the app.
+    ///   - geoipPath / geoip6Path: absolute paths to bundled geoip files, or "" to omit.
+    ///   - socksPort: TCP port for the local SOCKS5 proxy onion tabs route through.
+    /// Reply: (pid, errorString). pid > 0 on success; pid <= 0 means launch failed.
+    func startTor(
+        torBinaryPath: String,
+        geoipPath: String,
+        geoip6Path: String,
+        socksPort: Int32,
+        reply: @escaping (Int32, String) -> Void
+    )
+
+    /// Terminates the tracked Tor process (SIGTERM, then SIGKILL fallback) and clears its pidfile.
+    /// Reply: true if no Tor process remains afterwards.
+    func stopTor(reply: @escaping (Bool) -> Void)
+
+    /// Reply: true if the tracked Tor process (per pidfile) is currently alive.
+    func isTorRunning(reply: @escaping (Bool) -> Void)
+
+    /// Last Tor bootstrap percentage (0...100) parsed from tor.log. Reply: -1 if unknown/not started.
+    func torBootstrapProgress(reply: @escaping (Int32) -> Void)
+
+    /// Live circuit relays as JSON Data (`[{"nickname","country","ip"}]`) via the control port, or nil.
+    func torControlCircuit(reply: @escaping (Data?) -> Void)
+
+    /// Requests a new Tor identity (SIGNAL NEWNYM). Reply: true on success.
+    func torNewIdentity(reply: @escaping (Bool) -> Void)
+
     // MARK: - File system (App Sandbox)
     //
     // The sandboxed main app cannot access ~/searxng-local directly.
@@ -103,6 +142,54 @@ extension SearxlyHelperProtocol {
     func isSearxngRunningAsync() async -> Bool {
         await withCheckedContinuation { continuation in
             isSearxngRunning { continuation.resume(returning: $0) }
+        }
+    }
+
+    func startTorAsync(
+        torBinaryPath: String,
+        geoipPath: String,
+        geoip6Path: String,
+        socksPort: Int32
+    ) async -> (pid: Int32, error: String) {
+        await withCheckedContinuation { continuation in
+            startTor(
+                torBinaryPath: torBinaryPath,
+                geoipPath: geoipPath,
+                geoip6Path: geoip6Path,
+                socksPort: socksPort
+            ) { pid, err in
+                continuation.resume(returning: (pid, err))
+            }
+        }
+    }
+
+    func stopTorAsync() async -> Bool {
+        await withCheckedContinuation { continuation in
+            stopTor { continuation.resume(returning: $0) }
+        }
+    }
+
+    func isTorRunningAsync() async -> Bool {
+        await withCheckedContinuation { continuation in
+            isTorRunning { continuation.resume(returning: $0) }
+        }
+    }
+
+    func torBootstrapProgressAsync() async -> Int32 {
+        await withCheckedContinuation { continuation in
+            torBootstrapProgress { continuation.resume(returning: $0) }
+        }
+    }
+
+    func torControlCircuitAsync() async -> Data? {
+        await withCheckedContinuation { continuation in
+            torControlCircuit { continuation.resume(returning: $0) }
+        }
+    }
+
+    func torNewIdentityAsync() async -> Bool {
+        await withCheckedContinuation { continuation in
+            torNewIdentity { continuation.resume(returning: $0) }
         }
     }
 

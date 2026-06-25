@@ -38,6 +38,12 @@ extension ContentView {
                     onSaved: { showingWebSaveLogin = false }
                 )
             }
+            .sheet(isPresented: $browserState.showTorDisclosure) {
+                TorDisclosureSheet(
+                    onContinue: { browserState.acknowledgeTorDisclosureAndContinue() },
+                    onCancel: { browserState.cancelTorDisclosure() }
+                )
+            }
             .sheet(isPresented: $browserState.showingClearData) {
                 ClearBrowsingDataView()
             }
@@ -82,6 +88,8 @@ extension ContentView {
         baseWithSheets
             .onAppear {
                 _ = Persistence.load()
+                // Onion tabs aren't restored, so a Tor process alive at launch is stale — reap it.
+                Task { await TorManager.shared.cleanupStaleAtLaunch() }
                 guard !encryptionRecoveryManager.isRecoveryRequired else { return }
                 if appLockManager.isAppLockEnabled && !appLockManager.isUnlocked {
                     return
@@ -106,9 +114,17 @@ extension ContentView {
                 browserState.saveAllDataIncludingSession()
                 browserState.saveSidebarPreferences()
                 AppLockManager.shared.prepareForTermination()
+                // Best-effort: stop Tor on quit so no orphaned tor lingers (launch cleanup reaps any that survive).
+                Task { await TorManager.shared.stop() }
             }
             .onReceive(NotificationCenter.default.publisher(for: .showPasswordsVaultTabRequested)) { _ in
                 browserState.ensureAndSelectPasswordsVaultTab()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .onionLocationDetected)) { note in
+                guard let onionStr = note.userInfo?["onion"] as? String,
+                      let onion = URL(string: onionStr),
+                      let host = note.userInfo?["host"] as? String else { return }
+                browserState.noteOnionLocation(onion, forPageHost: host)
             }
             .onReceive(NotificationCenter.default.publisher(for: .dataRestoredFromBackup)) { _ in
                 hasCompletedInitialLaunchLoad = false
@@ -158,6 +174,10 @@ extension ContentView {
                 browserState.settingsInitialCategory = .search
                 browserState.showingSettings = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToVPN)) { _ in
+                browserState.settingsInitialCategory = .vpn
+                browserState.showingSettings = true
+            }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("Searxly.LocalAIClearRequested"))) { _ in
                 browserState.clearAIState()
             }
@@ -178,6 +198,7 @@ extension ContentView {
                 browserState.saveCurrentSession()
             }
             .onChange(of: browserState.selectedTabID) { _, newID in
+                browserState.onionLocationOffer = nil   // page changed — drop any stale onion offer
                 guard let newID = newID,
                       let tab = browserState.tabs.first(where: { $0.id == newID }) else { return }
                 TabHibernationManager.shared.didSelectTab(tab, amongAllTabs: browserState.tabs)

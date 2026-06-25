@@ -44,6 +44,10 @@ struct SidebarTabList: View {
 
     private var pinnedTabs: [BrowserTab] { tabs.filter { $0.isPinned } }
     private var regularTabs: [BrowserTab] { tabs.filter { !$0.isPinned } }
+    /// Non-pinned normal tabs (everything that isn't a Tor / onion tab).
+    private var normalTabs: [BrowserTab] { regularTabs.filter { $0.privacyMode != .onion } }
+    /// Non-pinned onion (Tor) tabs — grouped under their own "Tor" section in the sidebar.
+    private var onionTabs: [BrowserTab] { regularTabs.filter { $0.privacyMode == .onion } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -112,45 +116,35 @@ struct SidebarTabList: View {
                 }
             }
 
-            // Regular tabs
-            if !pinnedTabs.isEmpty && !regularTabs.isEmpty {
+            // Normal (non-Tor) tabs. Header only when there's another group to separate from.
+            if !normalTabs.isEmpty {
+                if !pinnedTabs.isEmpty || !onionTabs.isEmpty {
+                    Section { normalTabRows } header: { sidebarGroupHeader("TABS") }
+                } else {
+                    normalTabRows
+                }
+            }
+
+            // Tor (onion) tabs — their own clearly separated group.
+            if !onionTabs.isEmpty {
                 Section {
-                    ForEach(regularTabs) { tab in
+                    ForEach(onionTabs) { tab in
                         tabRow(tab)
                             .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                     }
-                    .onMove { indices, newOffset in
-                        let pinnedCount = pinnedTabs.count
-                        guard let relFrom = indices.first else { return }
-                        let targetTab = regularTabs[relFrom]
-                        guard let absFrom = tabs.firstIndex(where: { $0.id == targetTab.id }) else { return }
-                        let absTo = pinnedCount + newOffset
-                        moveTab(absFrom, absTo)
-                    }
                 } header: {
-                    Text("TABS")
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(0.6)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 4)
-                }
-            } else {
-                ForEach(regularTabs) { tab in
-                    tabRow(tab)
-                        .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-                .onMove { indices, newOffset in
-                    let pinnedCount = pinnedTabs.count
-                    guard let relFrom = indices.first else { return }
-                    let targetTab = regularTabs[relFrom]
-                    guard let absFrom = tabs.firstIndex(where: { $0.id == targetTab.id }) else { return }
-                    let absTo = pinnedCount + newOffset
-                    moveTab(absFrom, absTo)
+                    HStack(spacing: 5) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("TOR")
+                            .font(.system(size: 10, weight: .bold))
+                            .tracking(0.6)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
                 }
             }
         }
@@ -158,6 +152,32 @@ struct SidebarTabList: View {
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 0)
         .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private var normalTabRows: some View {
+        ForEach(normalTabs) { tab in
+            tabRow(tab)
+                .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        }
+        .onMove { indices, newOffset in
+            let pinnedCount = pinnedTabs.count
+            guard let relFrom = indices.first else { return }
+            let targetTab = normalTabs[relFrom]
+            guard let absFrom = tabs.firstIndex(where: { $0.id == targetTab.id }) else { return }
+            moveTab(absFrom, pinnedCount + newOffset)
+        }
+    }
+
+    private func sidebarGroupHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .tracking(0.6)
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -266,6 +286,16 @@ struct SidebarTabList: View {
                         .fill(Color.green)
                         .frame(width: 6, height: 6)
                         .overlay(Circle().stroke(Color.black.opacity(0.3), lineWidth: 0.5))
+                        .offset(x: 12, y: -12)
+                }
+
+                // Onion (Tor) tab indicator — monochrome, per brand (no decorative color).
+                if tab.privacyMode == .onion {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .padding(2)
+                        .background(Circle().fill(Color.black.opacity(0.6)))
                         .offset(x: 12, y: -12)
                 }
 

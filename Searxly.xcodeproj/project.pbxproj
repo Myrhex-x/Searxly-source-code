@@ -39,6 +39,7 @@
 /* Begin PBXFileReference section */
 		BF13CDAE2FC3421E0081D8C8 /* Searxly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Searxly.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = SearxlyHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
+		BFC04F1600000000000000C1 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -93,6 +94,7 @@
 		BF13CDA52FC3421E0081D8C8 = {
 			isa = PBXGroup;
 			children = (
+				BFC04F1600000000000000C1 /* Config.xcconfig */,
 				BF13CE082FC458470081D8C8 /* LocalSearxng */,
 				BF13CDB02FC3421E0081D8C8 /* Searxly */,
 				BF1E144E2FE07FB70064DE5C /* SearxlyHelper */,
@@ -121,6 +123,7 @@
 				BF13CDAC2FC3421E0081D8C8 /* Resources */,
 				BF1E145D2FE07FB70064DE5C /* Embed XPC Services */,
 				BFD000010000000000000001 /* Bundle SearXNG runtime */,
+				BFD000020000000000000002 /* Bundle Tor runtime */,
 			);
 			buildRules = (
 			);
@@ -234,6 +237,25 @@
 				"mkdir -p \"$RUNTIME_DST\"",
 				"/usr/bin/rsync -a --delete \"$RUNTIME_SRC/\" \"$RUNTIME_DST/\"",
 				"echo \"Bundled SearXNG runtime -> $RUNTIME_DST\"",
+				"",
+			);
+		};
+		BFD000020000000000000002 /* Bundle Tor runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			name = "Bundle Tor runtime";
+			shellPath = /bin/sh;
+			shellScript = (
+				"set -e",
+				"TOR_SRC=\"${SRCROOT}/build/tor-runtime\"",
+				"TOR_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/tor-runtime\"",
+				"if [ ! -x \"$TOR_SRC/tor\" ]; then",
+				"  echo \"warning: Tor runtime missing at $TOR_SRC/tor - onion support will be disabled. Run scripts/fetch-tor-runtime.sh to enable it.\"",
+				"  exit 0",
+				"fi",
+				"mkdir -p \"$TOR_DST\"",
+				"/usr/bin/rsync -a --delete \"$TOR_SRC/\" \"$TOR_DST/\"",
+				"echo \"Bundled Tor runtime -> $TOR_DST\"",
 				"",
 			);
 		};
@@ -389,10 +411,12 @@
 		};
 		BF13CDBA2FC3421F0081D8C8 /* Debug configuration for PBXNativeTarget "Searxly" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = BFC04F1600000000000000C1 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Searxly/Searxly.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -426,10 +450,12 @@
 		};
 		BF13CDBB2FC3421F0081D8C8 /* Release configuration for PBXNativeTarget "Searxly" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = BFC04F1600000000000000C1 /* Config.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Searxly/Searxly.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
