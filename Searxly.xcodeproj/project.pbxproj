@@ -614,8 +614,8 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LSMinimumSystemVersion = 26.0;
-				MARKETING_VERSION = 0.9.2;
+				LSMinimumSystemVersion = 15.0;
+				MARKETING_VERSION = 0.9.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -654,8 +654,8 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LSMinimumSystemVersion = 26.0;
-				MARKETING_VERSION = 0.9.2;
+				LSMinimumSystemVersion = 15.0;
+				MARKETING_VERSION = 0.9.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
