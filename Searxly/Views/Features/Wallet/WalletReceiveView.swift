@@ -112,7 +112,7 @@ struct WalletReceiveView: View {
                             Text(copiedAddress ? "Copied!" : "Copy Address")
                                 .font(.system(size: 13, weight: .medium))
                         }
-                        .foregroundStyle(copiedAddress ? WalletTheme.textSecondary : .white)
+                        .foregroundStyle(copiedAddress ? WalletTheme.textSecondary : WalletTheme.textPrimary)
                         .padding(.horizontal, 22)
                         .padding(.vertical, 11)
                         .background(WalletTheme.surfaceStrong, in: Capsule())

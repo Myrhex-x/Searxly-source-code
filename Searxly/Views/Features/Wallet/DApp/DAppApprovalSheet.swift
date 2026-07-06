@@ -43,7 +43,7 @@ struct DAppApprovalSheet: View {
         .frame(width: 380)
         .frame(minHeight: 420, maxHeight: 620)
         .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
+
         .interactiveDismissDisabled(true)   // resolve only via Cancel/Approve so nothing is left hanging
     }
 
@@ -54,7 +54,7 @@ struct DAppApprovalSheet: View {
             SearxlyWalletBadge(size: 40, cornerRadius: 11, glassEnabled: true)
             Text(title)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(WalletTheme.textPrimary)
 
             HStack(spacing: 6) {
                 Image(systemName: "globe")
@@ -62,12 +62,12 @@ struct DAppApprovalSheet: View {
                     .foregroundStyle(WalletTheme.textTertiary)
                 Text(displayOrigin)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(WalletTheme.textPrimary)
                     .lineLimit(1).truncationMode(.middle)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(Color.white.opacity(0.06), in: Capsule())
+            .background(WalletTheme.surfaceStrong, in: Capsule())
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Requesting site")
             .accessibilityValue(displayOrigin)
@@ -131,9 +131,9 @@ struct DAppApprovalSheet: View {
                 cancelButton
                 Button { approval.decide("") } label: {   // switching needs no key
                     Text("Switch to \(chainName)")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(.black)
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(WalletTheme.onInk)
                         .frame(maxWidth: .infinity).padding(.vertical, 12)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 11))
+                        .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 11))
                 }
                 .buttonStyle(.plain)
             }
@@ -181,10 +181,10 @@ struct DAppApprovalSheet: View {
                 } label: {
                     Text(risky ? "Connect anyway" : "Connect")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(risky ? .white : .black)
+                        .foregroundStyle(risky ? .white : WalletTheme.onInk)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
-                        .background(risky ? WalletTheme.negative.opacity(0.85) : Color.white,
+                        .background(risky ? WalletTheme.negative.opacity(0.85) : WalletTheme.ink,
                                     in: RoundedRectangle(cornerRadius: 11))
                 }
                 .buttonStyle(.plain)
@@ -199,7 +199,7 @@ struct DAppApprovalSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("SIGNING").font(.system(size: 10, weight: .semibold)).foregroundStyle(WalletTheme.textTertiary)
                 Text(p.domainName.map { "\($0) · \(p.primaryType)" } ?? p.primaryType)
-                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -221,7 +221,7 @@ struct DAppApprovalSheet: View {
                                 if !line.value.isEmpty {
                                     Text(line.value)
                                         .font(.system(size: 11, design: .monospaced))
-                                        .foregroundStyle(line.flag == "UNLIMITED" ? WalletTheme.negative : .white)
+                                        .foregroundStyle(line.flag == "UNLIMITED" ? WalletTheme.negative : WalletTheme.textPrimary)
                                         .multilineTextAlignment(.trailing)
                                         .textSelection(.enabled)
                                 }
@@ -272,7 +272,7 @@ struct DAppApprovalSheet: View {
             if let effect = effectLine(preview) {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "wand.and.stars").font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary).padding(.top, 1)
-                    Text(effect).font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
+                    Text(effect).font(.system(size: 13, weight: .medium)).foregroundStyle(WalletTheme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
@@ -282,6 +282,11 @@ struct DAppApprovalSheet: View {
             VStack(spacing: 0) {
                 detailRow("To", value: abbreviated(preview.to), mono: true,
                           accessibilityValueOverride: "address \(preview.to)")
+                if let spender = preview.approvalSpender {
+                    Divider().opacity(0.08)
+                    detailRow("Spender", value: abbreviated(spender), mono: true,
+                              accessibilityValueOverride: "address \(spender)")
+                }
                 Divider().opacity(0.08)
                 detailRow("Amount", value: "\(preview.valueEth) \(wallet.activeChain.nativeSymbol)")
                 Divider().opacity(0.08)
@@ -401,10 +406,10 @@ struct DAppApprovalSheet: View {
                             Text("Authorize with \(WalletBiometric.label)")
                                 .font(.system(size: 13, weight: .semibold))
                         }
-                        .foregroundStyle(.black)
+                        .foregroundStyle(WalletTheme.onInk)
                         .frame(maxWidth: 240)
                         .padding(.vertical, 11)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                        .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .buttonStyle(.plain)
                     Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
@@ -415,7 +420,7 @@ struct DAppApprovalSheet: View {
                 if !WalletFeatures.usesPassphrase {
                     HStack(spacing: 12) {
                         ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                            Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
+                            Circle().fill(i < pin.count ? WalletTheme.ink : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                         }
                     }
                     .accessibilityElement(children: .ignore)
@@ -472,7 +477,7 @@ struct DAppApprovalSheet: View {
             Text(label).font(.system(size: 12)).foregroundStyle(WalletTheme.textTertiary)
             Spacer()
             Text(value).font(.system(size: 12, weight: .medium, design: mono ? .monospaced : .default))
-                .foregroundStyle(.white)
+                .foregroundStyle(WalletTheme.textPrimary)
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
         .accessibilityElement(children: .ignore)

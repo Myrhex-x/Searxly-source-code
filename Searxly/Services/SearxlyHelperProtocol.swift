@@ -49,21 +49,11 @@ import Foundation
     /// Reply: true if the tracked SearXNG process (per pidfile) is currently alive.
     func isSearxngRunning(reply: @escaping (Bool) -> Void)
 
-    // MARK: - Tor native process supervision
-    //
-    // Onion support: the bundled, signed `tor` binary is supervised here (unsandboxed) exactly like
-    // SearXNG. The helper owns the Tor state dir + torrc generation; the app only passes bundle paths.
+    // MARK: - Tor native process supervision (helper owns the state dir + torrc; app passes bundle paths)
 
-    /// Launches the bundled Tor client: `<torBinaryPath> -f <generated torrc>`. The helper generates
-    /// the torrc under its Tor state dir (SocksPort 127.0.0.1:<socksPort>, ClientOnly, GeoIP files if
-    /// provided, notice log → tor.log). Writes a pidfile so the process is tracked across XPC recycling.
-    /// Idempotent: returns the existing pid if Tor is already running.
-    ///
-    /// - Parameters:
-    ///   - torBinaryPath: absolute path to the bundled `tor` (…/tor-runtime/tor), resolved by the app.
-    ///   - geoipPath / geoip6Path: absolute paths to bundled geoip files, or "" to omit.
-    ///   - socksPort: TCP port for the local SOCKS5 proxy onion tabs route through.
-    /// Reply: (pid, errorString). pid > 0 on success; pid <= 0 means launch failed.
+    /// Launches the bundled Tor; the helper generates the torrc and tracks a pidfile. Idempotent
+    /// (returns the existing pid if already running). geoip paths may be "" to omit.
+    /// Reply: (pid, error). pid > 0 on success.
     func startTor(
         torBinaryPath: String,
         geoipPath: String,

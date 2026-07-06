@@ -217,7 +217,8 @@ ui:
   # results_on_new_tab: false
   theme_args:
     # style of simple theme: auto, light, dark, black
-    simple_style: dark
+    # auto follows the browser's prefers-color-scheme, so the web UI matches the app's appearance.
+    simple_style: auto
   # Perform search immediately if a category selected.
   # Disable to select multiple categories at once and start the search manually.
   search_on_category_select: true

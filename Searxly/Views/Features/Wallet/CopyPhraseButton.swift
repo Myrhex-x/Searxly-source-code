@@ -44,6 +44,9 @@ struct CopyPhraseButton: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(phrase, forType: .string)
+        // Standard "concealed" marker (nspasteboard.org): clipboard-history managers that honor it
+        // won't record the seed, and it opts out of surfaces like Universal Clipboard suggestions.
+        pasteboard.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
         withAnimation { copied = true }
 
         let captured = phrase

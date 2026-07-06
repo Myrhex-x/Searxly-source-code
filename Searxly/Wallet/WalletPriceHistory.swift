@@ -85,12 +85,22 @@ final class WalletPriceHistoryStore {
 
     private struct Cached { let at: Date; let points: [PricePoint] }
     private var cache: [String: Cached] = [:]
-    private let ttl: TimeInterval = 300   // 5 min
+
+    /// Range-aware freshness: the live-feel ranges expire fast enough for the detail view's refresh
+    /// loop to actually show new candles; the slow ranges barely move, so spare the (keyless,
+    /// rate-limited) APIs.
+    private func ttl(for range: ChartRange) -> TimeInterval {
+        switch range {
+        case .min5, .hour1:         return 45
+        case .day1:                 return 300
+        case .week1, .month1, .year1, .all: return 900
+        }
+    }
 
     /// Returns the price series for a token over a range, using a cached copy when fresh.
     func series(for token: WalletToken, range: ChartRange) async -> [PricePoint] {
         let key = "\(token.chainId):\(token.id):\(range.rawValue)"
-        if let c = cache[key], Date().timeIntervalSince(c.at) < ttl { return c.points }
+        if let c = cache[key], Date().timeIntervalSince(c.at) < ttl(for: range) { return c.points }
         let points = await WalletNetwork.priceHistory(token: token, range: range)
         if !points.isEmpty { cache[key] = Cached(at: Date(), points: points) }
         return points

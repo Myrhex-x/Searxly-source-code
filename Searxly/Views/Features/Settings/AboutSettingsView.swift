@@ -29,6 +29,17 @@ struct AboutSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            SettingsSection(
+                title: "Acknowledgements",
+                footer: "On-device PII redaction for Searxly AI is a native port of Rampart by National Design Studio, used under CC BY 4.0. Its model is trained on the OpenPII dataset (CC BY 4.0)."
+            ) {
+                Link(destination: URL(string: "https://github.com/nationaldesignstudio/rampart")!) {
+                    Label("Rampart (CC BY 4.0)", systemImage: "shield.lefthalf.filled")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.callout)
+            }
+
             SettingsSection(title: "Community") {
                 Link(destination: URL(string: "https://github.com/Myrhex-x/Searxly")!) {
                     Label("GitHub repository", systemImage: "link")

@@ -2,22 +2,16 @@
 //  TorManager.swift
 //  Searxly
 //
-//  First-class in-app control of a private, bundled Tor client used to reach `.onion` hidden
-//  services. Tor runs as a bundled native process supervised by the unsandboxed SearxlyHelper XPC
-//  service — the same model as the local SearXNG runtime (see LocalSearxngManager).
-//
-//  Scope (v1): onion-only. Only `.onion` tabs route through Tor (via a per-data-store SOCKS5 proxy
-//  in WebViewFactory). Normal browsing is untouched. Tor is started lazily on the first onion tab.
-//
-//  HONESTY: this provides network-level anonymity (real IP hidden, .onion reachable, no DNS leak)
-//  but is NOT Tor Browser — it does not replicate Tor Browser's anti-fingerprinting. Surface that
-//  to the user wherever onion support is advertised.
+//  In-app control of the bundled Tor client used to reach `.onion` services. Tor runs as a native
+//  process supervised by the unsandboxed SearxlyHelper, started lazily on the first onion tab.
+//  Onion-only: only `.onion` tabs route through Tor. Not Tor Browser — hides the IP and reaches
+//  onions, but does not replicate Tor Browser's anti-fingerprinting.
 //
 
 import Foundation
 import SwiftUI
 import Observation
-import os   // os.Logger string interpolation (privacy:) used by Log.tor
+import os
 
 @Observable
 @MainActor
@@ -32,6 +26,20 @@ final class TorManager {
         case error(String)
     }
 
+    /// Whether onion routing is turned on. Off by default — the user opts in (Settings, onboarding, or
+    /// the "Enable Tor?" prompt the first time they open a .onion). Disabling stops any running Tor.
+    var isEnabled: Bool = UserDefaults.standard.bool(forKey: "Tor.Enabled") {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            UserDefaults.standard.set(isEnabled, forKey: "Tor.Enabled")
+            if !isEnabled {
+                Task { await stop() }
+                // Let open onion tabs react — they can no longer reach their hidden service.
+                NotificationCenter.default.post(name: .torDisabled, object: nil)
+            }
+        }
+    }
+
     private(set) var status: Status = .stopped
     private(set) var isBusy = false
     private(set) var lastError: String?
@@ -44,22 +52,15 @@ final class TorManager {
     /// True while a "new circuit" request is in flight — drives the pill's progress feedback.
     private(set) var rebuilding = false
 
-    /// SOCKS5 endpoint that onion tabs proxy through (see TorRuntimeConfig).
     var socksHost: String { TorRuntimeConfig.socksHost }
     var socksPort: UInt16 { TorRuntimeConfig.socksPort }
 
     var isRunning: Bool { status == .running }
-
-    /// The bundled Tor version (for display in Settings).
     var bundledVersion: String { TorRuntimeConfig.bundledVersion }
 
     private init() {}
 
-    // MARK: - Bundle paths
-    //
-    // Shipped read-only at Searxly.app/Contents/Resources/tor-runtime/. Resolved with defensive
-    // Bundle.main lookups (flat + subdir) so it works regardless of how the folder reference landed,
-    // exactly like LocalSearxngManager.bundledRuntimePythonPath.
+    // MARK: - Bundle paths (Resources/tor-runtime/, defensive Bundle.main lookups)
 
     var bundledTorBinaryPath: String? { bundledResource(named: "tor") }
     var bundledGeoIPPath: String? { bundledResource(named: "geoip") }
@@ -76,14 +77,12 @@ final class TorManager {
         return nil
     }
 
-    /// True when a usable Tor binary is bundled. When false, onion support is unavailable and the UI
-    /// should say so rather than failing silently.
+    /// False when no Tor binary is bundled — onion support is unavailable.
     var isAvailable: Bool { bundledTorBinaryPath != nil }
 
     // MARK: - Lifecycle
 
-    /// Ensures Tor is running and fully bootstrapped. Called before loading the first `.onion` URL.
-    /// Returns true once a circuit is ready.
+    /// Ensures Tor is running and bootstrapped. Returns true once a circuit is ready.
     @discardableResult
     func ensureReadyAndRunning() async -> Bool {
         if status == .running { return true }
@@ -164,8 +163,8 @@ final class TorManager {
         circuit = relays
     }
 
-    /// Requests a fresh Tor circuit (SIGNAL NEWNYM) and refreshes the displayed path. The caller
-    /// should reload the active onion tab so its next request uses the new circuit.
+    /// SIGNAL NEWNYM then refresh the displayed path. The caller should reload the active onion tab
+    /// so its next request uses the new circuit.
     @discardableResult
     func newCircuit() async -> Bool {
         guard status == .running, !rebuilding else { return false }
@@ -177,7 +176,6 @@ final class TorManager {
             return false
         }
         log("Requested a new Tor circuit (NEWNYM).")
-        // Give Tor a moment to lay down fresh circuits, refreshing the displayed path as it changes.
         for _ in 0..<3 {
             try? await Task.sleep(nanoseconds: 500_000_000)
             await refreshCircuit()
@@ -185,8 +183,7 @@ final class TorManager {
         return true
     }
 
-    /// Onion tabs are never restored across launches, so any Tor process alive at startup is stale
-    /// (orphaned from a previous run whose helper was torn down). Reap it. Call once at launch.
+    /// Onion tabs aren't restored across launches, so any Tor alive at startup is stale — reap it.
     func cleanupStaleAtLaunch() async {
         guard let proxy = HelperClient.shared.proxy() else { return }
         if await proxy.isTorRunningAsync() {
@@ -198,8 +195,6 @@ final class TorManager {
 
     // MARK: - Bootstrap polling
 
-    /// Polls the helper for Tor's bootstrap percentage until it reaches 100 or attempts run out.
-    /// Mirrors LocalSearxngManager.waitForLocalWebReady's poll-only loop.
     private func waitForBootstrap(maxAttempts: Int, delaySeconds: UInt64) async -> Bool {
         for _ in 0..<maxAttempts {
             guard let proxy = HelperClient.shared.proxy() else { return false }

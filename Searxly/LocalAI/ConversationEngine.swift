@@ -118,6 +118,7 @@ final class ConversationEngine {
     #if canImport(FoundationModels)
     /// Tool-aware generation (only available when FoundationModels is present and the caller passes tools).
     /// Forwards to the provider's native tools path when supported.
+    @available(macOS 26.0, *)
     func generate(
         prompt: String,
         instructions: String?,

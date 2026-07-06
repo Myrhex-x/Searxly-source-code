@@ -32,6 +32,25 @@ struct LocalAIChatSheet: View {
     /// Unlike `openWebsite` (which resolves a fuzzy description), this loads the precise source URL.
     var openURLInTab: ((String) -> Void)? = nil
 
+    // MARK: - Extended cloud-agent tool closures (Searxly AI 70B path only)
+    //
+    // These back the richer tool surface the cloud model can call (see LocalAIChatSheet+CloudToolsExtended).
+    // The on-device model deliberately keeps only web_search + open_website (4096-token + tool-selection limits),
+    // so these are intentionally optional and unused by the FoundationModels path.
+
+    /// search_history — returns the user's matching local history entries (most recent first). Private; never leaves the app except as the tool result the user asked for.
+    var searchHistory: ((String) async -> [HistoryItem])? = nil
+    /// search_bookmarks — returns the user's matching saved bookmarks (incl. notes).
+    var searchBookmarks: ((String) async -> [BookmarkItem])? = nil
+    /// search_category — a private SearXNG search constrained to a category (news/images/videos/science/it/files/map/music). (query, category)
+    var searchByCategory: ((String, String) async -> [SearXNGResult])? = nil
+    /// open_results_in_tabs — opens several exact result URLs as background tabs (capped by the tool).
+    var openURLsInTabs: (([String]) -> Void)? = nil
+    /// knowledge_lookup — resolves a structured entity card via the private knowledge panel (Grokipedia + official-site DB).
+    var lookupEntity: ((String) async -> KnowledgePanelContent?)? = nil
+    /// privacy_status — snapshot of the live Tor / VPN / onion / instance posture for "am I private right now?" questions.
+    var privacyStatusProvider: (() async -> AIPrivacyStatusSnapshot)? = nil
+
     /// The last search query the user ran, passed in by the parent view from BrowserState.lastSearchQuery.
     /// Using an in-memory property avoids writing sensitive search queries to unencrypted UserDefaults.
     var lastSearchQuery: String = ""
@@ -111,6 +130,13 @@ struct LocalAIChatSheet: View {
                             Text(backendStatusText)
                                 .font(.caption2)
                                 .foregroundStyle(WalletTheme.textSecondary)
+                            // Searxly AI is metered by tier — show today's remaining prompts.
+                            if activeBackend == .searxly {
+                                Text("· \(SearxlyAIAccess.shared.promptsRemainingToday) left today")
+                                    .font(.caption2)
+                                    .foregroundStyle(WalletTheme.textTertiary)
+                                    .help("Searxly AI daily prompts left (\(SearxlyAIAccess.shared.dailyLimit)/day, resets at your local midnight)")
+                            }
                         }
                     }
                 }
@@ -265,6 +291,7 @@ struct LocalAIChatSheet: View {
                 glassEnabled: glassEnabled,
                 placeholder: composerPlaceholder,
                 footnote: composerFootnote,
+                lock: composerLock,
                 attachedFiles: attachedFiles,
                 onRemoveAttachment: removeAttachment,
                 onTapAttachment: { file in
@@ -286,6 +313,7 @@ struct LocalAIChatSheet: View {
         // Size is dictated by the fixed-size floating panel host in ContentView (no more min here;
         // the outer frame is chosen large enough to avoid all internal layout breaks/crowding).
         .onAppear(perform: seedIfNeeded)
+        .task { SearxlyAIAccess.shared.refreshDailyWindow() }
         .onChange(of: seed.wrappedValue) { _, newValue in
             // Selection asked while the chat is already open.
             if newValue != nil { consumePendingSeed() }

@@ -37,7 +37,7 @@ struct TokenDetailView: View {
         .frame(width: 380)
         .frame(minHeight: 440, maxHeight: 580)
         .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
+
     }
 
     private var header: some View {
@@ -124,11 +124,11 @@ struct TokenDetailView: View {
             VStack(spacing: 7) {
                 ZStack {
                     Circle()
-                        .fill(LinearGradient(colors: [Color.white.opacity(0.11), Color.white.opacity(0.05)],
+                        .fill(LinearGradient(colors: [AdaptiveChrome.dynamic(light: Color.black.opacity(0.07), dark: Color.white.opacity(0.11)), AdaptiveChrome.dynamic(light: Color.black.opacity(0.035), dark: Color.white.opacity(0.05))],
                                              startPoint: .top, endPoint: .bottom))
                         .frame(width: 48, height: 48)
                         .overlay(Circle().strokeBorder(WalletTheme.hairline, lineWidth: 1))
-                    Image(systemName: icon).font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                    Image(systemName: icon).font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 }
                 Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(WalletTheme.textSecondary)
             }
@@ -210,7 +210,7 @@ struct TokenDetailView: View {
             HStack {
                 if let scr = scrubbed {
                     Text(WalletManager.shared.formatFiatPrice(scr.v))
-                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).monospacedDigit()
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary).monospacedDigit()
                     if let pct = scrubChange {
                         let tone = pct >= 0 ? WalletTheme.positive : WalletTheme.negative
                         HStack(spacing: 2) {
@@ -251,7 +251,19 @@ struct TokenDetailView: View {
             rangePicker
         }
         .padding(.horizontal, 20)
-        .task(id: chartRange) { await loadChart() }
+        .task(id: chartRange) {
+            await loadChart()
+            // Keep the visible range live: short ranges tick with the store's fast TTL so new candles
+            // actually appear; longer ranges refresh gently. The spinner only shows when the chart is
+            // empty, so these refreshes swap data in place with no flicker. Cancelled automatically
+            // when the range changes or the view goes away.
+            while !Task.isCancelled {
+                let seconds: TimeInterval = (chartRange == .min5 || chartRange == .hour1) ? 45 : 300
+                try? await Task.sleep(for: .seconds(seconds))
+                guard !Task.isCancelled else { break }
+                await loadChart()
+            }
+        }
     }
 
     private var rangePicker: some View {

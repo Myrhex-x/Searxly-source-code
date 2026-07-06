@@ -2,18 +2,13 @@
 //  TorRuntimeConfig.swift
 //  Searxly
 //
-//  The bundled native Tor runtime. A signed `tor` binary (+ geoip files) ships inside the app
-//  and is updated via app releases. Keep `bundledVersion` in lockstep with
-//  scripts/fetch-tor-runtime.sh (TOR_VERSION) when bumping the bundled runtime.
-//
-//  Mirrors SearxngRuntimeConfig — same "bundled, signed, app-updated" model.
+//  Bundled Tor runtime config. Keep `bundledVersion` in lockstep with scripts/fetch-tor-runtime.sh.
 //
 
 import Foundation
 
 enum TorRuntimeConfig {
-    /// Bundled Tor (expert-bundle) version string, for display in Settings.
-    /// Match scripts/fetch-tor-runtime.sh `TOR_VERSION`.
+    /// Bundled Tor (expert-bundle) version, shown in Settings. Match fetch-tor-runtime.sh TOR_VERSION.
     static let bundledVersion = "15.0.16"
 
     /// The local SOCKS5 endpoint Tor listens on. We deliberately do NOT use Tor's default 9050

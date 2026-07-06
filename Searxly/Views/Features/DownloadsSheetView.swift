@@ -32,6 +32,10 @@ struct DownloadsSheetView: View {
                         }
                         Spacer()
                         if item.isComplete, let url = item.destinationURL {
+                            Button("Reveal in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                            }
+                            .help("Show in Finder")
                             Button("Open") {
                                 NSWorkspace.shared.open(url)
                             }

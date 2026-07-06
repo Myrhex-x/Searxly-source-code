@@ -7,6 +7,12 @@
 
 import Foundation
 
+/// Shared bookmark limits. Bookmarks are tiny (url + title + date), so the cap exists only as a sanity
+/// bound — it must be high enough that a single manual bookmark can never truncate a bulk import.
+enum BookmarkLimits {
+    static let maxCount = 5000
+}
+
 enum BookmarkURLMatcher {
 
     static func canonicalKey(_ url: String) -> String {

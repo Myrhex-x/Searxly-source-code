@@ -47,6 +47,9 @@ struct AddressBar: View {
     /// When the active tab is a Tor-routed onion tab, the leading icon becomes the onion glyph.
     var isOnionTab: Bool = false
 
+    /// Registrable host of the current page, used by the site-privacy popover (empty on home/search).
+    var siteHost: String = ""
+
     // Suggestion keyboard hooks are no longer used (suggestions feature DELETED per user request).
     // Params kept with defaults for any remaining call sites during cleanup; they are ignored.
     private let onSuggestionsArrowDown: (() -> Void)?
@@ -64,6 +67,7 @@ struct AddressBar: View {
         onSubmit: @escaping () -> Void,
         isHero: Bool = false,
         isOnionTab: Bool = false,
+        siteHost: String = "",
         isCompact: Bool = false,
         suppressSuggestions: Bool = false,
         drawsOwnSuggestionsOverlay: Bool = true,
@@ -86,6 +90,7 @@ struct AddressBar: View {
         self.onSubmit = onSubmit
         self.isHero = isHero
         self.isOnionTab = isOnionTab
+        self.siteHost = siteHost
 
         self.onSuggestionsArrowDown = onSuggestionsArrowDown
         self.onSuggestionsArrowUp = onSuggestionsArrowUp
@@ -97,6 +102,28 @@ struct AddressBar: View {
     private var isBrowserBar: Bool { showingWebContent && !isHero }
 
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showingPrivacyStatus = false
+
+    /// The leading glyph. On a loaded web page it becomes a button that opens the site-privacy popover
+    /// (the spot users click for security info); on home/search it's a plain search/globe icon.
+    @ViewBuilder
+    private var leadingIcon: some View {
+        let image = Image(systemName: isOnionTab ? "point.3.connected.trianglepath.dotted" : (showingWebContent ? "globe" : "magnifyingglass"))
+            .foregroundStyle(.secondary.opacity(isHero ? 1.0 : 0.9))
+            .font(.system(size: iconSize, weight: .regular))
+
+        if showingWebContent {
+            Button { showingPrivacyStatus.toggle() } label: { image }
+                .buttonStyle(.plain)
+                .help("Site privacy & security")
+                .accessibilityLabel(Text("Site privacy and security"))
+                .popover(isPresented: $showingPrivacyStatus, arrowEdge: .bottom) {
+                    PrivacyStatusView(host: siteHost, isOnionTab: isOnionTab)
+                }
+        } else {
+            image
+        }
+    }
 
     private var verticalPadding: CGFloat {
         if isHero { return 14 }
@@ -130,9 +157,7 @@ struct AddressBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: isOnionTab ? "point.3.connected.trianglepath.dotted" : (showingWebContent ? "globe" : "magnifyingglass"))
-                .foregroundStyle(.secondary.opacity(isHero ? 1.0 : 0.9))
-                .font(.system(size: iconSize, weight: .regular))
+            leadingIcon
 
             TextField("Search or enter address", text: $text)
                 .textFieldStyle(.plain)
@@ -173,6 +198,8 @@ struct AddressBar: View {
                 }
                 .buttonStyle(.plain)
                 .transition(.opacity)
+                .help("Clear")
+                .accessibilityLabel(Text("Clear address"))
             }
         }
         .padding(.vertical, verticalPadding)
@@ -187,9 +214,9 @@ struct AddressBar: View {
                     .fill(AdaptiveChrome.fill(colorScheme, dark: 0.025, light: 0.018))
             }
         }
-        .glassEffect(
+        .searxlyGlass(
             glassEnabled
-                ? (isHero ? .regular : .regular.interactive())
+                ? (isHero ? .regular : .interactive)
                 : .clear,
             in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         )
@@ -204,7 +231,8 @@ struct AddressBar: View {
             if isHero && isFocused && glassEnabled {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(
-                        Color.white.opacity(colorScheme == .dark ? 0.2 : 0.14),
+                        // White gloss reads on dark glass; light mode needs a graphite ring instead.
+                        colorScheme == .dark ? Color.white.opacity(0.2) : Color.primary.opacity(0.12),
                         lineWidth: 1.4
                     )
                     .blur(radius: 0.4)

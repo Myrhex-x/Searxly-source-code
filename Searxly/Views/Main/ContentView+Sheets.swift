@@ -8,6 +8,134 @@
 import SwiftUI
 import AppKit
 import WebKit
+import Translation
+
+/// Onion/Tor notification wiring, extracted into its own modifier so it type-checks independently of
+/// ContentView's long sheet/modifier chain (which otherwise blows the compiler's complexity budget).
+private struct OnionTabNotifications: ViewModifier {
+    let browserState: BrowserState
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .onionLocationDetected)) { note in
+                guard let onionStr = note.userInfo?["onion"] as? String,
+                      let onion = URL(string: onionStr),
+                      let host = note.userInfo?["host"] as? String else { return }
+                browserState.noteOnionLocation(onion, forPageHost: host)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .onionUnreachable)) { note in
+                if let host = note.userInfo?["host"] as? String {
+                    browserState.markOnionUnreachable(host)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .torDisabled)) { _ in
+                browserState.handleTorDisabled()
+            }
+    }
+}
+
+/// Menu-bar / global keyboard command notifications (Help ▸ Keyboard Shortcuts, ⌘K command palette,
+/// and the "open Settings to X" deep links). Extracted into its own modifier so it type-checks
+/// independently of ContentView's long sheet/modifier chain (same reason as OnionTabNotifications).
+private struct MenuCommandNotifications: ViewModifier {
+    // @Bindable (not let) because the panic-wipe confirmation alert needs a Binding into
+    // the @Observable BrowserState.
+    @Bindable var browserState: BrowserState
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .showKeyboardShortcuts)) { _ in
+                browserState.showingKeyboardShortcuts = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .panicWipeRequested)) { _ in
+                browserState.showingPanicWipeConfirm = true
+            }
+            .alert("Panic Wipe — Clear Everything?", isPresented: $browserState.showingPanicWipeConfirm) {
+                Button("Wipe Everything", role: .destructive) {
+                    browserState.performPanicWipe()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Immediately deletes history, bookmarks, open tabs, saved logins, cookies and site data, VPN profiles, and AI chat context on this Mac. The wallet is not touched. This cannot be undone.")
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .commandPaletteRequested)) { _ in
+                // ⌘K toggles the palette so a second press closes it.
+                browserState.showingCommandPalette.toggle()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .findInPageRequested)) { _ in
+                // ⌘F (and the ☰ menu's Find on Page) — show the find bar on the current page.
+                browserState.showFindInPage()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .readerModeRequested)) { _ in
+                // ⌘⇧R (and the ☰ menu's Reader View) — toggle the distraction-free reader.
+                browserState.toggleReaderModeAction()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleSidebarRequested)) { _ in
+                // ⌘S (and View ▸ Toggle Sidebar) — collapse/expand the left tab rail with the same
+                // spring the sidebar chevron buttons use.
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+                    browserState.toggleSidebarCollapse()
+                }
+            }
+            // On-device page translation (☰ → Translate Page). The session lives on this modifier;
+            // PageTranslator sets `configuration` to start a run, and the framework presents its own
+            // language-pack download UI from here when a pair needs assets.
+            .translationTask(PageTranslator.shared.configuration) { session in
+                await PageTranslator.shared.run(session)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToSearch)) { _ in
+                browserState.settingsInitialCategory = .search
+                browserState.showingSettings = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToVPN)) { _ in
+                browserState.settingsInitialCategory = .vpn
+                browserState.showingSettings = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToSearxlyAI)) { _ in
+                browserState.settingsInitialCategory = .searxlyAI
+                browserState.showingSettings = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToPrivacy)) { _ in
+                browserState.settingsInitialCategory = .privacy
+                browserState.showingSettings = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .importDataRequested)) { _ in
+                // If Settings is open, dismiss it first so we don't stack sheet-over-sheet.
+                if browserState.showingSettings {
+                    browserState.showingSettings = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        browserState.showingImportData = true
+                    }
+                } else {
+                    browserState.showingImportData = true
+                }
+            }
+    }
+}
+
+/// Tab lifecycle reclaim: the inactivity sweep and OS memory-pressure responses. ContentView owns the
+/// tab list, so the TabHibernationManager (which only knows the policy) posts these and we act here.
+/// Extracted as a modifier so it type-checks independently of ContentView's long modifier chain.
+private struct TabLifecycleNotifications: ViewModifier {
+    let browserState: BrowserState
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .tabHibernationAutoSweepDue)) { _ in
+                TabHibernationManager.shared.performInactivityBasedHibernation(
+                    currentTab: browserState.selectedTab,
+                    among: browserState.tabs
+                )
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .tabHibernationMemoryPressureDue)) { _ in
+                // Under memory pressure, hibernate every background tab (they reload on selection).
+                TabHibernationManager.shared.hibernateAllBackgroundTabs(
+                    except: browserState.selectedTab,
+                    among: browserState.tabs
+                )
+            }
+    }
+}
 
 extension ContentView {
     var baseWithSheets: some View {
@@ -26,8 +154,28 @@ extension ContentView {
             }
             .overlay(DAppApprovalHost())
             .sheet(isPresented: $browserState.showingSettings) { settingsSheet }
-            .sheet(isPresented: $browserState.showingDownloads) { downloadsSheet }
-            .sheet(isPresented: $browserState.showingBookmarks) { bookmarksSheet }
+            // Downloads / Bookmarks & History / Full History now open as full-page Utility tabs
+            // (grouped under the sidebar "Utilities" category) instead of sheets/overlays. The existing
+            // buttons still flip these flags; we intercept them here, open the matching utility tab,
+            // and reset the flag.
+            .onChange(of: browserState.showingDownloads) { _, show in
+                if show {
+                    browserState.showingDownloads = false
+                    browserState.ensureAndSelectUtilityTab(.downloads)
+                }
+            }
+            .onChange(of: browserState.showingBookmarks) { _, show in
+                if show {
+                    browserState.showingBookmarks = false
+                    browserState.ensureAndSelectUtilityTab(.bookmarks)
+                }
+            }
+            .onChange(of: browserState.showingFullHistory) { _, show in
+                if show {
+                    browserState.showingFullHistory = false
+                    browserState.ensureAndSelectUtilityTab(.bookmarks)
+                }
+            }
             .sheet(isPresented: $browserState.showingKeyboardShortcuts) { keyboardShortcutsSheet }
             .sheet(isPresented: $showingWebSaveLogin) {
                 SaveLoginSheet(
@@ -40,7 +188,7 @@ extension ContentView {
             }
             .sheet(isPresented: $browserState.showTorDisclosure) {
                 TorDisclosureSheet(
-                    onContinue: { browserState.acknowledgeTorDisclosureAndContinue() },
+                    onContinue: { browserState.enableTorAndOpenPending() },
                     onCancel: { browserState.cancelTorDisclosure() }
                 )
             }
@@ -58,6 +206,8 @@ extension ContentView {
                             browserState.readerHTML = ""
                             browserState.readerTitle = ""
                         },
+                        // AI hand-offs are inert while the AI program is disabled (ReaderView hides
+                        // its AI controls behind AIFeatures.programEnabled).
                         onAskAI: {
                             browserState.showingReaderSheet = false
                             browserState.isReaderMode = false
@@ -77,6 +227,13 @@ extension ContentView {
                         }
                     )
                 }
+            }
+            .sheet(isPresented: $browserState.showingImportData) {
+                ImportDataView(
+                    browserState: browserState,
+                    glassEnabled: glassEnabled,
+                    onClose: { browserState.showingImportData = false }
+                )
             }
             // Local AI chat is now a custom centered overlay (fluid "pops from middle" animation)
             // instead of a native sheet for better in-browser feel. See localAIChatOverlay below.
@@ -120,12 +277,12 @@ extension ContentView {
             .onReceive(NotificationCenter.default.publisher(for: .showPasswordsVaultTabRequested)) { _ in
                 browserState.ensureAndSelectPasswordsVaultTab()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .onionLocationDetected)) { note in
-                guard let onionStr = note.userInfo?["onion"] as? String,
-                      let onion = URL(string: onionStr),
-                      let host = note.userInfo?["host"] as? String else { return }
-                browserState.noteOnionLocation(onion, forPageHost: host)
+            .onReceive(NotificationCenter.default.publisher(for: .showExtensionsTabRequested)) { _ in
+                guard ExtensionFeatures.programEnabled else { return }
+                browserState.ensureAndSelectUtilityTab(.extensions)
             }
+            .modifier(OnionTabNotifications(browserState: browserState))
+            .modifier(TabLifecycleNotifications(browserState: browserState))
             .onReceive(NotificationCenter.default.publisher(for: .dataRestoredFromBackup)) { _ in
                 hasCompletedInitialLaunchLoad = false
                 browserState.handleDataRestored()
@@ -167,17 +324,21 @@ extension ContentView {
             .onChange(of: browserState.bookmarks) { _, _ in
                 Persistence.saveBookmarks(browserState.bookmarks)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .showKeyboardShortcuts)) { _ in
-                browserState.showingKeyboardShortcuts = true
+            .onReceive(NotificationCenter.default.publisher(for: .openExternalURL)) { note in
+                if let url = note.object as? URL {
+                    browserState.openExternalURL(url)
+                }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToSearch)) { _ in
-                browserState.settingsInitialCategory = .search
-                browserState.showingSettings = true
+            .onReceive(NotificationCenter.default.publisher(for: .openURLInNewTab)) { note in
+                if let url = note.object as? URL {
+                    if note.userInfo?["background"] as? Bool == true {
+                        browserState.openURLInBackgroundTab(url)   // ⌘-click
+                    } else {
+                        browserState.openExternalURL(url)          // target=_blank / ⌘⇧-click
+                    }
+                }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToVPN)) { _ in
-                browserState.settingsInitialCategory = .vpn
-                browserState.showingSettings = true
-            }
+            .modifier(MenuCommandNotifications(browserState: browserState))
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("Searxly.LocalAIClearRequested"))) { _ in
                 browserState.clearAIState()
             }
@@ -186,6 +347,8 @@ extension ContentView {
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 NotificationManager.shared.isBrowserActive = browserState.showingWebContent
+                // Resume the (battery-saving) idle hibernation timer paused on background.
+                TabHibernationManager.shared.resumeAutoSweep()
             }
             .onReceive(NotificationCenter.default.publisher(for: .searchContentSafetyDidChange)) { _ in
                 browserState.refreshSearchAfterContentSafetyChange()
@@ -196,6 +359,9 @@ extension ContentView {
                 // Saving here + on structural changes (closeTab, newTab, loadInWebView) makes "I closed speedtest but it came back"
                 // and similar stale session problems much less likely.
                 browserState.saveCurrentSession()
+                // Pause the 5s idle hibernation timer while backgrounded (battery). Memory pressure still
+                // reclaims if needed; the sweep resumes (and catches up) on becoming active.
+                TabHibernationManager.shared.suspendAutoSweep()
             }
             .onChange(of: browserState.selectedTabID) { _, newID in
                 browserState.onionLocationOffer = nil   // page changed — drop any stale onion offer
@@ -247,7 +413,8 @@ extension ContentView {
             onRequestFullHistory: {
                 browserState.showingBookmarks = false
                 browserState.showingFullHistory = true
-            }
+            },
+            onOpenImport: { browserState.showingImportData = true }
         )
         .presentationBackground {
             if glassEnabled {
@@ -272,9 +439,63 @@ extension ContentView {
             glassEnabled: glassEnabled,
             onCloseFullPage: {
                 browserState.showingFullHistory = false
-            }
+            },
+            onOpenImport: { browserState.showingImportData = true }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Full-page content for an internal utility tab (Passwords, Bookmarks & History, Downloads).
+    /// Each renders the existing feature view full-page; closing it closes the tab.
+    @ViewBuilder
+    func utilityTabContent(for tab: BrowserTab) -> some View {
+        switch tab.kind {
+        case .passwords:
+            PasswordVaultTabView(
+                tab: tab,
+                glassEnabled: glassEnabled,
+                toolbarMaterial: toolbarMaterial,
+                onFillLogin: { domain, username, password in
+                    browserState.fillLoginForDomain(domain: domain, username: username, password: password)
+                },
+                onOpenSite: { domain in
+                    if let url = URL(string: "https://\(domain)") {
+                        browserState.loadInWebView(url)
+                    }
+                }
+            )
+        case .bookmarks:
+            BookmarksHistoryView(
+                bookmarks: $browserState.bookmarks,
+                history: $browserState.history,
+                searchText: $browserState.searchText,
+                showingBookmarks: .constant(false),
+                loadInWebView: { browserState.loadInWebView($0) },
+                isFullPage: true,
+                glassEnabled: glassEnabled,
+                onCloseFullPage: { browserState.closeTab(tab) },
+                onOpenImport: { browserState.showingImportData = true }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .downloads:
+            DownloadsSheetView(isPresented: Binding(
+                get: { true },
+                set: { if !$0 { browserState.closeTab(tab) } }
+            ))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .extensions:
+            // Extensions program is disabled for release (ExtensionFeatures.programEnabled). This tab
+            // kind should be unreachable — restore drops it and all entry points are hidden — but if
+            // one slips through, close it instead of exposing the marketplace.
+            if ExtensionFeatures.programEnabled {
+                ExtensionsMarketplaceView(onClose: { browserState.closeTab(tab) })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Color.clear.onAppear { browserState.closeTab(tab) }
+            }
+        case .web:
+            EmptyView()
+        }
     }
 
     var keyboardShortcutsSheet: some View {

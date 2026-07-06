@@ -11,7 +11,7 @@ import SwiftUI
 
 struct SettingsBadge: View {
     let text: String
-    var tint: Color = .white
+    var tint: Color = SettingsTheme.textPrimary
 
     private var accent: Color { SettingsTheme.resolve(tint) }
 

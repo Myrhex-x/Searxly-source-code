@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PrivacyInfo.xcprivacy — App Store privacy manifest for Searxly iOS.
+
+  Searxly collects NOTHING and tracks NOBODY: no analytics, no ad SDKs, no third-party
+  data flow. History, bookmarks, and searches stay on-device (encrypted at rest). The only
+  network egress is (a) the searches the user performs against the configured SearXNG
+  instance, and (b) the pages the user chooses to visit — neither of which is "data
+  collection by the developer" under Apple's definition.
+
+  The "required reason" API declarations below cover first-party, on-device uses only.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSPrivacyTracking</key>
+    <false/>
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <!-- Settings, shield preferences, and lightweight flags. Same-app access only. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+        <!-- Favicon-cache freshness + encrypted-store quarantine timestamps, inside our container. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

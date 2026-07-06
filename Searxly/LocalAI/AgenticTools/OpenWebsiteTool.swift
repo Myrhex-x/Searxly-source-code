@@ -26,12 +26,14 @@ import FoundationModels
 
 #if canImport(FoundationModels)
 
+@available(macOS 26.0, *)
 @Generable
 struct OpenWebsiteArgs {
     @Guide(description: "Clean, concise name or brand for the site to open (e.g. 'Tesla', 'x.com', 'Apple developer', 'Elon Musk Terafab chip facility', 'xAI Memphis', 'Neuralink', 'terafab'). For the platform formerly known as Twitter ALWAYS use 'x.com' or 'X'. Extract the core entity from the user's request and omit filler like 'official ... website' or full sentences. The host (OfficialEntityDatabase + SiteResolver) will resolve it privately to the best matching official page (terafab → https://terafab.ai, xAI facilities, etc.).")
     var description: String
 }
 
+@available(macOS 26.0, *)
 struct OpenWebsiteTool: Tool {
     let name = "open_website"
     let description = "Open a website in the user's browser as a new tab. Use this ONLY for explicit navigation commands (examples: 'open the official Tesla site for me', 'go to x.com', 'visit the Wikipedia page', 'show me the Apple developer page', 'open elon musk chip facility', 'open terafab', 'go to xAI Memphis'). For X (the platform) always pass 'x.com'. Pass a clean entity name (e.g. 'Tesla', 'xAI', 'Elon Musk Terafab', 'terafab'). The host (OfficialEntityDatabase + SiteResolver + private SearXNG) will resolve safely using a rich trusted local map first (terafab → https://terafab.ai) then relevance + conservative safety checks (Apple-style: no sensitive/adult/scam content, high grounding required). NEVER use for information-seeking or descriptive queries such as 'who is Elon Musk?', 'what is his chip facility?', 'tell me about the Terafab', or 'can you open elon musk official chip facility website' — those are web_search + answer-in-chat cases. The classification gate in the system rules takes precedence."

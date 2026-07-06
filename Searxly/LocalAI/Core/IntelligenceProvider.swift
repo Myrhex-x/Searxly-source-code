@@ -44,8 +44,32 @@ protocol IntelligenceProvider {
     /// (after any tool results were incorporated by the model). Confirmation / auto-execute is controlled
     /// by the caller (see toolsEnabled toggle and LocalAIChatSheet).
     /// NOTE: [any Tool] and the Tool protocol itself only exist when FoundationModels is importable.
+    @available(macOS 26.0, *)
     func generate(prompt: String, instructions: String?, tools: [any Tool]?) async throws -> String
     #endif
+}
+
+/// Inert provider used as a safe, non-nil stand-in when no real backend is available — e.g. on-device
+/// Apple Intelligence was requested but the OS is below macOS 26 (FoundationModels requires 26+) and no
+/// cloud / Ollama backend is configured. It never touches the network and always throws a clear
+/// "unavailable" error, so callers degrade gracefully instead of force-unwrapping nil. The chat UI gates
+/// on `availability` / `status` (reported `.deviceNotSupported` below 26), so this is effectively never
+/// used for a real generation — it only guarantees the provider getter is never nil.
+struct UnavailableIntelligenceProvider: IntelligenceProvider {
+    let capabilities = ProviderCapabilities(
+        supportsStreaming: false,
+        maxContextTokensApprox: 0,
+        name: "Unavailable",
+        supportsNativeTools: false
+    )
+
+    func generate(prompt: String, instructions: String?) async throws -> String {
+        throw NSError(domain: "Searxly.LocalAI", code: -20, userInfo: [
+            NSLocalizedDescriptionKey: "On-device AI requires macOS 26 or newer. Enable a cloud or Ollama backend in Settings to use AI on this version of macOS."
+        ])
+    }
+
+    func unload() async {}
 }
 
 extension IntelligenceProvider {
@@ -66,6 +90,7 @@ extension IntelligenceProvider {
 
     #if canImport(FoundationModels)
     /// Default: fall back to plain generate (no native tools). Concrete providers (Apple) override for real support.
+    @available(macOS 26.0, *)
     func generate(prompt: String, instructions: String?, tools: [any Tool]?) async throws -> String {
         return try await generate(prompt: prompt, instructions: instructions)
     }

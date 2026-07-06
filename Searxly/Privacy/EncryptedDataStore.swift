@@ -11,10 +11,33 @@
 
 import Foundation
 import os
+import CryptoKit
 
 enum EncryptedDataStore {
 
     private static let metadataFileName = "EncryptionMetadata.json"
+
+    // MARK: - In-memory cache (performance)
+    //
+    // AppData is read + decrypted from disk FAR more often than it changes: every settings toggle,
+    // every tab open/close (saveCurrentSession), and the convenience savers (saveBookmarks, saveHistory,
+    // saveConfiguration, …) all do a full load → mutate → save round-trip. Without a cache each of those
+    // re-reads the whole file off disk and runs an AES-GCM decrypt, and each save() additionally re-read
+    // the whole file again just to sniff the encryption magic header.
+    //
+    // This cache makes the decoded AppData the in-memory source of truth: every save() updates it
+    // synchronously, so callers always observe their own writes, and load() never touches disk after the
+    // first read. We also cache the encryption-enabled flag and dedup identical writes.
+    //
+    // DURABILITY: writes remain SYNCHRONOUS — we never debounce/defer the disk write. Deferred writes were
+    // previously observed to be lost on quick-quit (history "reverted" bug; see the settings-toggle
+    // persistence guidance). We only remove redundant work; we never delay durability.
+    private static let cacheLock = NSLock()
+    private static var cachedData: AppData?
+    private static var cachedEncryptionEnabled: Bool?
+    /// SHA-256 of the last *plaintext* JSON actually written to disk. Used to skip redundant identical
+    /// writes. We hash plaintext because AES-GCM uses a random nonce, so the ciphertext is never stable.
+    private static var lastWrittenJSONHash: Data?
 
     enum DataLoadResult {
         case success(AppData)
@@ -57,17 +80,43 @@ enum EncryptedDataStore {
     }
 
     static func load() -> AppData {
+        cacheLock.lock()
+        if let cached = cachedData {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        // Cache miss: read + decode from disk (the expensive path we want to do at most once).
         switch loadDetailed() {
         case .success(let data):
-            return data
+            cacheLock.lock()
+            // Another thread may have populated the cache (or saved) while we were reading; prefer that.
+            let value = cachedData ?? data
+            cachedData = value
+            cacheLock.unlock()
+            return value
         case .missingFile:
-            return AppData()
+            // Safe to cache: an absent file genuinely means "defaults". The first save() will create it.
+            cacheLock.lock()
+            let value = cachedData ?? AppData()
+            cachedData = value
+            cacheLock.unlock()
+            return value
         case .decryptionFailed, .decodeFailed:
+            // Do NOT cache a defaults-on-failure result. A transient decrypt failure drives the recovery
+            // UI; caching defaults here (and then saving) could clobber the still-intact encrypted file.
             return AppData()
         }
     }
 
     static func save(_ appData: AppData) {
+        // Update the in-memory source of truth first, so concurrent load()s observe the new value
+        // even if the disk write below dedups or fails.
+        cacheLock.lock()
+        cachedData = appData
+        cacheLock.unlock()
+
         let url = Persistence.appDataFileURL()
 
         do {
@@ -75,6 +124,13 @@ enum EncryptedDataStore {
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let jsonData = try encoder.encode(appData)
+
+            // Dedup: skip the encrypt + atomic write when nothing actually changed since the last write.
+            let jsonHash = Data(SHA256.hash(data: jsonData))
+            cacheLock.lock()
+            let unchanged = (jsonHash == lastWrittenJSONHash)
+            cacheLock.unlock()
+            if unchanged { return }
 
             if isEncryptionEnabled() {
                 if let key = KeychainManager.loadKey() {
@@ -86,20 +142,55 @@ enum EncryptedDataStore {
                     // Do NOT silently fall back to plaintext — this would defeat the user's explicit choice.
                     Log.security.error("EncryptedDataStore: CRITICAL — encryption enabled but no key in Keychain. Refusing to write plaintext; data NOT saved. Re-enable encryption or restore your recovery key.")
                     // We leave the file untouched rather than risk writing plaintext.
+                    // Do not record the hash: no write happened, so a later identical save must retry.
                     return
                 }
             } else {
                 try jsonData.write(to: url, options: [.atomic, .completeFileProtection])
                 // (plaintext success log removed)
             }
+
+            // Record what we actually persisted so the next identical save() can be skipped.
+            cacheLock.lock()
+            lastWrittenJSONHash = jsonHash
+            cacheLock.unlock()
         } catch {
             Log.security.error("EncryptedDataStore: failed to save data — \(error.localizedDescription, privacy: .public)")
         }
     }
 
+    /// Drops the in-memory caches so the next load() re-reads from disk. Call after any out-of-band
+    /// change to AppData.json (e.g. recovery flows). Backup restore and erase already keep the cache
+    /// consistent via save()/eraseLocalData(), but this is the safe escape hatch.
+    static func invalidateCaches() {
+        cacheLock.lock()
+        cachedData = nil
+        cachedEncryptionEnabled = nil
+        lastWrittenJSONHash = nil
+        cacheLock.unlock()
+    }
+
     // MARK: - Encryption Toggle Management (now uses a small unencrypted metadata file next to AppData.json)
 
     static func isEncryptionEnabled() -> Bool {
+        cacheLock.lock()
+        if let cached = cachedEncryptionEnabled {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        // First read this session — resolve from disk, then cache. The flag only changes via
+        // setEncryptionEnabled()/eraseLocalData() (both update the cache), so after this it's stable
+        // and save() no longer pays a whole-file read just to sniff the magic header.
+        let value = computeEncryptionEnabledFromDisk()
+        cacheLock.lock()
+        cachedEncryptionEnabled = value
+        cacheLock.unlock()
+        return value
+    }
+
+    private static func computeEncryptionEnabledFromDisk() -> Bool {
         let metadataURL = encryptionMetadataURL()
 
         // If the main data file looks encrypted, trust the content over missing/broken metadata.
@@ -136,6 +227,15 @@ enum EncryptedDataStore {
             let data = try encoder.encode(meta)
             // Use the strongest practical protection for the metadata toggle file
             try data.write(to: metadataURL, options: [.atomic, .completeFileProtection])
+
+            // Keep the in-memory flag in sync, and clear the write-dedup hash: the encryption *state*
+            // is part of what's on disk, so the next save() must actually re-write (now (un)encrypted)
+            // even if the AppData payload itself is byte-for-byte identical to the last write.
+            cacheLock.lock()
+            cachedEncryptionEnabled = enabled
+            lastWrittenJSONHash = nil
+            cacheLock.unlock()
+
             Log.security.info("EncryptedDataStore: encryption-enabled set to \(enabled, privacy: .public)")
         } catch {
             Log.security.error("EncryptedDataStore: failed to write encryption metadata — \(error.localizedDescription, privacy: .public)")
@@ -167,6 +267,9 @@ enum EncryptedDataStore {
                 try? fm.removeItem(at: url)
             }
         }
+
+        // The on-disk files are gone — drop every cache so nothing stale survives the wipe.
+        invalidateCaches()
 
         // Future saves start as plaintext defaults until the user explicitly re-enables encryption.
         setEncryptionEnabled(false)

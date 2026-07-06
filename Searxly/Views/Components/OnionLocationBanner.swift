@@ -19,9 +19,9 @@ struct OnionLocationBanner: View {
                 .font(.system(size: 13, weight: .semibold))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("This site has a Tor version")
+                Text("This site offers a Tor version")
                     .font(.system(size: 12.5, weight: .semibold))
-                Text("Open \(host) as a .onion service over Tor")
+                Text("Open \(host) over Tor — if the site keeps its .onion live")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

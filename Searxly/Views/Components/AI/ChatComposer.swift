@@ -16,6 +16,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// A locked-composer state: replaces the input with an upsell card so the user literally can't type
+/// (e.g. out of today's Searxly AI prompts, or no wallet connected). The CTA drives the upgrade flow.
+struct ComposerLock {
+    let icon: String
+    let title: String
+    let message: String
+    let ctaTitle: String
+    let ctaAction: () -> Void
+}
+
 struct ChatComposer: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -27,6 +37,10 @@ struct ChatComposer: View {
     // Backend-aware copy (monochrome redesign)
     var placeholder: String = "Ask anything privately…"
     var footnote: String? = nil
+
+    /// When set, the composer is LOCKED: the input is replaced by an upsell card (the user can't type),
+    /// e.g. when they've used today's Searxly AI prompts.
+    var lock: ComposerLock? = nil
 
     // Attachments (display + remove hooks)
     let attachedFiles: [ChatAttachment]
@@ -69,8 +83,40 @@ struct ChatComposer: View {
         .buttonStyle(.plain)
     }
 
+    private func lockedCard(_ lock: ComposerLock) -> some View {
+        VStack(spacing: 11) {
+            HStack(alignment: .top, spacing: 11) {
+                Image(systemName: lock.icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(WalletTheme.textSecondary)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(lock.title).font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.textPrimary)
+                    Text(lock.message).font(.caption).foregroundStyle(WalletTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            Button(action: lock.ctaAction) {
+                Text(lock.ctaTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.white)
+            .foregroundStyle(.black)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(WalletTheme.surfaceField))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(WalletTheme.hairline, lineWidth: 0.8))
+    }
+
     var body: some View {
         VStack(spacing: 8) {
+            if let lock {
+                lockedCard(lock)
+            } else {
             // Action chips row (user-called tools) - only when ready
             if canUseFeatures && !isThinking {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -151,6 +197,7 @@ struct ChatComposer: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 6)
                 .padding(.top, 1)
+            }
             }
         }
         .padding(.horizontal, 12)

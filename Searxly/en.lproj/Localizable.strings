@@ -49,8 +49,51 @@
 "category_videos" = "Videos";
 "category_news" = "News";
 
+/* News tab controls */
+"news_range_any" = "Any time";
+"news_range_day" = "24 hours";
+"news_range_week" = "Week";
+"news_range_month" = "Month";
+"news_range_year" = "Year";
+"news_sort_top" = "Top";
+"news_sort_latest" = "Latest";
+"news_refresh" = "Refresh news";
+"news_badge_live" = "LIVE";
+"news_badge_breaking" = "BREAKING";
+"news_updated_now" = "Updated just now";
+"news_updated_min" = "Updated %dm ago";
+"news_updated_hr" = "Updated %dh ago";
+"news_empty" = "No news found for this search.";
+"news_empty_in_range" = "No news in this time range.";
+"news_show_any_time" = "Show any time";
+"news_top_stories" = "Top stories";
+"news_top_story" = "TOP STORY";
+"news_in_the_news" = "In the news";
+"news_more" = "More news";
+"news_full_coverage" = "Full coverage · %d sources";
+"news_full_coverage_label" = "Full coverage";
+"news_full_coverage_hint" = "Other outlets covering this story";
+"news_n_sources" = "%d sources";
+"news_n_sources_dot" = "· %d sources";
+"news_live_now" = "%d live now";
+"news_new_story" = "1 new story";
+"news_new_stories" = "%d new stories";
+"news_new_stories_hint" = "Show the newest stories";
+
 /* Home / New Tab */
 "home_tagline" = "Private search, your rules.";
+"home_scroll_news" = "Scroll down to see news";
+"home_see_all" = "See all";
+"home_topic_technology" = "Technology";
+"home_topic_world" = "World";
+"home_topic_war" = "War";
+"home_topic_politics" = "Politics";
+"home_topic_justice" = "Justice";
+"home_topic_business" = "Business";
+"home_topic_science" = "Science";
+"home_topic_health" = "Health";
+"home_topic_sports" = "Sports";
+"home_topic_entertainment" = "Entertainment";
 "home_subtitle" = "All queries routed through your SearXNG instance.\nZero tracking. Zero logs from us.";
 "private_instance_active" = "Private instance active";
 "home_instance_not_detected" = "SearXNG instance not detected";
@@ -114,7 +157,7 @@
 "clear_standard_tab_data" = "Clear Standard Tab Data";
 "reset_all_local_data" = "Reset All Local Data";
 
-"recovery_code_copied" = "Recovery code copied to clipboard. Store it somewhere safe — anyone with this code can decrypt your data.";
+"recovery_code_copied" = "Recovery code copied — paste it somewhere safe now; anyone with this code can decrypt your data. The clipboard clears itself after 45 seconds.";
 "no_encryption_key" = "No encryption key found to export.";
 "max_privacy_activated" = "Maximum Privacy mode activated: new tabs are now Private by default, history recording is off, and learned suggestions were cleared.";
 "search_suggestion_data_cleared" = "Search suggestion data cleared.";

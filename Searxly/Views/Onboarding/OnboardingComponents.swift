@@ -15,9 +15,12 @@ struct OnboardingProgressHeader: View {
     @Environment(\.onboardingGlassEnabled) private var glassEnabled
 
     var body: some View {
-        VStack(spacing: 10) {
+        // Only the reachable steps get a dot / a number, so a skipped step (e.g. the AI slide while
+        // the AI program is off) doesn't leave a phantom dot or a gap in the "N of M" counter.
+        let steps = OnboardingStyle.visibleSteps
+        return VStack(spacing: 10) {
             HStack(spacing: 6) {
-                ForEach(0..<OnboardingStyle.stepCount, id: \.self) { index in
+                ForEach(steps, id: \.self) { index in
                     Capsule()
                         .fill(dotFill(for: index))
                         .frame(width: index == step ? 28 : 7, height: 4)
@@ -39,7 +42,7 @@ struct OnboardingProgressHeader: View {
                 Text("·")
                     .font(.system(size: 10))
                     .foregroundStyle(.quaternary)
-                Text("\(step + 1) of \(OnboardingStyle.stepCount)")
+                Text("\(OnboardingStyle.displayPosition(of: step)) of \(OnboardingStyle.visibleStepCount)")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
@@ -51,7 +54,9 @@ struct OnboardingProgressHeader: View {
         if index == step {
             return colorScheme == .dark ? Color.white.opacity(0.95) : Color.primary.opacity(0.85)
         }
-        if index < step {
+        // "Completed" = earlier in the reachable sequence than the current step (not raw index <
+        // step, which would light the skipped-AI dot as done).
+        if OnboardingStyle.displayPosition(of: index) < OnboardingStyle.displayPosition(of: step) {
             return AdaptiveChrome.fill(colorScheme, dark: glassEnabled ? 0.44 : 0.32)
         }
         return AdaptiveChrome.fill(colorScheme, dark: glassEnabled ? 0.12 : 0.08)

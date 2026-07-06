@@ -25,18 +25,9 @@ struct KnowledgePanelView: View {
             }
         }
         .frame(minHeight: minHeight, alignment: .top)
-        .background(panelSurface)
-        .clipShape(RoundedRectangle(cornerRadius: SERPDesign.knowledgePanelCornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: SERPDesign.knowledgePanelCornerRadius, style: .continuous)
-                .strokeBorder(AdaptiveChrome.border(colorScheme, dark: glassEnabled ? 0.12 : 0.08), lineWidth: 0.6)
-        )
-        .shadow(
-            color: AdaptiveChrome.shadow(colorScheme, darkOpacity: glassEnabled ? 0.22 : 0.08),
-            radius: glassEnabled ? 10 : 4,
-            x: 0,
-            y: glassEnabled ? 4 : 2
-        )
+        // Same chrome as the floating tab sidebar (SearxlyFloatingPanel.swift): solid VPN-popover
+        // canvas, 18pt continuous corners, sheen + rim light + layered shadow — one shared look.
+        .searxlyFloatingPanel()
         .sheet(isPresented: $showContributionSheet) {
             KnowledgePanelContributionSheet(content: content)
         }
@@ -75,8 +66,8 @@ struct KnowledgePanelView: View {
 
     @ViewBuilder
     private func entityBanner(_ data: EntityPanelData) -> some View {
-        if let grokipediaImage = data.grokipediaBannerURL {
-            grokipediaBanner(imageURL: grokipediaImage)
+        if !data.bannerImageCandidates.isEmpty {
+            bannerImage(candidates: data.bannerImageCandidates, referer: data.bannerImageReferer)
         } else {
             ZStack {
                 LinearGradient(
@@ -100,10 +91,10 @@ struct KnowledgePanelView: View {
     }
 
     @ViewBuilder
-    private func grokipediaBanner(imageURL: URL) -> some View {
+    private func bannerImage(candidates: [URL], referer: String?) -> some View {
         CachedSearchThumbnail(
-            candidates: [imageURL],
-            referer: "https://grokipedia.com",
+            candidates: candidates,
+            referer: referer,
             aspectRatio: 16.0 / 9.0,
             fillFrameHeight: 128
         )
@@ -123,41 +114,15 @@ struct KnowledgePanelView: View {
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
-                if let kind = data.entityKind {
-                    kindChip(kind)
-                }
-
-                if let label = data.officialSiteLabel {
-                    Text(label)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            // No kind chips — the title and its source link carry enough context, and chips added
+            // visual noise (and risked mislabelling). Only the plain source-host caption remains.
+            if let label = data.officialSiteLabel {
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    @ViewBuilder
-    private func kindChip(_ kind: OfficialEntityDatabase.EntityKind) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: kindIcon(kind))
-                .font(.caption2.weight(.semibold))
-            Text(kindLabel(kind))
-                .font(.caption2.weight(.medium))
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background {
-            Capsule()
-                .fill(AdaptiveChrome.fill(colorScheme, dark: 0.06))
-                .background(Capsule().fill(.ultraThinMaterial).opacity(glassEnabled ? 0.45 : 0.2))
-        }
-        .overlay(
-            Capsule()
-                .strokeBorder(AdaptiveChrome.border(colorScheme, dark: 0.1), lineWidth: 0.5)
-        )
     }
 
     @ViewBuilder
@@ -257,21 +222,8 @@ struct KnowledgePanelView: View {
     }
 
     // MARK: - Chrome
-
-    private var panelSurface: some View {
-        ZStack {
-            if colorScheme == .dark {
-                AdaptiveChrome.canvasDark.opacity(glassEnabled ? 0.92 : 0.98)
-            }
-            RoundedRectangle(cornerRadius: SERPDesign.knowledgePanelCornerRadius, style: .continuous)
-                .fill(AdaptiveChrome.fill(colorScheme, dark: glassEnabled ? 0.045 : 0.03))
-            if glassEnabled {
-                RoundedRectangle(cornerRadius: SERPDesign.knowledgePanelCornerRadius, style: .continuous)
-                    .fill(.thinMaterial)
-                    .opacity(colorScheme == .dark ? 0.35 : 0.5)
-            }
-        }
-    }
+    // The outer panel surface is the shared floating-panel chrome (searxlyFloatingPanel) — the
+    // same material as the floating tab sidebar. Only the inner inset cards are styled here.
 
     private var insetSurface: some View {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -297,28 +249,6 @@ struct KnowledgePanelView: View {
             .foregroundStyle(.tertiary)
             .textCase(.uppercase)
             .tracking(0.6)
-    }
-
-    @ViewBuilder
-    private func kindChipLabel(_ label: String, icon: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.caption2.weight(.semibold))
-            Text(label)
-                .font(.caption2.weight(.medium))
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background {
-            Capsule()
-                .fill(AdaptiveChrome.fill(colorScheme, dark: 0.06))
-                .background(Capsule().fill(.ultraThinMaterial).opacity(glassEnabled ? 0.45 : 0.2))
-        }
-        .overlay(
-            Capsule()
-                .strokeBorder(AdaptiveChrome.border(colorScheme, dark: 0.1), lineWidth: 0.5)
-        )
     }
 
     private var contributionButton: some View {
@@ -435,17 +365,6 @@ struct KnowledgePanelView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-        }
-    }
-
-    private func kindLabel(_ kind: OfficialEntityDatabase.EntityKind) -> String {
-        switch kind {
-        case .company: return "Company"
-        case .person: return "Person"
-        case .organization: return "Organization"
-        case .product: return "Product"
-        case .place: return "Place"
-        case .website: return "Website"
         }
     }
 

@@ -8,7 +8,8 @@
 */
 
 :root {
-  /* Pure xAI/SpaceX monochrome palette */
+  /* Pure xAI/SpaceX monochrome palette (dark is the default) */
+  color-scheme: dark;
   --bg: #0a0a0a;
   --bg-elev: #111111;
   --bg-elev-2: #181818;
@@ -21,6 +22,9 @@
   --border-subtle: #222222;
   --border-focus: #ffffff30;
   --focus-glow: #ffffff18;
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --shadow-searchbox: 0 1px 0 rgba(255, 255, 255, 0.02);
+  --shadow-popup: 0 10px 40px rgba(0, 0, 0, 0.7);
 
   /* Generous 8px spacing scale for luxurious breathing room */
   --space-1: 4px;
@@ -41,6 +45,29 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
+/* Light: the same monochrome language inverted — paper-white canvas (matches the app's
+   native light chrome), pure-white elevated surfaces, graphite text. No hue, ever. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f8f8fa;
+    --bg-elev: #ffffff;
+    --bg-elev-2: #f1f1f3;
+    --text-primary: #171717;
+    --text-secondary: #525252;
+    --text-muted: #8a8a8a;
+    --text-tiny: #a6a6a6;
+    --accent: #262626;
+    --accent-strong: #0a0a0a;
+    --border-subtle: #e4e4e7;
+    --border-focus: #00000026;
+    --focus-glow: #00000010;
+    --hover-bg: rgba(0, 0, 0, 0.05);
+    --shadow-searchbox: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-popup: 0 10px 40px rgba(0, 0, 0, 0.14);
+  }
+}
+
 /* Base reset for the SearXNG simple theme container */
 html, body {
   background: var(--bg);
@@ -55,6 +82,13 @@ body {
   margin: 0;
   padding: 0;
   line-height: 1.5;
+}
+
+/* Nothing should ever force a horizontal scroll — stock sxng rules assume a
+   #main_results wrapper we don't render, so their mobile overrides never fire. */
+html, body {
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 /* Remove any default SearXNG chrome we don't want */
@@ -181,6 +215,25 @@ form#search {
   display: none !important;
 }
 
+/* Re-center the search form: the flatten block above zeroes ALL margins with !important,
+   which also killed the `margin: … auto` horizontal centering — on desktop the 680px
+   refine bar (and its category tabs) hugged the left edge while results stayed centered. */
+#search,
+.searxly-search-form,
+form#search {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.searxly-results .searxly-search-form,
+.search_endpoint .searxly-search-form,
+.results_endpoint .searxly-search-form,
+.searxly-results form#search,
+.search_endpoint form#search,
+.results_endpoint form#search {
+  margin-top: 14px !important; /* breathing room under the slim nav */
+}
+
 /* Positioning wrapper for the search pill + dropdown (completely invisible) */
 .searxly-search-wrapper {
   position: relative;
@@ -204,7 +257,7 @@ form#search {
   height: 56px;
   padding: 0 10px 0 22px;   /* extra right padding so buttons sit nicely inside */
   transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.02);
+  box-shadow: var(--shadow-searchbox);
 }
 
 .search_box:focus-within,
@@ -299,7 +352,7 @@ form#search {
 #clear_search:hover,
 #send_search:hover {
   color: var(--text-secondary);
-  background: rgba(255,255,255,0.06);
+  background: var(--hover-bg);
 }
 
 /* Make the clear × even lighter when idle */
@@ -311,6 +364,14 @@ form#search {
   opacity: 1;
 }
 
+/* The dropdown div is always in the DOM; stock collapses it with max-height:0
+   instead of hiding it, so our 1px border painted as a stray line under the
+   search bar. Keep it fully hidden until the core JS opens it. */
+.autocomplete:not(.open),
+.searxly-autocomplete:not(.open) {
+  display: none !important;
+}
+
 /* Autocomplete dropdown — clean, dark, generous (isolated from any outer bubble) */
 .autocomplete,
 .searxly-autocomplete {
@@ -318,11 +379,14 @@ form#search {
   top: calc(100% + 8px) !important;
   left: 0 !important;
   right: 0 !important;
+  width: auto !important;        /* stock forces 44rem */
+  max-height: 32rem !important;
+  margin: 0 !important;          /* stock .open adds margin-top:3.5rem; we position via top */
   background: var(--bg-elev) !important;
   background-color: var(--bg-elev) !important;
   border: 1px solid var(--border-subtle) !important;
   border-radius: 12px !important;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.7) !important;
+  box-shadow: var(--shadow-popup) !important;
   overflow: hidden !important;
   z-index: 100 !important;
   font-size: 14px !important;
@@ -494,6 +558,13 @@ form#search {
   max-width: 760px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-8) var(--space-16);
+  /* Stock sxng lays #results out as a grid with FIXED 45rem/25rem columns and
+     scopes its responsive overrides to a #main_results wrapper our templates
+     don't render — on phones that forced ~1120px of width and pushed every
+     result off the right edge. A plain block is all we need. */
+  display: block !important;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 #urls,
@@ -502,6 +573,16 @@ form#search {
   display: flex;
   flex-direction: column;
   gap: 52px; /* refined sweet spot for breathing room */
+}
+
+/* SearXNG renders every result inside ONE .template_group_* wrapper, so the
+   #urls gap alone never separated individual results — repeat the stack inside
+   each group (images keep their own flex-wrap grid). */
+#urls > div[class*="template_group"]:not(.template_group_images),
+.searxly-urls > div[class*="template_group"]:not(.template_group_images) {
+  display: flex;
+  flex-direction: column;
+  gap: 52px;
 }
 
 /* === STRONG FLATTENING: Kill any "bubble glass" / card / elevated container effect === */
@@ -540,6 +621,23 @@ div.result {
   box-shadow: none !important;
 }
 
+/* Monochrome term highlights — stock colors these blue via
+   --color-result-link-font-highlight / --color-result-description-highlight-font. */
+.highlight,
+a:visited .highlight,
+.result .title .highlight {
+  color: inherit !important;
+  background: transparent !important;
+  font-weight: inherit;
+}
+
+.result .content .highlight,
+.result .stat .highlight {
+  color: var(--text-primary) !important;
+  background: transparent !important;
+  font-weight: 500;
+}
+
 /* Large bold title — the hero of each result */
 .result h3,
 .result .result-title,
@@ -550,6 +648,7 @@ a.result-link {
   font-weight: 600;
   letter-spacing: -0.018em;
   margin: 0 0 5px 0;
+  overflow-wrap: anywhere;
 }
 
 .result h3 a,
@@ -580,6 +679,7 @@ a.result-link {
   margin-bottom: 7px;
   opacity: 0.82;
   font-family: var(--font-sans);
+  overflow-wrap: anywhere;
 }
 
 /* Crisp description */
@@ -593,6 +693,7 @@ a.result-link {
   color: var(--text-secondary);
   max-width: 70ch;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Hide everything we explicitly do not want (per design spec) */
@@ -619,15 +720,17 @@ a.result-link {
   font-size: 13px;
 }
 
+/* !important because stock's `#results button[type=submit]` (a colored pill)
+   outranks these selectors. */
 #pagination button,
 #pagination input,
 .searxly-pagination button,
 .searxly-pagination a {
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  padding: 6px 14px;
-  border-radius: 9999px;
+  background: transparent !important;
+  border: 1px solid var(--border-subtle) !important;
+  color: var(--text-secondary) !important;
+  padding: 6px 14px !important;
+  border-radius: 9999px !important;
   font-size: 12.5px;
   cursor: pointer;
   transition: all 140ms ease;
@@ -635,58 +738,63 @@ a.result-link {
 
 #pagination button:hover,
 .searxly-pagination button:hover {
-  border-color: var(--text-muted);
-  color: var(--text-primary);
+  border-color: var(--text-muted) !important;
+  color: var(--text-primary) !important;
 }
 
 #pagination .page_number_current,
 .searxly-pagination .current {
-  background: var(--bg-elev);
-  border-color: var(--border-subtle);
-  color: var(--text-primary);
+  background: var(--bg-elev) !important;
+  border-color: var(--border-subtle) !important;
+  color: var(--text-primary) !important;
   font-weight: 500;
 }
 
 /* ============================================
    IMAGES / MEDIA (CLEAN LUXURY GRID)
+   Stock markup is article.result-images inside .template_group_images —
+   the old .result.image selectors matched nothing.
    ============================================ */
-#results.only_template_images .searxly-urls,
-.images .searxly-urls {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 28px;
+.template_group_images {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  gap: 6px;
 }
 
-.searxly-result.image,
-.result.image {
-  overflow: hidden;
-  border-radius: 6px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border-subtle);
-  transition: transform 200ms cubic-bezier(0.23, 1.0, 0.32, 1), 
-              border-color 200ms ease,
-              box-shadow 200ms ease;
+/* Justified rows: each tile grows to fill its row, images crop to cover */
+article.result-images {
+  height: 11rem;
+  flex-grow: 1;
+  overflow: hidden !important;
+  border-radius: 8px !important;
+  background: var(--bg-elev) !important;
 }
 
-.searxly-result.image:hover,
-.result.image:hover {
-  transform: translateY(-1px);
-  border-color: #2a2a2a;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-}
-
-.searxly-result.image img,
-.result.image img {
-  width: 100%;
-  height: auto;
+article.result-images > a {
   display: block;
-  border-radius: 5px;
-  transition: transform 280ms cubic-bezier(0.23, 1.0, 0.32, 1);
+  height: 100%;
 }
 
-.searxly-result.image:hover img,
-.result.image:hover img {
+article.result-images img.image_thumbnail {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 8px;
+  transition: transform 280ms cubic-bezier(0.23, 1.0, 0.32, 1), opacity 200ms ease;
+}
+
+article.result-images:hover img.image_thumbnail {
   transform: scale(1.015);
+  opacity: 0.92;
+}
+
+/* Image-only tiles — no captions, badges, or colored chrome (extreme restraint) */
+article.result-images .title,
+article.result-images .source,
+article.result-images .image_resolution {
+  display: none !important;
 }
 
 /* ============================================
@@ -728,6 +836,36 @@ a.result-link {
   .searxly-search-box {
     height: 52px;
     border-radius: 14px; /* slightly sharper on mobile */
+  }
+  .searxly-search-form {
+    padding: 0 var(--space-4) !important; /* the pill shouldn't kiss the screen edges */
+  }
+
+  /* Category tabs: one elegant swipeable row instead of a wrapped two-line block */
+  .searxly-categories {
+    padding: 0 var(--space-4);
+  }
+  .searxly-categories #categories,
+  .searxly-categories .search_categories {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .searxly-categories #categories::-webkit-scrollbar,
+  .searxly-categories .search_categories::-webkit-scrollbar {
+    display: none;
+  }
+  .searxly-categories #categories_container {
+    flex-wrap: nowrap;
+    width: max-content;
+    padding-right: var(--space-4); /* scroll overshoot room after the last tab */
+  }
+
+  /* Slightly tighter rhythm on phones */
+  #urls,
+  .searxly-urls,
+  #urls > div[class*="template_group"]:not(.template_group_images),
+  .searxly-urls > div[class*="template_group"]:not(.template_group_images) {
+    gap: 40px;
   }
 }
 

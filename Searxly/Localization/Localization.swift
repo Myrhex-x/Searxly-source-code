@@ -15,10 +15,18 @@ enum Localization {
     /// Language code sent to SearXNG — follows system even without a UI translation.
     static var searchLanguageCode: String { AppLanguage.systemSearchLanguageCode }
 
-    /// Bundle for localized strings, walking the user's preferred languages.
+    /// Bundle for localized strings: the user's explicit in-app choice first, then the
+    /// system preference list.
     static var bundle: Bundle {
+        if let override = AppLanguage.override {
+            let base = AppLanguage.baseCode(of: override)
+            if let path = Bundle.main.path(forResource: base, ofType: "lproj"),
+               let langBundle = Bundle(path: path) {
+                return langBundle
+            }
+        }
         for localeID in Locale.preferredLanguages {
-            let base = localeID.split(separator: "-").first.map(String.init) ?? localeID
+            let base = AppLanguage.baseCode(of: localeID)
             if let path = Bundle.main.path(forResource: base, ofType: "lproj"),
                let langBundle = Bundle(path: path) {
                 return langBundle
@@ -35,10 +43,32 @@ enum Localization {
         return value
     }
 
-    /// One-time cleanup for installs that used the old in-app language picker.
-    static func migrateAwayFromManualLanguageOverride() {
-        UserDefaults.standard.removeObject(forKey: "preferredAppLanguage")
-        UserDefaults.standard.removeObject(forKey: "AppleLanguages")
+    /// One-time migrations for older language storage:
+    ///  - drops the pre-2026 manual UI override key,
+    ///  - folds the legacy search-only override into the unified app language,
+    ///  - normalizes codes the local SearXNG runtime doesn't register (it strips or
+    ///    rejects unregistered region locales — see `search.languages` in settings.yml).
+    static func migrateLanguagePreferences() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "preferredAppLanguage")
+
+        let legacyKey = "searchLanguageOverride"
+        if let legacy = defaults.string(forKey: legacyKey), !legacy.isEmpty {
+            if defaults.string(forKey: AppLanguage.overrideKey) == nil {
+                AppLanguage.setOverride(normalizedLanguageChoice(legacy))
+            }
+            defaults.removeObject(forKey: legacyKey)
+        }
+    }
+
+    private static func normalizedLanguageChoice(_ code: String) -> String? {
+        switch code {
+        case "hi-IN": return "hi"
+        case "uk-UA": return "uk"
+        case "vi-VN": return "vi"
+        case "no-NO", "he-IL": return nil   // not registered in search.languages — back to system
+        default: return code
+        }
     }
 }
 

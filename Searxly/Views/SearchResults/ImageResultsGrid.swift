@@ -91,6 +91,7 @@ private struct ImageGridItem: View {
     let onPreview: () -> Void
     let proxyBaseURL: String?
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isHovering = false
 
     private var candidates: [URL] {
@@ -185,7 +186,10 @@ private struct ImageGridItem: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color.white.opacity(isHovering ? 0.18 : 0.05), lineWidth: 0.5)
+                .strokeBorder(
+                    AdaptiveChrome.border(colorScheme, dark: isHovering ? 0.18 : 0.05),
+                    lineWidth: 0.5
+                )
         )
         .scaleEffect(isHovering ? 1.012 : 1.0)
         .shadow(color: .black.opacity(isHovering ? 0.22 : 0.07), radius: isHovering ? 8 : 3, x: 0, y: 2)

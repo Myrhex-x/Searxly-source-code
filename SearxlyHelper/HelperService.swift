@@ -8,8 +8,11 @@
 //
 
 import Foundation
+import os
 
 final class HelperService: NSObject, SearxlyHelperProtocol {
+
+    private static let securityLog = Logger(subsystem: "com.myrhex.SearxlyHelper", category: "security")
 
     /// Strong reference to the launched SearXNG process, used for a clean terminate while this
     /// service instance is alive. The pidfile (not this) is the source of truth for status/stop,
@@ -136,9 +139,8 @@ final class HelperService: NSObject, SearxlyHelperProtocol {
         let logURL = stateDir.appendingPathComponent("tor.log")
         try? FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
 
-        // Generate the torrc. SOCKS5 on localhost is what onion tabs proxy through; ClientOnly means
-        // we never act as a relay; notice log → stdout (we capture it to tor.log for the bootstrap
-        // parser). GeoIP files are optional (Tor still works without them; they only aid path choice).
+        // torrc: SOCKS5 + control port on localhost, ClientOnly (never a relay), notice log to stdout
+        // (captured to tor.log for the bootstrap parser). GeoIP files optional.
         var torrc = """
         SocksPort \(socksHost()):\(socksPort) IsolateDestAddr IsolateDestPort
         ControlPort \(socksHost()):\(Self.controlPort)
@@ -170,8 +172,7 @@ final class HelperService: NSObject, SearxlyHelperProtocol {
         env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
         process.environment = env
 
-        // Truncate the previous log so the bootstrap parser only ever sees the current run, then
-        // capture stdout+stderr into it (single writer — torrc logs to stdout).
+        // Truncate + capture stdout/stderr to tor.log (single writer — torrc logs to stdout).
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         if let logHandle = try? FileHandle(forWritingTo: logURL) {
             process.standardOutput = logHandle
@@ -306,22 +307,61 @@ final class HelperService: NSObject, SearxlyHelperProtocol {
 
     // MARK: - File system
 
+    /// Roots the file-system methods are allowed to touch. The main app only ever asks the helper to
+    /// read/write/delete inside the user's private SearXNG project folder (~/searxng-local) or Searxly's
+    /// Application Support area. Bundle templates are read by the (sandboxed) app itself and passed to
+    /// the helper as raw `Data`, so the helper never needs to reach into the app bundle.
+    private func allowedFileRoots() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            home.appendingPathComponent("searxng-local"),
+            home.appendingPathComponent("Library/Application Support/Searxly")
+        ].map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
+    }
+
+    /// Defense in depth: this helper is UNSANDBOXED, so we refuse any path outside `allowedFileRoots()`.
+    /// We resolve symlinks *first*, then collapse `.`/`..`, so neither a traversal like
+    /// `~/searxng-local/../../.ssh` NOR a symlink planted inside a root (e.g. `~/searxng-local/evil` →
+    /// `/etc/…`, possibly combined with `..`) can escape the allow-list and turn a path-handling bug in
+    /// the app into arbitrary-filesystem read/write/delete by this privileged process. Both the candidate
+    /// and the roots are canonicalized the same way for a correct prefix comparison.
+    private func isPathAllowed(_ path: String) -> Bool {
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        for root in allowedFileRoots() where resolved == root || resolved.hasPrefix(root + "/") {
+            return true
+        }
+        Self.securityLog.error("Rejected helper file operation outside the allowed roots: \(path, privacy: .public)")
+        return false
+    }
+
     func fileExists(atPath path: String, reply: @escaping (Bool) -> Void) {
+        guard isPathAllowed(path) else { reply(false); return }
         reply(FileManager.default.fileExists(atPath: path))
     }
 
     func readFile(atPath path: String, reply: @escaping (Data?) -> Void) {
+        guard isPathAllowed(path) else { reply(nil); return }
         reply(FileManager.default.contents(atPath: path))
     }
 
     func writeFile(data: Data, toPath path: String, reply: @escaping (Bool) -> Void) {
+        guard isPathAllowed(path) else { reply(false); return }
         let url = URL(fileURLWithPath: path)
+        let parent = url.deletingLastPathComponent()
         do {
             try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
+                at: parent,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
             )
             try data.write(to: url, options: .atomic)
+            // This helper only ever writes the user's PRIVATE per-user data — the SearXNG config (which
+            // holds the generated `secret_key`), its `.bak` copies, and Tor state. Lock every written
+            // file to owner-only (0600) and its directory to 0700 so another local account can't read the
+            // secret or list the folder. Re-applying to the parent also tightens a pre-existing 0755
+            // directory left by an older install (atomic writes otherwise inherit the umask → 0644).
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parent.path)
             reply(true)
         } catch {
             reply(false)
@@ -329,12 +369,15 @@ final class HelperService: NSObject, SearxlyHelperProtocol {
     }
 
     func createDirectory(atPath path: String, reply: @escaping (Bool) -> Void) {
+        guard isPathAllowed(path) else { reply(false); return }
         do {
             try FileManager.default.createDirectory(
                 atPath: path,
                 withIntermediateDirectories: true,
-                attributes: nil
+                attributes: [.posixPermissions: 0o700]
             )
+            // Also tighten if the directory already existed as world-readable (0755) from an older install.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path)
             reply(true)
         } catch {
             reply(FileManager.default.fileExists(atPath: path))
@@ -342,6 +385,7 @@ final class HelperService: NSObject, SearxlyHelperProtocol {
     }
 
     func removeItem(atPath path: String, reply: @escaping (Bool) -> Void) {
+        guard isPathAllowed(path) else { reply(false); return }
         guard FileManager.default.fileExists(atPath: path) else { reply(true); return }
         do {
             try FileManager.default.removeItem(atPath: path)
@@ -438,11 +482,10 @@ final class HelperService: NSObject, SearxlyHelperProtocol {
     }
 }
 
-// MARK: - Tor control-protocol client (blocking, localhost)
+// MARK: - Tor control-protocol client (blocking POSIX socket, localhost)
 
-/// Minimal synchronous client for Tor's ControlPort. Runs only in the unsandboxed helper, which can
-/// read the control auth cookie. Best-effort: returns nil on any failure (callers fall back). Uses a
-/// plain blocking POSIX socket — exchanges are tiny and localhost-only, with recv/send timeouts.
+/// Cookie-authenticated client for Tor's ControlPort, in the unsandboxed helper. Best-effort:
+/// returns nil on any failure (callers fall back).
 private enum TorControl {
 
     static func exchange(host: String, port: UInt16, cookiePath: String, commands: [String]) -> [String]? {

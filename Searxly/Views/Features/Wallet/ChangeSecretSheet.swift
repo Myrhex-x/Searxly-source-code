@@ -23,7 +23,7 @@ struct ChangeSecretSheet: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(.white).padding(.top, 24)
+            Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary).padding(.top, 24)
             Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).padding(.horizontal, 28)
 
@@ -56,7 +56,7 @@ struct ChangeSecretSheet: View {
             if !activeIsPassphrase {
                 HStack(spacing: 12) {
                     ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                        Circle().fill(i < activeCount ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
+                        Circle().fill(i < activeCount ? WalletTheme.ink : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                     }
                 }
             }
@@ -68,7 +68,7 @@ struct ChangeSecretSheet: View {
             Button("Cancel") { dismiss() }.buttonStyle(.bordered).controlSize(.regular).padding(.bottom, 22)
         }
         .frame(width: 360).frame(minHeight: 420, maxHeight: 560)
-        .background(WalletTheme.canvas).preferredColorScheme(.dark)
+        .background(WalletTheme.canvas)
         // No Secure Enclave → force passphrase mode so the user can't downgrade to a 6-digit PIN.
         .onAppear { if !seAvailable { newIsPassphrase = true } }
     }

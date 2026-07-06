@@ -26,12 +26,9 @@ struct ContentView: View {
     }
 
     func updateSuggestionsFromFocus() {
-        let trimmed = browserState.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isAddressBarFocused && !trimmed.isEmpty {
-            browserState.scheduleSuggestionsRefresh(userInitiated: false)
-        } else if !isAddressBarFocused {
-            browserState.dismissSuggestionsPanel()
-        }
+        // Panel lifecycle (incl. the blur grace period that lets a suggestion click land before the
+        // panel closes) lives in BrowserState so it isn't tied to this view's transient focus state.
+        browserState.setAddressBarFocused(isAddressBarFocused)
     }
 
     func submitFromAddressBar() {
@@ -47,6 +44,16 @@ struct ContentView: View {
 
     // Home background stars (grok.com style). Default on for the premium feel.
     @AppStorage("homeStarsEnabled") var homeStarsEnabled = true
+
+    /// The left TAB sidebar always renders as the inset, super-rounded floating panel on the
+    /// VPN-popover canvas — the macOS 26 look, kept alive by Searxly on 27+. Not a separate
+    /// setting by design: "Reduce liquid glass" is the one switch that drops it back to the
+    /// classic flat edge-to-edge sidebar. Applies ONLY to the tab sidebar.
+    var floatingSidebarActive: Bool { glassEnabled }
+
+    // Optional favorites bar under the header (View ▸ Show Bookmarks Bar, ⌘⇧B). Off by default to keep
+    // the default chrome minimal; the same key is toggled from the menu in SearxlyApp.
+    @AppStorage("bookmarksBarVisible") var bookmarksBarVisible = false
 
     // Sidebar is no longer freely resizable by dragging (removed due to persistent lag/glitch/size issues).
     // Width is now only changed via the chevron toggle in the sidebar (binary rail vs expanded).
@@ -225,23 +232,10 @@ struct ContentView: View {
     @ViewBuilder
     var mainContentArea: some View {
         Group {
-            // Full-page history (new dedicated mode for managing all history entries with delete, filter, etc.)
-            if browserState.showingFullHistory {
-                fullHistoryContent
-            } else if let selected = browserState.selectedTab, selected.kind == .passwords {
-                PasswordVaultTabView(
-                    tab: selected,
-                    glassEnabled: glassEnabled,
-                    toolbarMaterial: toolbarMaterial,
-                    onFillLogin: { domain, username, password in
-                        browserState.fillLoginForDomain(domain: domain, username: username, password: password)
-                    },
-                    onOpenSite: { domain in
-                        if let url = URL(string: "https://\(domain)") {
-                            browserState.loadInWebView(url)
-                        }
-                    }
-                )
+            // Internal full-page Searxly pages (Passwords, Bookmarks & History, Downloads) render as
+            // utility tabs and take precedence over web content — exactly like the old passwords tab.
+            if let selected = browserState.selectedTab, selected.kind.isUtility {
+                utilityTabContent(for: selected)
             } else if browserState.showingWebContent {
                 // Web content (progress, find bar, WebView + reader) extracted to its own view.
                 // Side-effect .onChange handlers that touched parent state remain here for now.
@@ -253,13 +247,6 @@ struct ContentView: View {
                     webCurrentURL: $browserState.webCurrentURL,
                     webViewCanGoBack: $browserState.webViewCanGoBack,
                     webViewCanGoForward: $browserState.webViewCanGoForward,
-                    isReaderMode: $browserState.isReaderMode,
-                    onReaderContentExtracted: { title, html in
-                        browserState.readerTitle = title
-                        browserState.readerHTML = html
-                        browserState.showingReaderSheet = !html.isEmpty
-                        browserState.isReaderMode = !html.isEmpty
-                    },
                     showingFindBar: $browserState.showingFindBar,
                     findSearchTerm: $browserState.findSearchTerm,
                     onPerformFind: { browserState.performFindInPage($0) },
@@ -316,10 +303,13 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            } else if !browserState.searchResults.isEmpty {
+            } else if !browserState.searchResults.isEmpty
+                        || (browserState.currentSearchCategory == "news" && !browserState.lastSearchQuery.isEmpty) {
                 // 2026 SERP redesign: the full results surface (header + category pills "All / Web / Images / Videos / News"
                 // + rewrite badge + actual rows/grids) is now owned exclusively by SearchResultsView.
                 // Previously the parent's header + pills were left in place, causing the duplication.
+                // News stays mounted even when empty so its time-filter control bar remains reachable
+                // (otherwise a narrow filter that returns nothing would strand the user on the error view).
                 SearchResultsView(
                     results: browserState.searchResults,
                     currentCategory: browserState.currentSearchCategory,
@@ -331,6 +321,7 @@ struct ContentView: View {
                     onSelectCategory: { selectSearchCategory($0) },
                     onOpenPage: { result in
                         if let url = URL(string: result.url) {
+                            HoverLinkState.shared.url = ""   // don't leave a stale strip when we return to the SERP
                             browserState.searchText = result.url
                             loadInWebView(url)
                             clearNativeSearch()
@@ -352,10 +343,24 @@ struct ContentView: View {
                             loadInWebView(url)
                             clearNativeSearch()
                         }
-                    }
+                    },
+                    newsTimeRange: browserState.newsTimeRange,
+                    newsSortByRecency: browserState.newsSortByRecency,
+                    newsLastRefreshed: browserState.newsLastRefreshed,
+                    isLoadingSearch: browserState.isLoadingSearch,
+                    onSelectNewsTimeRange: { browserState.setNewsTimeRange($0) },
+                    onToggleNewsSort: { browserState.setNewsSortByRecency($0) },
+                    onRefreshNews: { browserState.refreshNews() },
+                    allTabNews: browserState.allTabNewsResults,
+                    pendingNewsCount: browserState.pendingNewsStories.count,
+                    onShowPendingNews: { browserState.mergePendingNewsStories() }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.top, 2)
+                // Safari-style "where this result goes" strip (SwiftUI is fine here — no WKWebView on the SERP).
+                .overlay(alignment: .bottomLeading) {
+                    HoverLinkStatusStrip()
+                }
 
             } else if let err = browserState.searchErrorMessage, !err.isEmpty, !browserState.isLoadingSearch {
                 // Friendly empty / no-results illustration in the main content area (complements the
@@ -417,8 +422,10 @@ struct ContentView: View {
                     isAddressBarFocused: $isAddressBarFocused,
                     searchErrorMessage: browserState.searchErrorMessage,
                     showInstanceNotDetected: browserState.shouldShowHomeInstanceWarning,
-                    showEnableAIToolsPrompt: browserState.showEnableAIToolsPrompt,
-                    localAIChatEnabled: LocalIntelligenceManager.shared.preferences.masterEnabled && LocalIntelligenceManager.shared.preferences.chatEnabled,
+                    showEnableAIToolsPrompt: AIFeatures.programEnabled && browserState.showEnableAIToolsPrompt,
+                    localAIChatEnabled: AIFeatures.programEnabled
+                        && LocalIntelligenceManager.shared.preferences.masterEnabled
+                        && LocalIntelligenceManager.shared.preferences.chatEnabled,
                     browserState: browserState,
                     onSubmit: { submitFromAddressBar() },
                     onOpenSettings: { browserState.showingSettings = true },
@@ -432,6 +439,17 @@ struct ContentView: View {
                     },
                     onOpenLocalAIChat: {
                         browserState.openLocalAIChat()
+                    },
+                    onOpenNewsStory: { result in
+                        if let url = URL(string: result.url) {
+                            HoverLinkState.shared.url = ""
+                            browserState.searchText = result.url
+                            loadInWebView(url)
+                            clearNativeSearch()
+                        }
+                    },
+                    onOpenTopicNews: { query in
+                        browserState.runNewsSearch(query: query)
                     }
                 )
             }
@@ -479,15 +497,23 @@ struct ContentView: View {
             }
             // Fluid centered floating panel for Local AI Chat (extracted).
             .overlay {
-                LocalAIChatFloatingPanel(
-                    isPresented: $browserState.showingLocalAIChat,
-                    glassEnabled: glassEnabled,
-                    content: localAIChatView
-                )
+                if AIFeatures.programEnabled {
+                    LocalAIChatFloatingPanel(
+                        isPresented: $browserState.showingLocalAIChat,
+                        glassEnabled: glassEnabled,
+                        content: localAIChatView
+                    )
+                }
             }
             // Lightweight Siri-style quick answer (Explain / Summarize from page selection).
             .overlay(alignment: .bottom) {
-                QuickAnswerPopup(browserState: browserState, glassEnabled: glassEnabled)
+                if AIFeatures.programEnabled {
+                    QuickAnswerPopup(browserState: browserState, glassEnabled: glassEnabled)
+                }
+            }
+            // Spotlight-style ⌘K command palette (tabs / bookmarks / history / quick actions).
+            .overlay {
+                CommandPaletteView(browserState: browserState, glassEnabled: glassEnabled)
             }
     }
 }

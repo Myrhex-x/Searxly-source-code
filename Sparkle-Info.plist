@@ -15,6 +15,15 @@
 	<key>SearxlyGatewayAppToken</key>
 	<string>$(SEARXLY_GATEWAY_APP_TOKEN)</string>
 
+	<!-- Discord webhook for in-app feedback (Settings → Feedback + knowledge-panel contributions).
+	     Substituted at build time from SEARXLY_FEEDBACK_WEBHOOK (blank in the public source; real
+	     value in the gitignored Secrets.xcconfig, stored WITHOUT the https:// scheme — xcconfig
+	     treats "//" in values as a comment. FeedbackWebhook.swift adds the scheme). -->
+	<key>SearxlyFeedbackWebhook</key>
+	<string>$(SEARXLY_FEEDBACK_WEBHOOK)</string>
+	<key>SearxlyKnowledgeWebhook</key>
+	<string>$(SEARXLY_KNOWLEDGE_WEBHOOK)</string>
+
 	<!--
 		App Transport Security — Tor .onion exception (scoped, NOT a blanket http allowance).
 		Cleartext http is allowed ONLY for *.onion hidden services — http is the onion convention, and
@@ -35,5 +44,27 @@
 			</dict>
 		</dict>
 	</dict>
+
+	<!--
+		Web browser registration. Declaring http/https handling is what makes macOS list Searxly under
+		System Settings → Desktop & Dock → Default web browser, so it can actually be set as the user's
+		default and receive links opened from other apps (Mail, Messages, Slack, …). Without this the
+		app can never replace Safari/Chrome as the daily driver. Pairs with DefaultBrowserManager, which
+		asks the OS to make Searxly the default.
+	-->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Web site URL</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>http</string>
+				<string>https</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

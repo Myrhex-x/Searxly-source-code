@@ -8,6 +8,16 @@
 // and paste the token). When blank, the wallet falls back to its "bring your own 0x key" path.
 SEARXLY_GATEWAY_APP_TOKEN =
 
+// Discord webhook the in-app feedback surfaces (Settings → Feedback + knowledge-panel
+// contributions) post to. Blank in the public source; the real value is layered in from the
+// gitignored Secrets.xcconfig. ⚠️ Store it WITHOUT the "https://" scheme (xcconfig treats "//"
+// inside a value as a comment and silently truncates) — the app adds the scheme itself:
+//   SEARXLY_FEEDBACK_WEBHOOK = discord.com/api/webhooks/<id>/<token>
+// When blank, the feedback UI offers copy-to-clipboard + GitHub issues instead.
+// Two channels: general feedback (Settings → Feedback) and knowledge-panel contributions.
+SEARXLY_FEEDBACK_WEBHOOK =
+SEARXLY_KNOWLEDGE_WEBHOOK =
+
 // Optional include: present only on a maintainer's machine (gitignored). The `?` means a clean
 // checkout / CI / the open-source repo build fine without it.
 #include? "Secrets.xcconfig"

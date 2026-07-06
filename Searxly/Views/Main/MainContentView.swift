@@ -43,9 +43,7 @@ struct MainContentView: View {
     @Binding var showingSettings: Bool
     @Binding var selectedImageForPreview: SearXNGResult?
 
-    // Reader Mode & Find (passed from ContentView for now)
-    @Binding var isReaderMode: Bool
-    let onReaderContentExtracted: (String, String) -> Void
+    // Find (passed from ContentView for now)
     let onPerformFind: (String) -> Void
     let onExitFind: () -> Void
 
@@ -71,9 +69,7 @@ struct MainContentView: View {
                         pageTitle: $webPageTitle,
                         currentURL: $webCurrentURL,
                         canGoBack: $canGoBack,
-                        canGoForward: $canGoForward,
-                        isReaderMode: $isReaderMode,
-                        onReaderContentExtracted: onReaderContentExtracted
+                        canGoForward: $canGoForward
                     )
                     .onChange(of: webCurrentURL) { _, _ in
                         onWebURLChange()
@@ -168,9 +164,9 @@ struct MainContentView: View {
                                                     : .ultraThinMaterial,
                                                 in: Capsule()
                                             )
-                                            .glassEffect(
+                                            .searxlyGlass(
                                                 glassEnabled && isSelected ?
-                                                    .regular.interactive() : .clear,
+                                                    .interactive : .clear,
                                                 in: Capsule()
                                             )
                                             .overlay(

@@ -45,6 +45,11 @@ struct AIPreferences: Codable, Equatable {
     /// SearXNG instances — never public ones, never cloud.
     var toolsEnabled: Bool = false
 
+    /// Per-tool opt-out set. Holds the ids (matching AIToolCatalog / CloudTool.name) of tools the user
+    /// has switched OFF. Default empty = every tool is on, so newly shipped tools are opt-out, not opt-in.
+    /// Only meaningful when `toolsEnabled` is true (the master switch still gates all tool use).
+    var disabledToolIDs: Set<String> = []
+
     // Phase 5: Experimental local fallbacks (Ollama etc.). Off by default, clearly labeled.
     var experimentalFallbacksEnabled: Bool = false
     var ollamaModelName: String = "llama3.2"
@@ -108,6 +113,7 @@ struct AIPreferences: Codable, Equatable {
         lowMemoryMode = false
         idleUnloadSeconds = 300
         toolsEnabled = false
+        disabledToolIDs = []
         experimentalFallbacksEnabled = false
         ollamaModelName = "llama3.2"
         ollamaBaseURL = "http://127.0.0.1:11434"
@@ -140,6 +146,7 @@ struct AIPreferences: Codable, Equatable {
         lowMemoryMode: Bool = false,
         idleUnloadSeconds: TimeInterval = 300,   // manager may use longer effective value on high-perf hardware (see LocalIntelligenceManager)
         toolsEnabled: Bool = false,
+        disabledToolIDs: Set<String> = [],
         experimentalFallbacksEnabled: Bool = false,
         ollamaModelName: String = "llama3.2",
         ollamaBaseURL: String = "http://127.0.0.1:11434",
@@ -169,6 +176,7 @@ struct AIPreferences: Codable, Equatable {
         self.lowMemoryMode = lowMemoryMode
         self.idleUnloadSeconds = idleUnloadSeconds
         self.toolsEnabled = toolsEnabled
+        self.disabledToolIDs = disabledToolIDs
         self.experimentalFallbacksEnabled = experimentalFallbacksEnabled
         self.ollamaModelName = ollamaModelName
         self.ollamaBaseURL = ollamaBaseURL
@@ -211,6 +219,7 @@ struct AIPreferences: Codable, Equatable {
         case lowMemoryMode
         case idleUnloadSeconds
         case toolsEnabled
+        case disabledToolIDs
         case experimentalFallbacksEnabled
         case ollamaModelName
         case ollamaBaseURL
@@ -247,6 +256,7 @@ struct AIPreferences: Codable, Equatable {
         idleUnloadSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .idleUnloadSeconds) ?? 300
 
         toolsEnabled = try container.decodeIfPresent(Bool.self, forKey: .toolsEnabled) ?? false
+        disabledToolIDs = try container.decodeIfPresent(Set<String>.self, forKey: .disabledToolIDs) ?? []
 
         experimentalFallbacksEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalFallbacksEnabled) ?? false
         ollamaModelName = try container.decodeIfPresent(String.self, forKey: .ollamaModelName) ?? "llama3.2"

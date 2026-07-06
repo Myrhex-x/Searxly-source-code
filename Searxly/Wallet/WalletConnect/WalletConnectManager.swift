@@ -96,6 +96,9 @@ final class WalletConnectManager {
 
     private func ensureConnected() async -> Bool {
         if ws?.state == .running { return true }
+        // Fail closed in Maximum Privacy when protection is down: the relay WebSocket would expose the
+        // real IP (URLSession isn't routed through Tor). Same native-egress kill switch as search/RPC.
+        guard PrivacyGate.egressAllowedFast else { return false }
         guard let token = relayAuthJWT(),
               let url = URL(string: "wss://\(relayHost)/?projectId=\(projectId)&auth=\(token)") else { return false }
         let task = URLSession.shared.webSocketTask(with: url)

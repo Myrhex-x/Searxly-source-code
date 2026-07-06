@@ -23,6 +23,13 @@ final class SearchQueryHistoryStore {
     private static let maxEntries = 200
     static let enabledKey = "searchQueryHistoryEnabled"
 
+    /// In-memory copy of the decoded entries so the per-keystroke `matching()` read never re-hits the
+    /// Keychain / AES-GCM decrypt path (that would add latency in the address bar when at-rest encryption
+    /// is on). Populated on first access and kept in sync by every write. Guarded by `lock` because the
+    /// singleton is not actor-isolated. `nil` = "not loaded yet".
+    private let lock = NSLock()
+    private var cache: [SearchQueryRecord]?
+
     // MARK: - Write
 
     func record(_ query: String) {
@@ -54,21 +61,57 @@ final class SearchQueryHistoryStore {
     // MARK: - Clear
 
     func clearAll() {
+        lock.lock()
+        cache = []
+        lock.unlock()
         UserDefaults.standard.removeObject(forKey: Self.defaultsKey)
     }
 
     // MARK: - Private
 
     private func load() -> [SearchQueryRecord] {
-        guard let data = UserDefaults.standard.data(forKey: Self.defaultsKey),
-              let decoded = try? JSONDecoder().decode([SearchQueryRecord].self, from: data) else {
-            return []
+        lock.lock()
+        if let cached = cache {
+            lock.unlock()
+            return cached
         }
-        return decoded
+        lock.unlock()
+
+        let entries = decodeFromDisk()
+        lock.lock()
+        cache = entries
+        lock.unlock()
+        return entries
+    }
+
+    /// Reads + decodes the persisted blob. Handles both plaintext (legacy / encryption-off) and AES-GCM
+    /// blobs written while "Encrypt local data at rest" is on. A failed decrypt (e.g. key unavailable)
+    /// degrades to empty rather than throwing — search suggestions are non-critical.
+    private func decodeFromDisk() -> [SearchQueryRecord] {
+        guard let raw = UserDefaults.standard.data(forKey: Self.defaultsKey) else { return [] }
+        let jsonData: Data
+        if EncryptedDataStore.looksEncrypted(raw) {
+            guard let decrypted = try? DataEncryptor.decryptWithStoredKey(raw) else { return [] }
+            jsonData = decrypted
+        } else {
+            jsonData = raw
+        }
+        return (try? JSONDecoder().decode([SearchQueryRecord].self, from: jsonData)) ?? []
     }
 
     private func save(_ entries: [SearchQueryRecord]) {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        UserDefaults.standard.set(data, forKey: Self.defaultsKey)
+        lock.lock()
+        cache = entries
+        lock.unlock()
+
+        guard let jsonData = try? JSONEncoder().encode(entries) else { return }
+        // Mirror the main store's contract: when at-rest encryption is enabled, encrypt this blob too and
+        // NEVER fall back to plaintext if the key is unavailable — that would silently defeat the setting.
+        if EncryptedDataStore.isEncryptionEnabled() {
+            guard let encrypted = try? DataEncryptor.encryptWithStoredKey(jsonData) else { return }
+            UserDefaults.standard.set(encrypted, forKey: Self.defaultsKey)
+        } else {
+            UserDefaults.standard.set(jsonData, forKey: Self.defaultsKey)
+        }
     }
 }

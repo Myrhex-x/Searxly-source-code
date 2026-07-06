@@ -14,40 +14,53 @@ import SwiftUI
 
 enum WalletTheme {
 
-    // MARK: - Canvas (sheet / panel backgrounds)
+    // MARK: - Canvas (sheet / panel backgrounds) — adaptive: near-black in dark, white in light
 
-    /// The deep premium near-black used for the home hero, sidebar, and main chrome. Reusing the
-    /// exact app canvas makes the wallet feel native to Searxly rather than a bolted-on dark sheet.
-    static let canvas = Color(red: 0.043, green: 0.043, blue: 0.051)
+    /// Dark: the deep premium near-black shared with the home hero and main chrome. Light: a white
+    /// panel matching the other adaptive popovers. Reusing the app language keeps the wallet feeling
+    /// native to Searxly rather than a bolted-on sheet.
+    static let canvas = AdaptiveChrome.dynamic(
+        light: .white,
+        dark: Color(red: 0.043, green: 0.043, blue: 0.051)
+    )
     /// Very slightly lifted canvas for a band that needs to separate from the base (e.g. the
     /// balance summary) without a hard divider.
-    static let canvasRaised = Color(red: 0.062, green: 0.062, blue: 0.070)
+    static let canvasRaised = AdaptiveChrome.dynamic(
+        light: Color(red: 0.968, green: 0.968, blue: 0.973),
+        dark: Color(red: 0.062, green: 0.062, blue: 0.070)
+    )
 
     // MARK: - Surfaces (cards, rows, inputs) — translucent so the canvas reads through
 
-    static let surface        = Color.white.opacity(0.05)    // cards / grouped rows
-    static let surfaceField    = Color.white.opacity(0.06)    // text fields / inputs
-    static let surfaceStrong   = Color.white.opacity(0.08)    // secondary buttons / chips
-    static let surfaceSelected = Color.white.opacity(0.14)    // selected segment / chip
+    static let surface         = AdaptiveChrome.dynamic(light: Color.black.opacity(0.035), dark: Color.white.opacity(0.05))
+    static let surfaceField    = AdaptiveChrome.dynamic(light: Color.black.opacity(0.045), dark: Color.white.opacity(0.06))
+    static let surfaceStrong   = AdaptiveChrome.dynamic(light: Color.black.opacity(0.06), dark: Color.white.opacity(0.08))
+    static let surfaceSelected = AdaptiveChrome.dynamic(light: Color.black.opacity(0.11), dark: Color.white.opacity(0.14))
 
     // MARK: - Lines
 
-    static let hairline       = Color.white.opacity(0.08)    // card strokes
-    static let hairlineStrong = Color.white.opacity(0.14)    // emphasized strokes / focused field
-    static let divider        = Color.white.opacity(0.07)
+    static let hairline       = AdaptiveChrome.dynamic(light: Color.black.opacity(0.085), dark: Color.white.opacity(0.08))
+    static let hairlineStrong = AdaptiveChrome.dynamic(light: Color.black.opacity(0.16), dark: Color.white.opacity(0.14))
+    static let divider        = AdaptiveChrome.dynamic(light: Color.black.opacity(0.08), dark: Color.white.opacity(0.07))
 
     // MARK: - Text (monochrome ramp)
 
-    static let textPrimary    = Color.white
-    static let textSecondary  = Color(white: 0.62)
-    static let textTertiary   = Color(white: 0.42)
-    static let textFaint      = Color(white: 0.30)
+    static let textPrimary   = AdaptiveChrome.dynamic(light: Color(white: 0.09), dark: .white)
+    static let textSecondary = AdaptiveChrome.dynamic(light: Color(white: 0.33), dark: Color(white: 0.62))
+    static let textTertiary  = AdaptiveChrome.dynamic(light: Color(white: 0.48), dark: Color(white: 0.42))
+    static let textFaint     = AdaptiveChrome.dynamic(light: Color(white: 0.62), dark: Color(white: 0.30))
 
-    // MARK: - Semantic (the only color allowed, and only for meaning)
+    // MARK: - Semantic (the only color allowed, and only for meaning; deepened for light)
 
     static let positive = SERPDesign.accentGreen
-    static let negative = Color(red: 1.0, green: 0.42, blue: 0.42)
-    static let warning  = Color(red: 1.0, green: 0.62, blue: 0.28)
+    static let negative = AdaptiveChrome.dynamic(
+        light: Color(red: 0.78, green: 0.22, blue: 0.22),
+        dark: Color(red: 1.0, green: 0.42, blue: 0.42)
+    )
+    static let warning = AdaptiveChrome.dynamic(
+        light: Color(red: 0.8, green: 0.48, blue: 0.1),
+        dark: Color(red: 1.0, green: 0.62, blue: 0.28)
+    )
 
     // MARK: - Geometry
 
@@ -55,12 +68,23 @@ enum WalletTheme {
     static let radiusInner: CGFloat = 12
     static let radiusField: CGFloat = 10
 
-    // MARK: - Primary (white) action button helper
+    /// The single horizontal gutter for the wallet home, so the header, balance, actions, and token
+    /// list all align to one column (previously a mix of 16/18/22).
+    static let pagePadding: CGFloat = 16
 
-    /// The wallet's primary CTA is a solid white pill with black text — the consistent
-    /// "confirm / connect / send" affordance across every sheet.
-    static func primaryFill(enabled: Bool) -> Color { enabled ? .white : Color.white.opacity(0.12) }
-    static func primaryText(enabled: Bool) -> Color { enabled ? .black : Color(white: 0.34) }
+    // MARK: - Primary ("ink") action button helper
+
+    /// The wallet's primary CTA is a solid ink pill — white-on-black in dark mode, black-on-white in
+    /// light — the consistent "confirm / connect / send" affordance across every sheet.
+    static let ink   = AdaptiveChrome.dynamic(light: Color(white: 0.12), dark: .white)
+    static let onInk = AdaptiveChrome.dynamic(light: .white, dark: .black)
+
+    static func primaryFill(enabled: Bool) -> Color {
+        enabled ? ink : AdaptiveChrome.dynamic(light: Color.black.opacity(0.08), dark: Color.white.opacity(0.12))
+    }
+    static func primaryText(enabled: Bool) -> Color {
+        enabled ? onInk : AdaptiveChrome.dynamic(light: Color(white: 0.62), dark: Color(white: 0.34))
+    }
 }
 
 // MARK: - Reusable card background
@@ -98,8 +122,14 @@ private struct WalletGlassModifier: ViewModifier {
                     shape.fill(fill)
                 } else {
                     shape.fill(fill)
-                        .glassEffect(.regular, in: shape)
-                        .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
+                        .searxlyGlass(.regular, in: shape)
+                        .shadow(
+                            color: AdaptiveChrome.dynamic(
+                                light: Color.black.opacity(0.10),
+                                dark: Color.black.opacity(0.22)
+                            ),
+                            radius: 8, y: 3
+                        )
                 }
             }
             .overlay(shape.strokeBorder(stroke, lineWidth: 1))
@@ -264,19 +294,92 @@ struct WalletGlassChip: View {
                 if let subtitle {
                     Text(subtitle)
                         .font(.system(size: 11))
-                        .foregroundStyle(selected ? Color.black.opacity(0.65) : WalletTheme.textSecondary)
+                        .foregroundStyle(selected ? WalletTheme.onInk.opacity(0.65) : WalletTheme.textSecondary)
                 }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
-            .foregroundStyle(selected ? Color.black : WalletTheme.textPrimary)
-            .background(selected ? Color.white : WalletTheme.surface,
+            .foregroundStyle(selected ? WalletTheme.onInk : WalletTheme.textPrimary)
+            .background(selected ? WalletTheme.ink : WalletTheme.surface,
                         in: RoundedRectangle(cornerRadius: WalletTheme.radiusField, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: WalletTheme.radiusField, style: .continuous)
-                    .strokeBorder(Color.white.opacity(selected ? 0 : 0.08), lineWidth: 1)
+                    .strokeBorder(selected ? Color.clear : WalletTheme.hairline, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Transaction progress (shared by Swap / Send)
+
+/// Narrated transaction progress: the stages already passed with checkmarks, plus the one running
+/// now with a spinner. Drives the "is it frozen?" anxiety out of multi-second signing/broadcast
+/// flows — the swap and send screens both render their stage callbacks through this.
+struct WalletStageList: View {
+    let done: [String]
+    let current: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(done.enumerated()), id: \.offset) { _, label in
+                row(label, done: true)
+            }
+            if !current.isEmpty { row(current, done: false) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .walletGlass(radius: 14, fill: WalletTheme.surfaceField)
+    }
+
+    private func row(_ label: String, done: Bool) -> some View {
+        HStack(spacing: 10) {
+            Group {
+                if done {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13)).foregroundStyle(WalletTheme.textPrimary)
+                } else {
+                    ProgressView().controlSize(.small).scaleEffect(0.75)
+                }
+            }
+            .frame(width: 18, height: 18)
+            Text(label)
+                .font(.system(size: 12, weight: done ? .regular : .medium))
+                .foregroundStyle(done ? WalletTheme.textSecondary : WalletTheme.textPrimary)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 7)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label)\(done ? ", done" : ", in progress")")
+    }
+}
+
+/// Status line under a "submitted" screen: spinner while the transaction is in the mempool, then
+/// the definitive on-chain outcome. `nil` = still confirming; `.pending` = polling gave up (the tx
+/// is still in the mempool — Activity keeps tracking it). Green is a status signal, allowed.
+struct WalletTxConfirmationLine: View {
+    let status: WalletNetwork.ReceiptStatus?
+    let chainName: String
+    var failureText = "The transaction failed on-chain (reverted) — only the network fee was spent."
+
+    var body: some View {
+        switch status {
+        case nil:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini).scaleEffect(0.7)
+                Text("Confirming on \(chainName)…")
+                    .font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
+            }
+        case .success:
+            Label("Confirmed on \(chainName)", systemImage: "checkmark.seal.fill")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(WalletTheme.positive)
+        case .failed:
+            Text(failureText)
+                .font(.system(size: 11)).foregroundStyle(WalletTheme.negative)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        case .pending:
+            Text("Still confirming — you can track it in Activity.")
+                .font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
+        }
     }
 }

@@ -273,7 +273,7 @@ struct PasswordVaultLockView: View {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
         if glassEnabled {
             shape.fill(toolbarMaterial)
-                .glassEffect(.regular, in: shape)
+                .searxlyGlass(.regular, in: shape)
         } else {
             shape.fill(Color(nsColor: .windowBackgroundColor))
         }

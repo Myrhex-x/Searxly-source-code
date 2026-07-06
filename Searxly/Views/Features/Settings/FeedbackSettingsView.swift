@@ -21,8 +21,6 @@ struct FeedbackSettingsView: View {
     @State private var sendError: String? = nil
     @State private var copyMessage: String? = nil
 
-    private static let discordWebhookURL = "INPUT"
-
     private enum FeedbackType: String, CaseIterable {
         case bug, suggestion, general, other
 
@@ -122,7 +120,7 @@ struct FeedbackSettingsView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.white)
+            .tint(SettingsTheme.textPrimary)
             .disabled(!canSend)
 
             if let success = sendSuccessMessage {
@@ -191,8 +189,10 @@ struct FeedbackSettingsView: View {
             "footer": ["text": "Searxly Feedback • \(selectedType.displayName)"]
         ]
 
-        guard let webhookURL = URL(string: Self.discordWebhookURL) else {
-            sendError = "Could not reach the feedback service."
+        // Resolved per-build (Secrets.xcconfig → Info.plist, or env var). Public-source builds have
+        // none — say so honestly instead of a bogus network error.
+        guard let webhookURL = FeedbackWebhook.settingsURL else {
+            sendError = FeedbackWebhook.notConfiguredMessage
             isSending = false
             return
         }

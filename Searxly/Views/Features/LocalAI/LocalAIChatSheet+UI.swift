@@ -78,10 +78,45 @@ extension LocalAIChatSheet {
 
     var composerFootnote: String {
         switch activeBackend {
-        case .searxly: return "Searxly AI runs in a private cloud · some prompts free"
+        case .searxly:
+            return SearxlyAIAccess.shared.isWalletVerified
+                ? "Searxly AI runs in a private cloud · some prompts free"
+                : "Connect your wallet to use Searxly AI · free, no payment — just anti-abuse"
         case .ollama:  return "Runs on your Mac · stays private"
         case .apple:   return "On-device · nothing leaves this Mac"
         }
+    }
+
+    /// When on Searxly AI and the user can't send (no connected wallet, or out of today's prompts), the
+    /// composer LOCKS and shows an upsell card instead of the input — so it's obvious they're out.
+    var composerLock: ComposerLock? {
+        guard activeBackend == .searxly, manager.canUseFeatures else { return nil }
+        let access = SearxlyAIAccess.shared
+        if !access.isWalletVerified {
+            return ComposerLock(
+                icon: "wallet.pass",
+                title: "Connect your wallet to use Searxly AI",
+                message: "It's free — no payment, no funds move. Just a one-tap signature so the free prompts can't be abused.",
+                ctaTitle: "Connect wallet in Settings",
+                ctaAction: { openSearxlyAISettings() }
+            )
+        }
+        if access.promptsRemainingToday <= 0 {
+            return ComposerLock(
+                icon: "bolt.slash.fill",
+                title: "Out of prompts for today",
+                message: "You've used today's \(access.dailyLimit) Searxly AI prompts. Upgrade for more, or they reset at your local midnight.",
+                ctaTitle: "Upgrade for more prompts",
+                ctaAction: { openSearxlyAISettings() }
+            )
+        }
+        return nil
+    }
+
+    /// Closes the chat and deep-links to Settings → Searxly AI (where the upgrade / wallet flow lives).
+    func openSearxlyAISettings() {
+        isPresented = false
+        NotificationCenter.default.post(name: .openSettingsToSearxlyAI, object: nil)
     }
 
     var showTypingIndicator: Bool {

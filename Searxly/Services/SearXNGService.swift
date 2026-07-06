@@ -9,21 +9,7 @@
 import Foundation
 import os
 
-/// Options forwarded to the SearXNG JSON search API.
-struct SearXNGSearchOptions: Sendable {
-    /// Explicit nonisolated default — required for default parameter values on @MainActor methods (Swift 6).
-    nonisolated static let standard = SearXNGSearchOptions(pageNo: 1, safeSearch: nil, timeRange: nil)
-
-    var pageNo: Int
-    var safeSearch: Int?
-    var timeRange: String?
-
-    init(pageNo: Int = 1, safeSearch: Int? = nil, timeRange: String? = nil) {
-        self.pageNo = pageNo
-        self.safeSearch = safeSearch
-        self.timeRange = timeRange
-    }
-}
+// SearXNGSearchOptions moved to SearxlyShared/SearXNGModels.swift (shared with iOS).
 
 /// Lightweight service for talking to any SearXNG instance.
 /// The UI (ContentView) decides which instance URL to use.
@@ -68,7 +54,7 @@ final class SearXNGService {
         options: SearXNGSearchOptions = .standard
     ) async throws -> SearXNGResponse {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return SearXNGResponse(query: query, results: []) }
+        guard !trimmed.isEmpty else { return SearXNGResponse(query: query, results: [], suggestions: nil) }
 
         guard let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             throw URLError(.badURL)
@@ -128,6 +114,7 @@ final class SearXNGService {
             request.setValue("127.0.0.1", forHTTPHeaderField: "X-Forwarded-For")
         }
 
+        try PrivacyGate.assertSearchEgressAllowed(to: url)   // fail-closed: no search egress while Maximum Privacy is unprotected (loopback allowed once SearXNG's upstream is Tor-routed)
         let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -237,173 +224,4 @@ enum SearXNGError: LocalizedError {
             return "No configured SearXNG instance could complete the search. Add your private/local instance in Settings."
         }
     }
-}
-
-// MARK: - Response Models (kept here for service locality, also referenced from Models.swift via same module)
-
-struct SearXNGResult: Decodable, Identifiable {
-    var id: String { url }
-
-    let title: String
-    let url: String
-    let content: String?
-    let engine: String?
-
-    // Additional fields for richer search result display (flat SERP redesign)
-    let publishedDate: String?   // Present on some news/articles; surfaced as extra detail in result meta row
-    let engines: [String]?       // Some responses include multiple contributing engines; single `engine` kept for primary display
-
-    // Image / video specific fields returned by SearXNG when using categories=images or videos
-    let img_src: String?        // Direct image URL (best for thumbnails / preview)
-    let thumbnail: String?      // Sometimes a smaller dedicated thumb
-    let thumbnail_src: String?  // Alternative thumb field some engines use
-    let img_format: String?
-    let resolution: String?
-    let filesize: String?
-
-    // Optional dimensions (emitted by some engines / SearXNG result types). Used for natural-aspect
-    // Google-like image grid tiles instead of forcing square crops. Fall back to resolution string parse.
-    let width: Int?
-    let height: Int?
-    let thumb_width: Int?
-    let thumb_height: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case title, url, content, engine, publishedDate, engines
-        case img_src, thumbnail, thumbnail_src, img_format, resolution, filesize
-        case width, height, thumb_width, thumb_height
-    }
-}
-
-// MARK: - Display helpers & utilities (used by SearchResultCard and media grid for consistent, readable SERP)
-// These are deliberately kept with the model for service locality (no new files, minimal surface).
-// All are pure, zero-side-effect, and defensive (never crash on bad data from upstream engines).
-
-extension SearXNGResult {
-    /// www-stripped host for meta rows and deduping. Matches the spirit of the minimal web theme (netloc only).
-    var displayHost: String {
-        guard let u = URL(string: url), let host = u.host else { return url }
-        return host.replacingOccurrences(of: "www.", with: "")
-    }
-
-    /// Short, scannable path segment for the meta row when useful. Avoids dumping giant paths.
-    /// Prefers host+short-path or host+…+tail. Falls back gracefully.
-    var displayPath: String {
-        guard let u = URL(string: url), u.host != nil else { return "" }
-        let p = u.path
-        if p.isEmpty || p == "/" { return "" }
-        if p.count <= 32 {
-            return p
-        }
-        // Middle ellipsis for long paths (more readable than crude prefix/suffix in flat row)
-        let head = p.prefix(20)
-        let tail = p.suffix(8)
-        return String(head) + "…" + String(tail)
-    }
-
-    /// Primary engine for display (prefers the singular `engine` field, falls back to first of `engines`).
-    var primaryEngine: String? {
-        if let e = engine, !e.isEmpty { return e }
-        return engines?.first
-    }
-
-    /// Compact engine attribution string for the meta row, e.g. "google", "google +2", or nil.
-    /// Uses the multi-engine array when present (common with SearXNG aggregation).
-    var enginesDisplay: String? {
-        let list = (engines?.isEmpty == false ? engines : (engine.map { [$0] })) ?? []
-        let cleaned = list.compactMap { $0.isEmpty ? nil : $0 }
-        guard !cleaned.isEmpty else { return nil }
-        if cleaned.count == 1 {
-            return cleaned[0]
-        }
-        return "\(cleaned[0]) +\(cleaned.count - 1)"
-    }
-
-    /// Best-effort human presentation of publishedDate for news/articles.
-    /// Tries common formats; always falls back to the raw (trimmed) string so we never lose info or crash.
-    func formattedPublishedDate() -> String? {
-        guard let raw = publishedDate?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
-
-        // Fast path: already looks like a nice short human string from the engine
-        if raw.count <= 24 && !raw.contains("T") && !raw.contains(":") {
-            return raw
-        }
-
-        // Try ISO8601 / RFC3339 style
-        if let date = Self.isoDateFormatter.date(from: raw) {
-            return Self.shortDateFormatter.string(from: date)
-        }
-
-        // Fallback: common yyyy-MM-dd or yyyy/MM/dd
-        if let date = Self.ymdDateFormatter.date(from: raw) {
-            return Self.shortDateFormatter.string(from: date)
-        }
-        if let date = Self.ymdSlashDateFormatter.date(from: raw) {
-            return Self.shortDateFormatter.string(from: date)
-        }
-
-        // Last resort: return the cleaned raw so the UI still shows *something* useful
-        return raw
-    }
-
-    private static let shortDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .none
-        return f
-    }()
-
-    private static let isoDateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
-
-    private static let ymdDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-
-    private static let ymdSlashDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy/MM/dd"
-        return f
-    }()
-
-    // MARK: Media aspect (for Google-like natural proportion grids, not forced squares)
-    /// Returns the best-known aspect ratio (width/height) for this result's thumbnail.
-    /// Prefers explicit numeric width/height (or thumb_* variants), then parses the `resolution`
-    /// string (supports "1920x1080", "1920 x 1080", "1920×1080"). Falls back to nil.
-    /// Callers (MediaGridItem) use a category-appropriate default when this is nil.
-    var thumbnailAspectRatio: CGFloat? {
-        // Explicit dimensions first (some engines / result types surface these)
-        if let w = width ?? thumb_width, let h = height ?? thumb_height, h > 0 {
-            return CGFloat(w) / CGFloat(h)
-        }
-        guard let raw = resolution?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
-
-        // Normalize separators
-        let cleaned = raw.replacingOccurrences(of: " ", with: "")
-                           .replacingOccurrences(of: "×", with: "x")
-                           .replacingOccurrences(of: "X", with: "x")
-                           .lowercased()
-        let parts = cleaned.split(separator: "x")
-        guard parts.count == 2,
-              let w = Double(parts[0]),
-              let h = Double(parts[1]),
-              h > 0 else { return nil }
-        return CGFloat(w / h)
-    }
-}
-
-/// Client-side deduplication by canonical URL (preserves first-seen order).
-/// Replicates the exact pattern used in SearchMediaGrid so text results and media stay consistent.
-/// Called from the view layer (or optionally BrowserState) before rendering the flat list.
-extension SearXNGResult {
-    static func deduplicated(_ results: [SearXNGResult]) -> [SearXNGResult] {
-        var seen = Set<String>()
-        return results.filter { seen.insert($0.url).inserted }
-    }
-}
-
-struct SearXNGResponse: Decodable {
-    let query: String?
-    let results: [SearXNGResult]?
 }

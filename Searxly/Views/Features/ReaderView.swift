@@ -20,8 +20,9 @@ struct ReaderView: View {
     @AppStorage("reduceLiquidGlass") private var reduceLiquidGlass = false
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var fontSize: CGFloat = 17
-    @State private var useSerif = false
+    // Reading preferences persist across sessions (a reader you re-tune on every open isn't one).
+    @AppStorage("Reader.fontSize") private var fontSize: Double = 17
+    @AppStorage("Reader.useSerif") private var useSerif = false
 
     // In-reader AI summary (Siri-style), produced from the cleaned reader content.
     @State private var summary: String = ""
@@ -70,24 +71,28 @@ struct ReaderView: View {
                     .foregroundStyle(.secondary)
                     .help(useSerif ? "Switch to sans-serif" : "Switch to serif")
 
-                    Divider().frame(height: 16)
+                    // AI affordances exist only while the AI program ships (release kill switch —
+                    // see AIFeatures). With it off, Reader is a pure on-device reading surface.
+                    if AIFeatures.programEnabled {
+                        Divider().frame(height: 16)
 
-                    Button(action: toggleSummary) {
-                        Label("Summarize", systemImage: "sparkles")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .help("Summarize this article with Searxly AI")
-
-                    if let askAI = onAskAI {
-                        Button(action: askAI) {
-                            Label("Ask AI", systemImage: "bubble.left.and.bubble.right")
-                                .font(.system(size: 12, weight: .medium))
+                        Button(action: toggleSummary) {
+                            Label("Summarize", systemImage: "sparkles")
+                                .font(.system(size: 12, weight: .semibold))
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                        .help("Open Searxly AI chat — ask questions about this page")
+                        .help("Summarize this article with Searxly AI")
+
+                        if let askAI = onAskAI {
+                            Button(action: askAI) {
+                                Label("Ask AI", systemImage: "bubble.left.and.bubble.right")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Open Searxly AI chat — ask questions about this page")
+                        }
                     }
 
                     Divider().frame(height: 16)
@@ -105,7 +110,7 @@ struct ReaderView: View {
             ReaderWebView(
                 html: html,
                 title: title,
-                fontSize: fontSize,
+                fontSize: CGFloat(fontSize),
                 useSerif: useSerif,
                 colorScheme: colorScheme
             )
@@ -230,8 +235,8 @@ struct ReaderView: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous).fill(WalletTheme.canvasRaised)
             }
         }
-        .glassEffect(reduceLiquidGlass ? .clear : .regular,
-                     in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .searxlyGlass(reduceLiquidGlass ? .clear : .regular,
+                      in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(WalletTheme.hairline, lineWidth: 0.7)
@@ -326,11 +331,32 @@ private struct ReaderWebView: NSViewRepresentable {
     let colorScheme: ColorScheme
 
     func makeCoordinator() -> Coordinator { Coordinator() }
-    final class Coordinator { var lastSignature: String = "" }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var lastSignature: String = ""
+
+        /// Reader renders UNTRUSTED page HTML as a static document. Link clicks leave the reader and
+        /// open as a normal browser tab (same `.openExternalURL` route as links from other apps) —
+        /// the reader webview itself never navigates anywhere.
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url {
+                decisionHandler(.cancel)
+                NotificationCenter.default.post(name: .openExternalURL, object: url)
+                return
+            }
+            decisionHandler(.allow)
+        }
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
+        // Static article HTML only: no scripts run (the extracted content is untrusted), and nothing
+        // the reader loads (remote images) touches the browsing profile's storage.
+        cfg.defaultWebpagePreferences.allowsContentJavaScript = false
+        cfg.websiteDataStore = .nonPersistent()
         let wv = WKWebView(frame: .zero, configuration: cfg)
+        wv.navigationDelegate = context.coordinator
         // Load the article immediately so it's visible the moment Reader opens.
         loadIfNeeded(wv, context: context)
         return wv
@@ -352,9 +378,11 @@ private struct ReaderWebView: NSViewRepresentable {
 
     private func buildHTML() -> String {
         let isDark = colorScheme == .dark
-        let bg      = isDark ? "#1c1c1e" : "#ffffff"
+        // Monochrome, matching the app chrome (BrowserMenuTheme / WalletTheme): near-black canvas in
+        // dark, white in light. Links are INK + underline — Searxly never decorates with color.
+        let bg      = isDark ? "#0b0b0d" : "#ffffff"
         let fg      = isDark ? "#f2f2f7" : "#1d1d1f"
-        let link    = isDark ? "#0a84ff" : "#0071e3"
+        let link    = fg
         let subtle  = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"
         let border  = isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)"
         let font    = useSerif
@@ -380,7 +408,8 @@ private struct ReaderWebView: NSViewRepresentable {
         h3 { font-size: 1.15em; margin: 1.5em 0 0.4em; }
         h4, h5, h6 { margin: 1.2em 0 0.35em; }
         p { margin: 0.9em 0; }
-        a { color: \(link); text-decoration: underline; }
+        a { color: \(link); text-decoration: underline; text-underline-offset: 3px; opacity: 0.92; }
+        a:hover { opacity: 1; }
         img { max-width: 100%; height: auto; border-radius: 8px; margin: 14px 0; display: block; }
         /* Reader shows text, not chrome: never render icons/controls/embeds (prevents giant share-icon blobs). */
         svg, button, input, select, textarea, form, iframe, video, audio, object, embed { display: none !important; }

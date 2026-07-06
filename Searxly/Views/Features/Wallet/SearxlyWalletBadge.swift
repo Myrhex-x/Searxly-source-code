@@ -35,7 +35,7 @@ struct SearxlyWalletBadge: View {
                 .overlay(shape.strokeBorder(WalletTheme.hairlineStrong, lineWidth: 0.8))
                 .frame(width: size, height: size)
 
-            WalletBillfoldMark(color: .white)
+            WalletBillfoldMark(color: WalletTheme.textPrimary)
                 .frame(width: size * 0.58, height: size * 0.58)
         }
     }

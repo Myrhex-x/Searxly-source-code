@@ -63,7 +63,7 @@ struct AddTokenSheet: View {
         }
         .frame(width: 420, height: 470)
         .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
+
         .task(id: address) { await lookup() }
         .onAppear { focused = true; directory.ensureLoaded(chainId: wallet.activeChain.id) }
     }
@@ -180,7 +180,7 @@ struct AddTokenSheet: View {
                 }
                 Spacer()
                 Button(addLabel) { add() }
-                    .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black).controlSize(.regular)
+                    .buttonStyle(.borderedProminent).tint(WalletTheme.ink).foregroundStyle(WalletTheme.onInk).controlSize(.regular)
                     .disabled(!canAdd)
             } else {
                 Spacer()

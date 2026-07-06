@@ -20,6 +20,7 @@ extension BrowserState {
 
         history = data.history
         bookmarks = data.bookmarks
+        customTabCategories = data.customTabCategories
 
         // Phase 0: aiPreferences now lives in AppData (encrypted when user has encryption on).
         // The LocalIntelligenceManager currently seeds from UserDefaults for the master flag during scaffolding;
@@ -107,6 +108,7 @@ extension BrowserState {
         data.searxInstances = searxInstances
         data.history = history
         data.bookmarks = bookmarks
+        data.customTabCategories = customTabCategories
         data.currentInstanceID = currentInstanceID.uuidString
         Persistence.save(data)
     }
@@ -119,6 +121,7 @@ extension BrowserState {
         data.searxInstances = searxInstances
         data.history = history
         data.bookmarks = bookmarks
+        data.customTabCategories = customTabCategories
         data.currentInstanceID = currentInstanceID.uuidString
         Persistence.save(data)
     }
@@ -394,21 +397,30 @@ extension BrowserState {
             }
         }
     }
-    func ensureAndSelectPasswordsVaultTab() {
-        if let existing = tabs.first(where: { $0.kind == .passwords }) {
+    /// Opens (or re-selects) a single full-page utility tab of the given non-web kind.
+    /// One tab per kind: re-selects the existing one instead of duplicating it.
+    func ensureAndSelectUtilityTab(_ kind: TabKind) {
+        guard kind.isUtility else { return }
+
+        if let existing = tabs.first(where: { $0.kind == kind }) {
             selectedTabID = existing.id
             showingWebContent = false
             return
         }
 
-        let vaultTab = BrowserTab(space: .personal, kind: .passwords)
-        tabs.append(vaultTab)
-        selectedTabID = vaultTab.id
+        let tab = BrowserTab(space: .personal, kind: kind)
+        tabs.append(tab)
+        selectedTabID = tab.id
         showingWebContent = false
-        // The vault tab does not participate in hibernation or auto-cleanup (enforced by kind checks elsewhere).
+        saveCurrentSession()
+        // Utility tabs never hibernate or auto-cleanup (enforced by `kind == .web` guards elsewhere).
         #if DEBUG
-        Log.web.info("[Passwords] Created and selected in-app password vault tab.")
+        Log.web.info("[Utilities] Created and selected \(kind.rawValue) tab.")
         #endif
+    }
+
+    func ensureAndSelectPasswordsVaultTab() {
+        ensureAndSelectUtilityTab(.passwords)
     }
     // Tab management (sidebar actions call these)
     func newTab() {
@@ -419,6 +431,32 @@ extension BrowserState {
         searchText = ""
         clearNativeSearch()
         saveCurrentSession()   // Persist the new blank tab immediately for reliable session state across launches
+    }
+
+    /// Opens a URL that arrived from outside the app — e.g. a link clicked in Mail/Slack/Messages when
+    /// Searxly is the default browser (delivered via SearxlyApp's `.onOpenURL`). Opens in a fresh
+    /// foreground tab. .onion links route to their own Tor tab via loadInWebView, so we don't pre-spawn
+    /// an empty standard tab for them.
+    func openExternalURL(_ url: URL) {
+        if url.isOnionService {
+            loadInWebView(url)
+        } else {
+            newTab()
+            loadInWebView(url)
+        }
+    }
+
+    /// Opens a URL in a NEW BACKGROUND tab without leaving the current page (Safari ⌘-click behavior).
+    /// The new tab loads itself via its own webView; selection is intentionally left unchanged.
+    func openURLInBackgroundTab(_ url: URL) {
+        let tab = BrowserTab(initialURL: url, kind: .web)
+        // Insert after the current tab, like Safari, rather than at the very end.
+        if let idx = tabs.firstIndex(where: { $0.id == selectedTabID }) {
+            tabs.insert(tab, at: idx + 1)
+        } else {
+            tabs.append(tab)
+        }
+        saveCurrentSession()
     }
 
     func newPrivateTab() {
@@ -477,6 +515,28 @@ extension BrowserState {
         }
     }
 
+    /// Executes the full panic wipe after the user confirms (⌘⌥⇧⌫ → confirmation alert).
+    /// Resets every piece of in-memory UI state that could re-persist or still display the old
+    /// session, then hands off to PrivacyManager for the persisted-data / web-data / key wipe.
+    func performPanicWipe() {
+        // Pause media while the webviews are still alive, then drop every tab for one fresh tab.
+        for tab in tabs where tab.kind == .web {
+            tab.pauseAllMediaForClose()
+        }
+        tabs = [BrowserTab(kind: .web)]
+        selectedTabID = tabs[0].id
+        showingWebContent = false
+        recentlyClosedSnapshots = []
+        customTabCategories = []
+        stopTorIfNoOnionTabsRemain()
+
+        // In-memory caches (search results, history, bookmarks, suggestions).
+        panicWipeRequested()
+
+        // Persisted data, password vault, web storage, encryption key, local SearXNG stop.
+        PrivacyManager.shared.panicWipe()
+    }
+
     /// Reopens the most recently closed tab. No-op if the history is empty.
     func reopenLastClosedTab() {
         guard let snapshot = recentlyClosedSnapshots.first else { return }
@@ -498,6 +558,7 @@ extension BrowserState {
             space: tab.space,
             kind: .web
         )
+        newTab.categoryID = tab.categoryID   // the duplicate stays in the same sidebar category
         if let idx = tabs.firstIndex(where: { $0.id == tab.id }) {
             tabs.insert(newTab, at: idx + 1)
         } else {
@@ -518,6 +579,75 @@ extension BrowserState {
         tabs.insert(moved, at: insertIndex)
     }
 
+    // MARK: - Custom sidebar categories
+
+    /// Creates a new custom category (capped at `maxCustomCategories`). Trimmed + length-limited name.
+    @discardableResult
+    func addCategory(named name: String) -> TabCategory? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, customTabCategories.count < Self.maxCustomCategories else { return nil }
+        let category = TabCategory(name: String(trimmed.prefix(24)))
+        customTabCategories.append(category)
+        saveAllData()
+        return category
+    }
+
+    /// Renames an existing category. No-op if the name is blank or the category is unknown.
+    func renameCategory(_ category: TabCategory, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idx = customTabCategories.firstIndex(where: { $0.id == category.id }) else { return }
+        customTabCategories[idx].name = String(trimmed.prefix(24))
+        saveAllData()
+    }
+
+    /// Deletes a category and returns any tabs assigned to it back to the default "TABS" group.
+    func deleteCategory(_ category: TabCategory) {
+        customTabCategories.removeAll { $0.id == category.id }
+        for tab in tabs where tab.categoryID == category.id {
+            tab.categoryID = nil
+        }
+        saveAllData()
+        saveCurrentSession()
+    }
+
+    /// Assigns a tab to a category (nil = default "TABS"), appending it to the end of that group's
+    /// run in the `tabs` array. Used by the right-click "Move to Category" menu and by dropping a tab
+    /// onto a category header.
+    func moveTab(_ tab: BrowserTab, toCategory categoryID: UUID?) {
+        guard tab.kind == .web, tab.privacyMode != .onion else { return }
+        tab.categoryID = categoryID
+        guard let from = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        let moved = tabs.remove(at: from)
+        let insertAt: Int
+        if let lastInGroup = tabs.lastIndex(where: { isCategorizable($0) && $0.categoryID == categoryID }) {
+            insertAt = lastInGroup + 1
+        } else {
+            insertAt = tabs.count
+        }
+        tabs.insert(moved, at: min(max(0, insertAt), tabs.count))
+        saveCurrentSession()
+    }
+
+    /// Reorders `tab` to sit immediately before `target`, adopting the target's category. Used when a
+    /// tab is dropped directly onto another tab row in the sidebar.
+    func moveTab(_ tab: BrowserTab, before target: BrowserTab) {
+        guard tab.id != target.id else { return }
+        // Keep pinned and unpinned worlds separate — dropping across that boundary is a no-op.
+        guard tab.isPinned == target.isPinned else { return }
+        if !tab.isPinned { tab.categoryID = target.categoryID }
+        guard let from = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        let moved = tabs.remove(at: from)
+        let insertAt = tabs.firstIndex(where: { $0.id == target.id }) ?? tabs.count
+        tabs.insert(moved, at: min(max(0, insertAt), tabs.count))
+        saveCurrentSession()
+    }
+
+    /// A tab eligible for custom categories: a normal (non-onion) web tab.
+    private func isCategorizable(_ tab: BrowserTab) -> Bool {
+        tab.kind == .web && tab.privacyMode != .onion
+    }
+
     func forgetDomainInSidebar(_ host: String) {
         PrivacyManager.shared.forgetDomain(host)
     }
@@ -529,12 +659,20 @@ extension BrowserState {
         for t in tabs where t.kind == .web { t.pauseAllMediaForClose() }
 
         // Preferred modern path (supports special tabs like passwords vault via kind, spaces, privacy, etc.)
-        let snapshots = Persistence.loadTabSnapshots()
+        var snapshots = Persistence.loadTabSnapshots()
+        // Extensions program is disabled for release — drop any Extensions tab persisted by an
+        // earlier build so it can't resurface the hidden marketplace.
+        if !ExtensionFeatures.programEnabled {
+            snapshots.removeAll { $0.kind == .extensions }
+        }
         if !snapshots.isEmpty {
-            tabs = snapshots.map { BrowserTab(from: $0) }
+            // Lazy restore: every web tab is created as a hibernated stub (no WKWebView, no page load).
+            // Only the foreground tab is woken below, so cold start spins up exactly one WebContent
+            // process and one network load instead of one per restored tab. Background stubs wake on
+            // first selection via the onChange(of: selectedTabID) → didSelectTab → wakeUp path.
+            tabs = snapshots.map { BrowserTab(from: $0, hibernated: true) }
             if tabs.isEmpty { tabs = [BrowserTab(kind: .web)] }
-            selectedTabID = tabs.first?.id
-            showingWebContent = tabs.first?.currentURL != nil
+            wakeForegroundTabAfterRestore(tabs.first)
             return
         }
 
@@ -546,11 +684,27 @@ extension BrowserState {
         guard let urls = UserDefaults.standard.stringArray(forKey: sessionKey), !urls.isEmpty else { return }
         tabs = urls.compactMap { urlString in
             guard let url = URL(string: urlString) else { return nil }
-            return BrowserTab(initialURL: url)
+            return BrowserTab(initialURL: url, hibernated: true)
         }
         if tabs.isEmpty { tabs = [BrowserTab(kind: .web)] }
-        selectedTabID = tabs.first?.id
-        showingWebContent = tabs.first?.currentURL != nil
+        wakeForegroundTabAfterRestore(tabs.first)
+    }
+
+    /// Selects the foreground tab after a lazy restore and wakes it immediately, so `activeWebView`
+    /// resolves to a real WKWebView (not the fallback) and the page begins loading right away.
+    /// The remaining tabs stay hibernated stubs until the user selects them.
+    private func wakeForegroundTabAfterRestore(_ foreground: BrowserTab?) {
+        selectedTabID = foreground?.id
+
+        if let foreground, foreground.kind == .web {
+            // wakeUp() is a no-op if the tab isn't a stub; safe to call unconditionally for web tabs.
+            foreground.wakeUp()
+            TabHibernationManager.shared.didWakeTab(foreground)
+        }
+
+        // Canonical sync (drives showingWebContent / address bar off the selected tab's currentURL).
+        syncWebStateFromSelectedTab()
+        TabHibernationManager.shared.currentStats(among: tabs)
     }
 
     func saveCurrentSession() {

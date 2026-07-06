@@ -48,14 +48,14 @@ final class EncryptionTests: XCTestCase {
         XCTAssertEqual(recovered, plaintext)
     }
 
-    func testRoundTripWithEmptyPayload() throws {
+    func testEmptyPayloadIsRejectedByDesign() throws {
+        // The envelope intentionally requires ≥1 byte of ciphertext (see DataEncryptor.decrypt:
+        // "Minimum … 1 ciphertext = 34 bytes"). Empty plaintext is therefore not a supported payload —
+        // the app only ever encrypts non-empty JSON. This documents the real contract.
         let key = DataEncryptor.generateKey()
-        let plaintext = Data()
-
-        let ciphertext = try DataEncryptor.encrypt(plaintext, using: key)
-        let recovered = try DataEncryptor.decrypt(ciphertext, using: key)
-
-        XCTAssertEqual(recovered, plaintext)
+        let ciphertext = try DataEncryptor.encrypt(Data(), using: key)
+        XCTAssertThrowsError(try DataEncryptor.decrypt(ciphertext, using: key),
+                             "Decrypting an empty-plaintext envelope must be rejected by design")
     }
 
     // MARK: - Ciphertext structure

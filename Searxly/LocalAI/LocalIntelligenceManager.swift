@@ -91,7 +91,7 @@ final class LocalIntelligenceManager {
 
     /// Cached on-device provider borrowed for cheap auxiliary jobs (see `auxiliaryProvider()`).
     /// Kept separate from `currentProvider` so it survives chat-backend switches.
-    private var auxAppleProvider: AppleIntelligenceProvider?
+    private var auxAppleProvider: (any IntelligenceProvider)?
 
     /// True only when the on-device Apple model genuinely probed as available.
     /// `availability` retains the real Apple probe result even when the cloud / Ollama gate
@@ -111,7 +111,9 @@ final class LocalIntelligenceManager {
             return currentIntelligenceProvider
         }
         // Active chat is the paid cloud. Borrow the on-device Apple model if it's truly available.
-        if appleModelAvailable {
+        // `appleModelAvailable` can only be true on macOS 26+ (the probe returns .deviceNotSupported
+        // below that), but the static #available guard is still required to construct the 26-only type.
+        if appleModelAvailable, #available(macOS 26.0, *) {
             if auxAppleProvider == nil { auxAppleProvider = AppleIntelligenceProvider() }
             return auxAppleProvider
         }
@@ -158,7 +160,9 @@ final class LocalIntelligenceManager {
     // MARK: - Public API — Master Control (used by Settings + everywhere)
 
     var isEnabled: Bool {
-        get { preferences.masterEnabled }
+        // Release kill switch first: while the AI program is off, the manager reports itself
+        // disabled everywhere regardless of the user's saved preference (which is preserved).
+        get { AIFeatures.programEnabled && preferences.masterEnabled }
         set {
             guard newValue != preferences.masterEnabled else { return }
             preferences.masterEnabled = newValue
@@ -182,7 +186,7 @@ final class LocalIntelligenceManager {
 
     /// Call this on app launch or when user returns to Settings to get fresh status.
     func refreshAvailability() async {
-        if !preferences.masterEnabled {
+        if !AIFeatures.programEnabled || !preferences.masterEnabled {
             status = .disabled
             return
         }
@@ -193,7 +197,14 @@ final class LocalIntelligenceManager {
         // Probe the primary (Apple) first. If the user has explicitly enabled the experimental
         // Ollama fallback gate, we still report Apple availability but will use the fallback
         // provider for actual work (see currentIntelligenceProvider getter).
-        let avail = await AppleIntelligenceProvider.probeAvailability()
+        let avail: IntelligenceAvailability
+        if #available(macOS 26.0, *) {
+            avail = await AppleIntelligenceProvider.probeAvailability()
+        } else {
+            // On-device Apple Intelligence (FoundationModels) requires macOS 26+. Below that the
+            // on-device path simply reports unavailable; the cloud / Ollama backends remain selectable.
+            avail = .deviceNotSupported
+        }
         availability = avail
 
         if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
@@ -539,8 +550,17 @@ final class LocalIntelligenceManager {
                 currentProvider = OllamaProvider(modelName: preferences.ollamaModelName, baseURL: url)
                 logAction(.modelLoad, summary: "Ollama provider initialized (via chat model selector or prefs)", usedModel: false)
             case .apple:
-                currentProvider = AppleIntelligenceProvider()
-                logAction(.modelLoad, summary: "Apple Intelligence provider initialized", usedModel: false)
+                if #available(macOS 26.0, *) {
+                    currentProvider = AppleIntelligenceProvider()
+                    logAction(.modelLoad, summary: "Apple Intelligence provider initialized", usedModel: false)
+                } else {
+                    // FoundationModels is macOS 26+. Use the inert stand-in so the getter never
+                    // force-unwraps nil; on-device AI is reported unavailable (.deviceNotSupported) and
+                    // the UI disables it. No network is touched. Users on older macOS can still pick a
+                    // cloud or Ollama backend, which routes through the cases above.
+                    currentProvider = UnavailableIntelligenceProvider()
+                    logAction(.modelLoad, summary: "On-device AI unavailable (requires macOS 26+)", usedModel: false)
+                }
             }
         }
     }
@@ -870,7 +890,7 @@ extension LocalIntelligenceManager {
     }
 
     var canUseFeatures: Bool {
-        guard preferences.masterEnabled else { return false }
+        guard AIFeatures.programEnabled, preferences.masterEnabled else { return false }
         if status == .ready || status == .generating { return true }
         // User has explicitly enabled the experimental local LLM fallback (Ollama etc.).
         // Treat the Local AI features as usable for the UI (chat input, synthesis button, etc.)
@@ -882,6 +902,24 @@ extension LocalIntelligenceManager {
 
     var toolsEnabled: Bool {
         preferences.masterEnabled && preferences.toolsEnabled
+    }
+
+    /// Whether an individual tool (by id from AIToolCatalog / CloudTool.name) is switched on.
+    /// This is the per-tool layer; the master `toolsEnabled` switch still gates all tool use.
+    func isToolEnabled(_ id: String) -> Bool {
+        !preferences.disabledToolIDs.contains(id)
+    }
+
+    /// Turn a single tool on/off and persist immediately (synchronous persist — never via a deferred Task,
+    /// matching the toggle-persistence guidance so a quick quit can't lose the change).
+    func setToolEnabled(_ id: String, _ enabled: Bool) {
+        if enabled {
+            preferences.disabledToolIDs.remove(id)
+        } else {
+            preferences.disabledToolIDs.insert(id)
+        }
+        persistPreferences()
+        logAction(.settingsChange, summary: "Tool \(enabled ? "enabled" : "disabled"): \(id)")
     }
 
     /// Called when the user toggles the experimental fallback pref so that chat/synthesis/etc.

@@ -20,7 +20,7 @@ enum IntelligenceAvailabilityChecker {
     /// Callers (manager) should cache the result and re-probe on demand or after OS notifications.
     static func currentAvailability() -> IntelligenceAvailability {
         #if canImport(FoundationModels)
-        if #available(macOS 15.4, *) {
+        if #available(macOS 26.0, *) {
             // The real check lives in the manager so we can observe .modelNotReady etc.
             // Here we just confirm the framework thinks the device class is eligible.
             // Detailed .availability is retrieved via SystemLanguageModel in the manager.
@@ -41,7 +41,7 @@ enum IntelligenceAvailabilityChecker {
         case .appleIntelligenceNotEnabled:
             return "Apple Intelligence is not enabled on this Mac. Go to System Settings → Apple Intelligence & Siri to enable it, then restart Searxly."
         case .deviceNotSupported:
-            return "On-device AI requires Apple Silicon and macOS 15.4 or later with Apple Intelligence support."
+            return "On-device AI requires Apple Silicon and macOS 26 or later with Apple Intelligence support. On older macOS you can still use a cloud or Ollama backend in Settings."
         case .modelNotReady:
             return "Apple Intelligence models are still being prepared by macOS. This usually finishes in a few minutes on first use."
         case .unavailable(let reason):

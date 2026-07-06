@@ -9,28 +9,53 @@ import Foundation
 
 enum KnowledgePanelService {
 
-    static func resolve(query: String) async -> KnowledgePanelContent? {
+    static func resolve(query: String, imageInstanceURL: String? = nil) async -> KnowledgePanelContent? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        guard KnowledgeQueryDetector.classify(trimmed) == .entity else { return nil }
+        // Accept both entity and single-word ("dictionary") candidates: there is no separate
+        // dictionary-card UI, and the relevance gate ensures a card only renders when Grokipedia
+        // actually has a matching article. This is what lets single-word entities — "bitcoin",
+        // "tokyo", "mozart" — get a card instead of being silently dropped.
+        guard KnowledgeQueryDetector.classify(trimmed) != .none else { return nil }
 
+        // Serve from the per-query cache when fresh (instant re-show; avoids re-resolving misses).
+        if let cached = cachedResult(for: trimmed) {
+            return cached.content
+        }
+
+        let (result, cacheable) = await resolveUncached(query: trimmed, imageInstanceURL: imageInstanceURL)
+        // Positive results always cache. A nil is cached (negative TTL) ONLY when every article lookup
+        // failed deterministically — a transient failure (network blip, Grokipedia rate limit) must not
+        // pin "no card" for 5 minutes; the next search just resolves again.
+        if cacheable { storeResult(result, for: trimmed) }
+        return result
+    }
+
+    private static func resolveUncached(query trimmed: String, imageInstanceURL: String?) async -> (content: KnowledgePanelContent?, cacheable: Bool) {
         let entity = bestEntity(for: trimmed)
         let subject = displaySubject(from: trimmed, entity: entity)
-        guard let (slug, snippet) = await resolveArticle(for: trimmed, entity: entity) else {
-            return nil
+        let resolution = await resolveArticle(for: trimmed, entity: entity)
+        guard let (slug, snippet) = resolution.hit else {
+            return (nil, !resolution.sawTransientFailure)
         }
 
         let paragraph = snippet.firstParagraph.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard paragraph.count >= 48 else { return nil }
+        guard paragraph.count >= 48 else { return (nil, true) }   // deterministic content shape
 
         var entityKind = entity?.entityKind
-        if entityKind == nil, looksLikePersonName(subject) {
+        if entityKind == nil, articleDescribesPerson(facts: snippet.facts) {
             entityKind = .person
         }
 
         let officialSite = officialSiteInfo(for: entity)
         let title = snippet.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayTitle = title.isEmpty ? subject : title
+
+        let (bannerCandidates, bannerReferer) = await resolveBannerImage(
+            grokipediaImage: snippet.imageURL,
+            subject: displayTitle,
+            instanceURL: imageInstanceURL
+        )
 
         let panel = EntityPanelData(
             title: displayTitle,
@@ -39,26 +64,141 @@ enum KnowledgePanelService {
             officialSiteURL: officialSite?.url,
             officialSiteLabel: officialSite?.label,
             grokipediaURL: GrokipediaSlugCatalog.pageURL(for: slug),
-            grokipediaBannerURL: snippet.imageURL,
+            bannerImageCandidates: bannerCandidates,
+            bannerImageReferer: bannerReferer,
             facts: Array(snippet.facts.prefix(12))
         )
 
-        return KnowledgePanelContent(query: trimmed, kind: .entity(panel))
+        return (KnowledgePanelContent(query: trimmed, kind: .entity(panel)), true)
+    }
+
+    /// Picks the banner image. Grokipedia's own article image wins; when it has none, we fall back to the
+    /// first image from the user's SearXNG instance (private, and reuses the instance's image_proxy for
+    /// hotlink-protected sources). Returns ordered load candidates plus the referer to send.
+    private static func resolveBannerImage(
+        grokipediaImage: URL?,
+        subject: String,
+        instanceURL: String?
+    ) async -> (candidates: [URL], referer: String?) {
+        if let grokipediaImage {
+            return ([grokipediaImage], "https://grokipedia.com")
+        }
+        guard let instanceURL,
+              let result = await SearXNGImageResolver.firstImageResult(for: subject, instanceURL: instanceURL)
+        else {
+            return ([], nil)
+        }
+        let candidates = SearchMediaURLResolver.candidateURLs(
+            for: result, proxyBase: instanceURL, mode: .gridThumbnail
+        )
+        return (candidates, result.url)
+    }
+
+    // MARK: - Result cache
+
+    private struct CachedPanel {
+        let content: KnowledgePanelContent?
+        let storedAt: Date
+    }
+
+    private static var resultCache: [String: CachedPanel] = [:]
+    private static let resultCacheLock = NSLock()
+    /// Cards are stable for hours; misses expire quickly so a transient outage self-heals on retry.
+    private static let positiveTTL: TimeInterval = 2 * 60 * 60
+    private static let negativeTTL: TimeInterval = 5 * 60
+    private static let maxResultCacheEntries = 128
+
+    private static func cacheKey(_ query: String) -> String {
+        query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func cachedResult(for query: String) -> CachedPanel? {
+        let key = cacheKey(query)
+        resultCacheLock.lock()
+        defer { resultCacheLock.unlock() }
+        guard let entry = resultCache[key] else { return nil }
+        let ttl = entry.content == nil ? negativeTTL : positiveTTL
+        if Date().timeIntervalSince(entry.storedAt) > ttl {
+            resultCache.removeValue(forKey: key)
+            return nil
+        }
+        return entry
+    }
+
+    private static func storeResult(_ content: KnowledgePanelContent?, for query: String) {
+        resultCacheLock.lock()
+        defer { resultCacheLock.unlock() }
+        if resultCache.count >= maxResultCacheEntries,
+           let oldest = resultCache.min(by: { $0.value.storedAt < $1.value.storedAt })?.key {
+            resultCache.removeValue(forKey: oldest)
+        }
+        resultCache[cacheKey(query)] = CachedPanel(content: content, storedAt: Date())
     }
 
     // MARK: - Entity matching
 
-    private static func bestEntity(for query: String) -> OfficialEntityDatabase.OfficialEntity? {
-        let subject = strippedSubject(from: query)
-        if let entity = OfficialEntityDatabase.entity(for: subject) {
-            return entity
+    /// Resolves the query to a curated entity, but ONLY via a strong (exact canonical/alias) match.
+    /// The matching itself lives in the shared `EntityQueryMatcher` (also used by the SERP ranker on
+    /// both platforms); see the rationale there for why fuzzy matching is deliberately avoided.
+    static func bestEntity(for query: String) -> OfficialEntityDatabase.OfficialEntity? {
+        EntityQueryMatcher.bestEntity(for: query)
+    }
+
+    // MARK: - Relevance gate
+
+    /// Lowercased, punctuation-free, noise-word-free tokens. Used for both query subjects and article
+    /// titles/slugs so they can be compared on equal footing.
+    static func significantTokens(_ string: String) -> [String] {
+        EntityQueryMatcher.significantTokens(string)
+    }
+
+    /// Whether a fetched article is plausibly *about* the query subject. Applied to inferred /
+    /// Wikipedia-derived slugs (curated matches skip this — e.g. "grok" legitimately resolves to "xAI",
+    /// which shares no token with the query). Conservative by design: a card is far worse when wrong
+    /// than when absent.
+    ///
+    /// Accepts when:
+    ///  - every significant query token appears in the article title/slug (the article covers the
+    ///    whole query, e.g. "tor" ⊆ {tor, project}); or
+    ///  - the de-spaced query equals the de-spaced title or slug (handles concatenated single-word
+    ///    queries like "torproject" == "tor project", "stackoverflow" == "stack overflow").
+    static func isArticleRelevant(subject: String, slug: String, snippet: GrokipediaArticleSnippet) -> Bool {
+        let titleSource = snippet.title.isEmpty
+            ? slug.replacingOccurrences(of: "_", with: " ")
+            : snippet.title
+        let titleTokens = significantTokens(titleSource)
+        let slugTokens = significantTokens(slug.replacingOccurrences(of: "_", with: " "))
+        return subjectMatchesArticle(subject: subject, articleTokenGroups: [titleTokens, slugTokens])
+    }
+
+    /// Cheap pre-fetch relevance check used to skip Wikipedia candidates that can't be about the query
+    /// before paying for a network fetch (the post-fetch `isArticleRelevant` is the authoritative gate).
+    static func isTitleRelevant(subject: String, title: String) -> Bool {
+        subjectMatchesArticle(subject: subject, articleTokenGroups: [significantTokens(title)])
+    }
+
+    /// Core relevance rule shared by the pre- and post-fetch checks. Accepts when every significant query
+    /// token appears in one of the article's token groups AND that group adds at most one extra token
+    /// ("tor" → "Tor Project" ok, "barack obama" → "Barack Obama 2008 Presidential Campaign" NOT — a
+    /// plain-subset rule used to let those wrong sub-topic articles render as the entity's card), or
+    /// when the de-spaced query equals one token group de-spaced ("torproject" == "tor project").
+    private static func subjectMatchesArticle(subject: String, articleTokenGroups: [[String]]) -> Bool {
+        let queryTokens = significantTokens(subject)
+        guard !queryTokens.isEmpty else { return false }
+
+        let querySet = Set(queryTokens)
+        for group in articleTokenGroups where !group.isEmpty {
+            if querySet.isSubset(of: Set(group)) && group.count <= queryTokens.count + 1 {
+                return true
+            }
         }
 
-        if let url = OfficialEntityDatabase.fuzzyMatchURL(for: subject) {
-            return OfficialEntityDatabase.all.first { $0.primaryURL == url }
+        let queryConcat = queryTokens.joined()
+        if !queryConcat.isEmpty, articleTokenGroups.contains(where: { $0.joined() == queryConcat }) {
+            return true
         }
 
-        return nil
+        return false
     }
 
     /// Finds a Grokipedia article for the query by trying slug candidates in order of confidence,
@@ -69,38 +209,96 @@ enum KnowledgePanelService {
     private static func resolveArticle(
         for query: String,
         entity: OfficialEntityDatabase.OfficialEntity?
-    ) async -> (slug: String, snippet: GrokipediaArticleSnippet)? {
+    ) async -> (hit: (slug: String, snippet: GrokipediaArticleSnippet)?, sawTransientFailure: Bool) {
         let subject = strippedSubject(from: query)
         var tried = Set<String>()
+        // Whether ANY fetch failed transiently (network / kill switch / rate-limit blip). The caller
+        // uses this to skip negative-caching: with a transient miss in the mix, "no article" was never
+        // actually established.
+        var sawTransient = false
 
-        func attempt(_ slug: String?) async -> (String, GrokipediaArticleSnippet)? {
+        /// Fetches the slug's article and returns it only when we can trust the match: either the slug
+        /// came from a curated source (`trusted: true`), or the fetched article passes the relevance
+        /// gate against the query subject. This prevents an inferred/Wikipedia slug from rendering an
+        /// article that has nothing to do with what the user typed.
+        func attempt(_ slug: String?, trusted: Bool) async -> (String, GrokipediaArticleSnippet)? {
             guard let slug, !slug.isEmpty, tried.insert(slug).inserted else { return nil }
-            if let snippet = await GrokipediaArticleClient.fetchFirstParagraph(slug: slug) {
-                return (slug, snippet)
+            let snippet: GrokipediaArticleSnippet
+            switch await GrokipediaArticleClient.fetchOutcome(slug: slug) {
+            case .article(let fetched): snippet = fetched
+            case .notFound:             return nil
+            case .transient:            sawTransient = true; return nil
             }
-            return nil
+            guard trusted || isArticleRelevant(subject: subject, slug: slug, snippet: snippet) else {
+                return nil
+            }
+            return (slug, snippet)
         }
 
-        // Phase 1: curated + naive-inferred (fast path for the well-known entities).
-        if let hit = await attempt(GrokipediaSlugCatalog.slug(for: entity)) { return hit }
-        if let hit = await attempt(GrokipediaSlugCatalog.slug(forSubject: subject)) { return hit }
+        // Phase 1a: curated entity slug — `entity` only comes from a strong (exact/alias) match, so trust it.
+        if let hit = await attempt(GrokipediaSlugCatalog.slug(for: entity), trusted: true) { return (hit, sawTransient) }
+
+        // Phase 1b: subject → slug. Trust it only when it's an explicit catalog/alias hit; a naive
+        // Title_Case-inferred slug ("Cool_Ai") is NOT trusted and must pass the relevance gate.
+        let subjectSlug = GrokipediaSlugCatalog.slug(forSubject: subject)
+        let subjectTrusted = GrokipediaSlugCatalog.hasExplicitSlug(for: subject)
+            || OfficialEntityDatabase.entity(for: subject) != nil
+        if let hit = await attempt(subjectSlug, trusted: subjectTrusted) { return (hit, sawTransient) }
 
         // Phase 2: Wikipedia-resolved canonical titles (the long tail, e.g. "torproject").
-        for title in await WikipediaTitleResolver.canonicalTitles(for: subject) {
+        // Always untrusted — opensearch returns loosely-related titles, so the relevance gate decides.
+        // Pre-filter by title relevance first so we never spend a network fetch on an unrelated result.
+        let wikipediaTitles = await WikipediaTitleResolver.canonicalTitles(for: subject)
+        for title in wikipediaTitles {
+            guard isTitleRelevant(subject: subject, title: title) else { continue }
             let slug = title.replacingOccurrences(of: " ", with: "_")
-            if let hit = await attempt(slug) { return hit }
+            if let hit = await attempt(slug, trusted: false) { return (hit, sawTransient) }
         }
 
-        return nil
+        // Phase 3: typo rescue. Wikipedia's opensearch is typo-tolerant — its FIRST suggestion for a
+        // misspelled entity is usually the correction ("elon muskk" → "Elon Musk"), which the token
+        // gate above rightly rejects (the typo'd token matches nothing). Accept that one suggestion
+        // only when the whole title is a near-verbatim match for what was typed — the tiny edit
+        // distance IS the relevance proof, so the fetched article is trusted.
+        if let correction = wikipediaTitles.first, isLikelyTypoCorrection(subject: subject, title: correction) {
+            let slug = correction.replacingOccurrences(of: " ", with: "_")
+            if let hit = await attempt(slug, trusted: true) { return (hit, sawTransient) }
+        }
+
+        return (nil, sawTransient)
+    }
+
+    /// Whether `title` reads as a spelling correction of `subject`: compared over significant tokens
+    /// (case/punctuation-insensitive), within an edit distance small in absolute terms AND relative to
+    /// the query length, so short queries can't "correct" into unrelated words.
+    static func isLikelyTypoCorrection(subject: String, title: String) -> Bool {
+        let a = significantTokens(subject).joined(separator: " ")
+        let b = significantTokens(title).joined(separator: " ")
+        guard !a.isEmpty, !b.isEmpty, a != b else { return false }
+        let distance = editDistance(a, b)
+        return distance <= 2 && distance <= max(1, a.count / 5)
+    }
+
+    /// Plain Levenshtein distance; inputs here are short normalized queries/titles, so O(n·m) is fine.
+    private static func editDistance(_ lhs: String, _ rhs: String) -> Int {
+        let a = Array(lhs), b = Array(rhs)
+        if a.isEmpty { return b.count }
+        if b.isEmpty { return a.count }
+        var previous = Array(0...b.count)
+        var current = [Int](repeating: 0, count: b.count + 1)
+        for i in 1...a.count {
+            current[0] = i
+            for j in 1...b.count {
+                let substitution = previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1)
+                current[j] = min(previous[j] + 1, current[j - 1] + 1, substitution)
+            }
+            swap(&previous, &current)
+        }
+        return previous[b.count]
     }
 
     private static func strippedSubject(from query: String) -> String {
-        var s = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefixes = ["who is ", "who's ", "who was ", "what is ", "what's ", "tell me about "]
-        for p in prefixes where s.hasPrefix(p) {
-            s = String(s.dropFirst(p.count))
-        }
-        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+        EntityQueryMatcher.strippedSubject(from: query)
     }
 
     private static func displaySubject(
@@ -117,19 +315,17 @@ enum KnowledgePanelService {
         }.joined(separator: " ")
     }
 
-    private static func looksLikePersonName(_ subject: String) -> Bool {
-        let tokens = subject
-            .lowercased()
-            .split(separator: " ")
-            .map(String.init)
-            .filter { !$0.isEmpty }
-        guard tokens.count >= 2, tokens.count <= 4 else { return false }
-        let skip = Set(["the", "of", "and", "inc", "corp", "company", "official", "ltd", "llc"])
-        return tokens.allSatisfy { token in
-            !skip.contains(token) &&
-            token.rangeOfCharacter(from: .letters) != nil &&
-            token.allSatisfy { $0.isLetter || $0 == "-" || $0 == "'" }
-        }
+    /// Person labels for biographical infobox fields. Using the *article's* facts (not the query's
+    /// word shape) prevents non-people from being tagged "Person" — e.g. "apple pie" (a dessert) used
+    /// to be labelled a person purely because it was two lowercase words.
+    private static let personFactLabels: Set<String> = [
+        "born", "birth date", "birthplace", "birth place", "date of birth", "place of birth",
+        "died", "death date", "nationality", "occupation", "spouse", "spouses",
+        "children", "education", "alma mater", "known for", "years active", "partner"
+    ]
+
+    static func articleDescribesPerson(facts: [KnowledgeFact]) -> Bool {
+        facts.contains { personFactLabels.contains($0.label.lowercased()) }
     }
 
     private static func officialSiteInfo(

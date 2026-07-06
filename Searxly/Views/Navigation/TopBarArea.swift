@@ -46,7 +46,7 @@ struct TopBarArea: View {
     let currentInstanceDisplay: String
 
     // Feature actions (Reader Mode, Find in Page)
-    var onToggleReaderMode: (() -> Void)? = nil
+    var onSummarizePage: (() -> Void)? = nil
     var onShowFind: (() -> Void)? = nil
     var onOpenLocalAIChat: (() -> Void)? = nil
 
@@ -66,7 +66,7 @@ struct TopBarArea: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(.regularMaterial, in: Capsule())
-                    .glassEffect(glassEnabled ? .regular.interactive() : .clear, in: Capsule())
+                    .searxlyGlass(glassEnabled ? .interactive : .clear, in: Capsule())
 
                     // Rank 2: Live local SearXNG status (next to privacy badge)
                     let searxngManager = LocalSearxngManager.shared
@@ -110,7 +110,7 @@ struct TopBarArea: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(.regularMaterial, in: Capsule())
-                    .glassEffect(glassEnabled ? .regular.interactive() : .clear, in: Capsule())
+                    .searxlyGlass(glassEnabled ? .interactive : .clear, in: Capsule())
                     .help("Current SearXNG instance. Click to change in Settings.")
                 }
 
@@ -129,7 +129,7 @@ struct TopBarArea: View {
                     showingFullHistory: $showingFullHistory,
                     showingDownloads: $showingDownloads,
                     showingKeyboardShortcuts: $showingKeyboardShortcuts,
-                    onToggleReaderMode: onToggleReaderMode,
+                    onSummarizePage: onSummarizePage,
                     onShowFind: onShowFind,
                     onOpenLocalAIChat: onOpenLocalAIChat
                 )

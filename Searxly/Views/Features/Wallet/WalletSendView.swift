@@ -29,6 +29,16 @@ struct WalletSendView: View {
     @State private var contactLabel = ""
     @State private var sendSim: WalletNetwork.SimResult? = nil   // revert dry-run on the confirm sheet
     @State private var simChecking = false
+    /// Drives the confirm sheet's success screen for the send just made (unlike `sentTxHash`,
+    /// which persists as the form's banner across sends).
+    @State private var sheetTxHash: String? = nil
+    /// Live execution narration while broadcasting (stages passed + the one running now).
+    @State private var doneStageLabels: [String] = []
+    @State private var sendStageText = ""
+    /// "0.5 ETH" → "0x1234…abcd", captured at submit time for the success screen.
+    @State private var sentSummary: (amount: String, to: String)? = nil
+    /// nil = confirming; .success/.failed = on-chain outcome; .pending = polling gave up.
+    @State private var sendConfirmStatus: WalletNetwork.ReceiptStatus? = nil
 
     private var selectedToken: WalletToken? {
         wallet.tokens.first { $0.id == selectedTokenID }
@@ -155,9 +165,9 @@ struct WalletSendView: View {
                     Button { ackRisk.toggle() } label: {
                         HStack(spacing: 8) {
                             Image(systemName: ackRisk ? "checkmark.square.fill" : "square")
-                                .font(.system(size: 14)).foregroundStyle(ackRisk ? .white : WalletTheme.textTertiary)
+                                .font(.system(size: 14)).foregroundStyle(ackRisk ? WalletTheme.textPrimary : WalletTheme.textTertiary)
                             Text("I understand — send anyway")
-                                .font(.system(size: 11, weight: .medium)).foregroundStyle(.white)
+                                .font(.system(size: 11, weight: .medium)).foregroundStyle(WalletTheme.textPrimary)
                             Spacer(minLength: 0)
                         }
                     }
@@ -209,11 +219,11 @@ struct WalletSendView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 13))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(WalletTheme.textPrimary)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Transaction broadcast")
                                     .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(WalletTheme.textPrimary)
                                 Text("\(abbreviated(txHash)) · View on \(wallet.activeChain.explorerName)")
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundStyle(WalletTheme.textTertiary)
@@ -241,7 +251,7 @@ struct WalletSendView: View {
                                     TokenIconView(token: token, size: 20)
                                     Text(token.symbol)
                                         .font(.system(size: 12, weight: selectedTokenID == token.id ? .semibold : .regular))
-                                        .foregroundStyle(selectedTokenID == token.id ? .white : WalletTheme.textTertiary)
+                                        .foregroundStyle(selectedTokenID == token.id ? WalletTheme.textPrimary : WalletTheme.textTertiary)
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
@@ -291,7 +301,7 @@ struct WalletSendView: View {
                                 Image(systemName: "person.crop.circle").font(.system(size: 11))
                                 Text("Contacts").font(.system(size: 11, weight: .medium))
                             }
-                            .foregroundStyle(.white)
+                            .foregroundStyle(WalletTheme.textPrimary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -300,7 +310,7 @@ struct WalletSendView: View {
                     TextField("0x… or name.base.eth", text: $toAddress)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(WalletTheme.textPrimary)
                         .accessibilityLabel("Recipient address or name")
                         .onChange(of: toAddress) { _, _ in ackRisk = false; resolveNameIfNeeded() }
                     if resolving { ProgressView().controlSize(.mini).scaleEffect(0.7) }
@@ -347,7 +357,7 @@ struct WalletSendView: View {
                     if let token = selectedToken, token.balance > 0 {
                         Button("Max") { amountText = maxAmount(for: token) }
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(WalletTheme.textPrimary)
                             .buttonStyle(.plain)
                     }
                 }
@@ -355,7 +365,7 @@ struct WalletSendView: View {
                     TextField("0.00", text: $amountText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 15, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(WalletTheme.textPrimary)
                         .accessibilityLabel("Amount to send")
                     Text(selectedToken?.symbol ?? "")
                         .font(.system(size: 12))
@@ -385,10 +395,10 @@ struct WalletSendView: View {
                                 Image(systemName: speed.symbol).font(.system(size: 10))
                                 Text(speed.label).font(.system(size: 11, weight: gasSpeed == speed ? .semibold : .regular))
                             }
-                            .foregroundStyle(gasSpeed == speed ? .black : WalletTheme.textSecondary)
+                            .foregroundStyle(gasSpeed == speed ? WalletTheme.onInk : WalletTheme.textSecondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
-                            .background(gasSpeed == speed ? Color.white : WalletTheme.surfaceField,
+                            .background(gasSpeed == speed ? WalletTheme.ink : WalletTheme.surfaceField,
                                         in: RoundedRectangle(cornerRadius: 8))
                         }
                         .buttonStyle(.plain)
@@ -411,7 +421,10 @@ struct WalletSendView: View {
                 }
 
                 // Send button
-                Button { showConfirm = true } label: {
+                Button {
+                    sheetTxHash = nil; sendError = ""; pin = ""; pinError = false
+                    showConfirm = true
+                } label: {
                     HStack {
                         Spacer()
                         if isSending {
@@ -455,7 +468,7 @@ struct WalletSendView: View {
     private var contactsPicker: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Contacts").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                Text("Contacts").font(.system(size: 15, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 Spacer()
                 WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { showContacts = false }
             }
@@ -470,7 +483,7 @@ struct WalletSendView: View {
                             HStack(spacing: 12) {
                                 AccountAvatar(address: c.address, size: 32)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(c.label).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                                    Text(c.label).font(.system(size: 13, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                                     Text(c.shortAddress).font(.system(size: 11, design: .monospaced)).foregroundStyle(WalletTheme.textTertiary)
                                 }
                                 Spacer()
@@ -490,31 +503,124 @@ struct WalletSendView: View {
         }
         .frame(width: 360).frame(minHeight: 300, maxHeight: 500)
         .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
+
     }
 
-    // MARK: - Confirm sheet
+    // MARK: - Confirm sheet (confirm → progress → success)
 
     private var sendConfirmSheet: some View {
+        Group {
+            if let hash = sheetTxHash {
+                sentSuccessView(hash)
+            } else if isSending {
+                sendingProgressView
+            } else {
+                confirmContent
+            }
+        }
+        .frame(width: 360)
+        .background(WalletTheme.canvas)
+
+        // Keep the sheet up while the transaction is being signed/broadcast.
+        .interactiveDismissDisabled(isSending)
+    }
+
+    /// The recipient/amount recap card, shared by the confirm and in-progress screens.
+    private var confirmDetailsCard: some View {
+        VStack(spacing: 0) {
+            confirmRow("Token",   value: selectedToken?.symbol ?? "")
+            Divider().opacity(0.08)
+            confirmRow("Amount",  value: "\(amountText) \(selectedToken?.symbol ?? "")")
+            Divider().opacity(0.08)
+            confirmRow("To",      value: abbreviated(effectiveRecipient ?? toAddress), mono: true,
+                       accessibilityValueOverride: "address \(effectiveRecipient ?? toAddress)")
+            Divider().opacity(0.08)
+            confirmRow("Network", value: wallet.activeChain.name)
+        }
+        .walletGlass(radius: 10, fill: WalletTheme.surfaceField)
+        .padding(.horizontal, 24)
+    }
+
+    private var sendingProgressView: some View {
+        VStack(spacing: 18) {
+            Text("Sending")
+                .font(.system(size: 16, weight: .semibold))
+                .padding(.top, 24)
+
+            confirmDetailsCard
+
+            WalletStageList(done: doneStageLabels, current: sendStageText)
+                .padding(.horizontal, 24)
+
+            Text("Broadcasting usually takes a few seconds.")
+                .font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
+                .padding(.bottom, 24)
+        }
+    }
+
+    private func sentSuccessView(_ hash: String) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 44)).foregroundStyle(WalletTheme.textPrimary).padding(.top, 28)
+            Text(sendConfirmStatus == .success ? "Sent" : "Transaction submitted")
+                .font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
+            if let s = sentSummary {
+                Text("\(s.amount)  →  \(s.to)")
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(WalletTheme.textSecondary)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                    .padding(.horizontal, 24)
+            }
+            WalletTxConfirmationLine(
+                status: sendConfirmStatus, chainName: wallet.activeChain.name,
+                failureText: "The transaction failed on-chain (reverted) — your coins didn't move, only the network fee was spent.")
+                .padding(.horizontal, 24)
+            Button { if let u = URL(string: wallet.explorerTxURL(hash)) { NSWorkspace.shared.open(u) } } label: {
+                Text("View on \(wallet.activeChain.explorerName)")
+                    .font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            WalletPrimaryButton(title: "Done", enabled: true) { showConfirm = false }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+        }
+        .task(id: hash) { await trackSendConfirmation(hash) }
+    }
+
+    /// Polls the receipt (~2 minutes max) so the success screen can flip from "submitted" to a
+    /// real on-chain outcome. Gives up quietly — Activity keeps tracking it regardless.
+    private func trackSendConfirmation(_ hash: String) async {
+        let rpc = wallet.activeRPCURL
+        for _ in 0..<40 {
+            let status = await WalletNetwork.transactionReceipt(hash: hash, rpc: rpc)
+            if Task.isCancelled { return }
+            if status != .pending {
+                sendConfirmStatus = status
+                if status == .success { wallet.registerActivity() }
+                return
+            }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if Task.isCancelled { return }
+        }
+        sendConfirmStatus = .pending
+    }
+
+    private var confirmContent: some View {
         VStack(spacing: 20) {
             Text("Confirm Transaction")
                 .font(.system(size: 16, weight: .semibold))
                 .padding(.top, 24)
 
-            VStack(spacing: 0) {
-                confirmRow("Token",   value: selectedToken?.symbol ?? "")
-                Divider().opacity(0.08)
-                confirmRow("Amount",  value: "\(amountText) \(selectedToken?.symbol ?? "")")
-                Divider().opacity(0.08)
-                confirmRow("To",      value: abbreviated(effectiveRecipient ?? toAddress), mono: true,
-                           accessibilityValueOverride: "address \(effectiveRecipient ?? toAddress)")
-                Divider().opacity(0.08)
-                confirmRow("Network", value: wallet.activeChain.name)
-            }
-            .walletGlass(radius: 10, fill: WalletTheme.surfaceField)
-            .padding(.horizontal, 24)
+            confirmDetailsCard
 
             sendSimBanner
+
+            if !sendError.isEmpty {
+                Text(sendError)
+                    .font(.system(size: 11)).foregroundStyle(WalletTheme.negative)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 24)
+            }
 
             VStack(spacing: 10) {
                 if wallet.biometricUnlockEnabled && wallet.biometricAvailable {
@@ -527,10 +633,10 @@ struct WalletSendView: View {
                             Text("Authorize with \(WalletBiometric.label)")
                                 .font(.system(size: 13, weight: .semibold))
                         }
-                        .foregroundStyle(.black)
+                        .foregroundStyle(WalletTheme.onInk)
                         .frame(maxWidth: 220)
                         .padding(.vertical, 11)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                        .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .buttonStyle(.plain)
 
@@ -547,7 +653,7 @@ struct WalletSendView: View {
                     HStack(spacing: 12) {
                         ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
                             Circle()
-                                .fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong)
+                                .fill(i < pin.count ? WalletTheme.ink : WalletTheme.surfaceStrong)
                                 .frame(width: 11, height: 11)
                         }
                     }
@@ -571,9 +677,6 @@ struct WalletSendView: View {
                 .controlSize(.regular)
                 .padding(.bottom, 24)
         }
-        .frame(width: 360)
-        .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
         .task { await runSendSimulation() }
     }
 
@@ -638,7 +741,7 @@ struct WalletSendView: View {
             Spacer()
             Text(value)
                 .font(.system(size: 13, weight: .medium, design: mono ? .monospaced : .default))
-                .foregroundStyle(.white)
+                .foregroundStyle(WalletTheme.textPrimary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -688,24 +791,42 @@ struct WalletSendView: View {
         }
     }
 
-    private func broadcast(pinForSigning: String) {
-        showConfirm = false
-        pinError = false
-        isSending = true
-        guard let token = selectedToken, let amount = parsedAmount, let recipient = effectiveRecipient else {
-            isSending = false; return
+    private func stageText(_ s: SendStage) -> String {
+        switch s {
+        case .preparing:  return "Preparing (network fee & nonce)"
+        case .submitting: return "Signing & broadcasting"
         }
+    }
+
+    private func broadcast(pinForSigning: String) {
+        pinError = false
+        guard let token = selectedToken, let amount = parsedAmount, let recipient = effectiveRecipient else { return }
+        isSending = true
+        doneStageLabels = []
+        sendStageText = stageText(.preparing)
+        // Capture the recap now — the form fields are cleared on success.
+        let summary = ("\(amountText) \(token.symbol)", abbreviated(recipient))
         Task {
             let success = await wallet.send(to: recipient, amount: amount, token: token,
-                                            pin: pinForSigning, speed: gasSpeed)
+                                            pin: pinForSigning, speed: gasSpeed) { stage in
+                let label = stageText(stage)
+                guard label != sendStageText else { return }
+                if !sendStageText.isEmpty { doneStageLabels.append(sendStageText) }
+                sendStageText = label
+            }
             isSending = false
+            doneStageLabels = []; sendStageText = ""
             if success {
-                sentTxHash = wallet.lastTxHash
+                sentSummary = summary
+                sendConfirmStatus = nil
+                sheetTxHash = wallet.lastTxHash   // sheet flips to the success screen
+                sentTxHash = wallet.lastTxHash    // form keeps its banner as a record
                 toAddress = ""
                 amountText = ""
                 sendError = ""
+                ackRisk = false
             } else {
-                sendError = wallet.lastError ?? "Transaction failed."
+                sendError = wallet.lastError ?? "Transaction failed."   // shown in the confirm sheet
             }
         }
     }

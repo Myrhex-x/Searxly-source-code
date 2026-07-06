@@ -25,7 +25,9 @@ struct HomeStarfield: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var starColor: Color {
-        colorScheme == .dark ? .white : Color.primary.opacity(0.22)
+        // Light mode inverts to faint graphite specks — kept well below the dark-mode
+        // intensity so they read as texture, not dust on the paper canvas.
+        colorScheme == .dark ? .white : Color.primary.opacity(0.16)
     }
 
     var body: some View {

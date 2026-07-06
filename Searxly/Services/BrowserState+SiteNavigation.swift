@@ -61,7 +61,7 @@ extension BrowserState {
 
         let item = BookmarkItem(url: cleanURL, title: displayTitle, note: note?.trimmingCharacters(in: .whitespacesAndNewlines))
         bookmarks.insert(item, at: 0)
-        if bookmarks.count > 200 { bookmarks.removeLast(bookmarks.count - 200) }
+        if bookmarks.count > BookmarkLimits.maxCount { bookmarks.removeLast(bookmarks.count - BookmarkLimits.maxCount) }
         saveAllData()
     }
 
@@ -175,18 +175,10 @@ extension BrowserState {
 
     // MARK: - Onion (Tor) navigation
 
-    /// Persisted one-time acknowledgement of the Tor disclosure.
-    private static let torDisclosureAckKey = "Tor.HasAcknowledgedDisclosure"
-    static var hasAcknowledgedTorDisclosure: Bool {
-        get { UserDefaults.standard.bool(forKey: torDisclosureAckKey) }
-        set { UserDefaults.standard.set(newValue, forKey: torDisclosureAckKey) }
-    }
-
-    /// Entry point for opening a `.onion` URL. On the user's FIRST onion ever, shows a one-time
-    /// consent/disclosure sheet (what Tor does + does not protect) before connecting; afterwards it
-    /// opens directly.
+    /// Entry point for opening a `.onion` URL. Onion routing is opt-in (TorManager.isEnabled, off by
+    /// default). When it's off, a quick "Enable Tor?" prompt is shown; enabling it opens the site.
     func openOnionURL(_ url: URL) {
-        guard Self.hasAcknowledgedTorDisclosure else {
+        guard TorManager.shared.isEnabled else {
             pendingOnionURL = url
             showTorDisclosure = true
             return
@@ -194,9 +186,9 @@ extension BrowserState {
         performOpenOnionURL(url)
     }
 
-    /// User accepted the Tor disclosure — remember it and open the pending onion.
-    func acknowledgeTorDisclosureAndContinue() {
-        Self.hasAcknowledgedTorDisclosure = true
+    /// User chose to enable Tor from the prompt — turn it on and open the pending onion.
+    func enableTorAndOpenPending() {
+        TorManager.shared.isEnabled = true
         showTorDisclosure = false
         if let url = pendingOnionURL {
             pendingOnionURL = nil
@@ -244,28 +236,71 @@ extension BrowserState {
 
         tab.title = "Connecting to Tor…"
         // Immediate local feedback (no network) while the circuit bootstraps. baseURL = the onion URL
-        // so the address bar shows the real .onion address (not about:blank) during connection.
+        // so the address bar shows the real .onion address (not about:blank) during connection. The
+        // marker lets the watchdog below detect "still on the placeholder" (a real onion page won't have it).
         tab.webView?.loadHTMLString(Self.onionStatusHTML(title: "Connecting to Tor…",
-                                                          detail: "Building a circuit to reach this hidden service."),
+                                                          detail: "Building a circuit to reach this hidden service.",
+                                                          marker: "connecting"),
                                     baseURL: url)
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            Log.tor.info("[onion] preparing to load \(url.host ?? "?", privacy: .public) — ensuring Tor is ready")
             let ready = await TorManager.shared.ensureReadyAndRunning()
 
             // Bail if the tab was closed while we waited.
             guard self.tabs.contains(where: { $0.id == tab.id }) else { return }
 
-            if ready {
-                tab.title = url.host ?? "Onion site"
-                tab.webView?.load(URLRequest(url: url))
-            } else {
+            guard ready else {
                 let msg = TorManager.shared.lastError ?? "Could not connect to Tor."
+                Log.tor.error("[onion] Tor not ready: \(msg, privacy: .public)")
                 tab.title = "Tor unavailable"
                 tab.webView?.loadHTMLString(Self.onionStatusHTML(title: "Couldn’t connect to Tor",
                                                                  detail: msg),
                                             baseURL: nil)
+                return
             }
+
+            guard let wv = tab.webView else {
+                // Onion tabs no longer hibernate, but guard anyway: a nil webView would make load() a
+                // silent no-op and strand the tab on the placeholder forever.
+                Log.tor.error("[onion] Tor ready but onion tab has no webView — cannot load \(url.absoluteString, privacy: .public)")
+                return
+            }
+
+            Log.tor.info("[onion] Tor ready — issuing load for \(url.host ?? "?", privacy: .public)")
+            tab.title = url.host ?? "Onion site"
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 45   // fail cleanly instead of spinning if the circuit stalls
+            wv.load(request)
+            self.scheduleOnionLoadWatchdog(for: tab, url: url)
+        }
+    }
+
+    /// Safety net so an onion tab can never sit on the "Connecting to Tor…" placeholder forever. If the
+    /// real page hasn't replaced the placeholder within the window, show an unreachable page. Detects
+    /// "still placeholder" via the marker on the local placeholder document — a committed onion page
+    /// won't carry it. This converts any silent stall (whatever its cause) into a clear, recoverable state.
+    private func scheduleOnionLoadWatchdog(for tab: BrowserTab, url: URL) {
+        Task { @MainActor [weak self, weak tab] in
+            try? await Task.sleep(for: .seconds(30))
+            guard let self, let tab,
+                  self.tabs.contains(where: { $0.id == tab.id }),
+                  let wv = tab.webView else { return }
+
+            let stillConnecting: Bool = await withCheckedContinuation { cont in
+                wv.evaluateJavaScript("!!(document.body && document.body.getAttribute('data-searxly-onion') === 'connecting')") { result, _ in
+                    cont.resume(returning: (result as? Bool) ?? false)
+                }
+            }
+            guard stillConnecting else { return }
+
+            Log.tor.error("[onion] still on the connecting placeholder after 30s — treating as unreachable: \(url.absoluteString, privacy: .public)")
+            tab.title = "Onion unavailable"
+            wv.loadHTMLString(Self.onionStatusHTML(
+                title: "Couldn’t reach this onion",
+                detail: "Tor connected, but \(url.host ?? "this hidden service") didn’t respond. It may be offline, or the address may be wrong — try reloading."),
+                baseURL: url)
         }
     }
 
@@ -281,11 +316,27 @@ extension BrowserState {
         }
     }
 
+    /// Called when Tor is switched off while onion tabs are open. Each onion tab can no longer reach its
+    /// hidden service, so we swap its content for a "Tor is off" page — keeping the onion URL as the base
+    /// so a reload reconnects once Tor is switched back on.
+    func handleTorDisabled() {
+        for tab in tabs where tab.privacyMode == .onion {
+            tab.webView?.loadHTMLString(
+                Self.onionStatusHTML(
+                    title: "Tor is off",
+                    detail: "Onion sites only work over Tor. Turn Tor back on from the Tor button, then reload this tab to reconnect."),
+                baseURL: tab.webView?.url)
+        }
+    }
+
     /// Minimal monochrome status page shown inside an onion tab while Tor connects (or on failure).
     /// Adapts to light/dark via `prefers-color-scheme`; brand stays black & white.
-    private static func onionStatusHTML(title: String, detail: String) -> String {
+    /// - Parameter marker: when set, stamped on `<body data-searxly-onion="…">` so the onion load
+    ///   watchdog can tell a still-showing placeholder from a real onion page that has committed.
+    private static func onionStatusHTML(title: String, detail: String, marker: String? = nil) -> String {
         let safeTitle = title.replacingOccurrences(of: "<", with: "&lt;")
         let safeDetail = detail.replacingOccurrences(of: "<", with: "&lt;")
+        let bodyAttr = marker.map { " data-searxly-onion=\"\($0)\"" } ?? ""
         return """
         <!doctype html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -302,7 +353,7 @@ extension BrowserState {
           p{font-size:13px;line-height:1.5;opacity:.7;margin:0}
           .note{margin-top:22px;font-size:11px;opacity:.5}
         </style></head>
-        <body><div class="card">
+        <body\(bodyAttr)><div class="card">
           <div class="glyph">⠿</div>
           <h1>\(safeTitle)</h1>
           <p>\(safeDetail)</p>
@@ -322,10 +373,11 @@ extension BrowserState {
         return offer.pageHost == currentHost ? offer : nil
     }
 
-    /// Records a detected Onion-Location mirror for the current page. Ignored on onion tabs and for
-    /// non-.onion targets.
+    /// Records a detected Onion-Location mirror for the current page. Ignored on onion tabs, non-.onion
+    /// targets, and onions already found dead (so abandoned mirrors like X's stop nagging).
     func noteOnionLocation(_ onionURL: URL, forPageHost host: String) {
         guard selectedTab?.privacyMode != .onion, onionURL.isOnionService else { return }
+        guard let oh = onionURL.host?.lowercased(), !Self.deadOnionHosts.contains(oh) else { return }
         onionLocationOffer = OnionLocationOffer(pageHost: host.lowercased(), onionURL: onionURL)
     }
 
@@ -338,6 +390,26 @@ extension BrowserState {
 
     func dismissOnionLocationOffer() {
         onionLocationOffer = nil
+    }
+
+    /// Onion hosts that failed to load, so their Onion-Location banner is never auto-offered again.
+    /// Many sites (e.g. X) advertise an onion they've since abandoned, and onion liveness can't be
+    /// known without connecting — so we suppress reactively after the first failed attempt.
+    private static let deadOnionsKey = "Tor.DeadOnionHosts"
+    static var deadOnionHosts: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: deadOnionsKey) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: deadOnionsKey) }
+    }
+
+    /// Marks an onion host unreachable (called when an onion tab fails to load) and drops any live
+    /// offer for it.
+    func markOnionUnreachable(_ host: String) {
+        let h = host.lowercased()
+        guard h.hasSuffix(".onion") else { return }
+        var set = Self.deadOnionHosts
+        set.insert(h)
+        Self.deadOnionHosts = set
+        if onionLocationOffer?.onionURL.host?.lowercased() == h { onionLocationOffer = nil }
     }
 
     // MARK: - Helpers

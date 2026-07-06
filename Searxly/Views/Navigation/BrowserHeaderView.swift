@@ -12,6 +12,10 @@ import WebKit
 struct BrowserHeaderView: View {
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Wallet is an opt-in surface — when disabled, the ☰ menu simply has no wallet row
+    /// (the menu hides any row whose action closure is nil).
+    @AppStorage(WalletConfig.Keys.surfaceEnabled) private var walletSurfaceEnabled = WalletConfig.surfaceEnabledDefault
+
     let isPureHomeState: Bool
     let glassEnabled: Bool
     let toolbarMaterial: Material
@@ -33,7 +37,7 @@ struct BrowserHeaderView: View {
     @Binding var showingFullHistory: Bool
     @Binding var showingDownloads: Bool
     @Binding var showingKeyboardShortcuts: Bool
-    let onToggleReaderMode: () -> Void
+    let onSummarizePage: () -> Void
     let onShowFind: () -> Void
     let onOpenLocalAIChat: () -> Void
     let onBookmarkCurrentPage: () -> Void
@@ -47,25 +51,40 @@ struct BrowserHeaderView: View {
     let onSaveLoginFromPage: (() -> Void)?
     let onFillLogin: ((String, String, String) -> Void)?
 
+    /// True when the app is in Maximum Privacy AND routing through Tor: the Maximum pill fully covers
+    /// the Tor connection, so the standalone Tor pill is folded into it (hidden). Reads @Observable
+    /// PrivacyManager, so this re-evaluates when the mode or backing network changes.
+    private var foldTorIntoMaximumPill: Bool {
+        PrivacyManager.shared.appPrivacyMode == .maximum && PrivacyManager.shared.maxProtection == .tor
+    }
+
     var body: some View {
         Group {
         if !isPureHomeState {
             HStack(spacing: 8) {
                 SearxlyVPNPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
 
-                SearxlyTorPill(
-                    glassEnabled: glassEnabled,
-                    toolbarMaterial: toolbarMaterial,
-                    onionHost: browserState.selectedTab?.privacyMode == .onion
-                        ? browserState.selectedTab?.currentURL?.host : nil,
-                    onNewCircuit: {
-                        Task { @MainActor in
-                            if await TorManager.shared.newCircuit() {
-                                browserState.activeWebView.reload()
+                // In Maximum + Tor, ALL traffic is Tor and the Maximum pill already owns that status
+                // (network + live circuit + new-circuit) — so the standalone Tor pill would just
+                // duplicate it. Fold it in: hide the Tor pill here (still shown in any other mode,
+                // where it's the .onion control).
+                if !foldTorIntoMaximumPill {
+                    SearxlyTorPill(
+                        glassEnabled: glassEnabled,
+                        toolbarMaterial: toolbarMaterial,
+                        onionHost: browserState.selectedTab?.privacyMode == .onion
+                            ? browserState.selectedTab?.currentURL?.host : nil,
+                        onNewCircuit: {
+                            Task { @MainActor in
+                                if await TorManager.shared.newCircuit() {
+                                    browserState.activeWebView.reload()
+                                }
                             }
                         }
-                    }
-                )
+                    )
+                }
+
+                SearxlyPrivacyPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
 
                 Spacer()
 
@@ -78,6 +97,7 @@ struct BrowserHeaderView: View {
                     onSubmit: onSubmit,
                     isHero: false,
                     isOnionTab: browserState.selectedTab?.privacyMode == .onion,
+                    siteHost: currentWebDomain ?? "",
                     onSuggestionsArrowDown: {
                         if !browserState.suggestions.isEmpty {
                             browserState.suggestionsSelectedIndex = min(browserState.suggestionsSelectedIndex + 1, browserState.suggestions.count - 1)
@@ -113,9 +133,9 @@ struct BrowserHeaderView: View {
                     showingFullHistory: $showingFullHistory,
                     showingDownloads: $showingDownloads,
                     showingKeyboardShortcuts: $showingKeyboardShortcuts,
-                    onToggleReaderMode: onToggleReaderMode,
+                    onSummarizePage: AIFeatures.programEnabled ? onSummarizePage : nil,
                     onShowFind: onShowFind,
-                    onOpenLocalAIChat: onOpenLocalAIChat,
+                    onOpenLocalAIChat: AIFeatures.programEnabled ? onOpenLocalAIChat : nil,
                     currentWebDomain: currentWebDomain,
                     hasPasswordFieldOnPage: hasPasswordFieldOnPage,
                     isLikelySignupForm: isLikelySignupForm,
@@ -124,7 +144,13 @@ struct BrowserHeaderView: View {
                     onFillLogin: onFillLogin,
                     onBookmarkCurrentPage: onBookmarkCurrentPage,
                     onGoBack: onGoBack,
-                    onGoForward: onGoForward
+                    onGoForward: onGoForward,
+                    onOpenExtensions: ExtensionFeatures.programEnabled
+                        ? { NotificationCenter.default.post(name: .showExtensionsTabRequested, object: nil) } : nil,
+                    onOpenWallet: walletSurfaceEnabled ? { browserState.showingWallet = true } : nil,
+                    onOpenSettings: { browserState.showingSettings = true },
+                    onClearBrowsingData: { browserState.showingClearData = true },
+                    onImportData: { browserState.showingImportData = true }
                 )
             }
             .padding(.horizontal, 6)
@@ -132,12 +158,15 @@ struct BrowserHeaderView: View {
         } else {
             HStack {
                 SearxlyVPNPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
-                SearxlyTorPill(
-                    glassEnabled: glassEnabled,
-                    toolbarMaterial: toolbarMaterial,
-                    onionHost: browserState.selectedTab?.privacyMode == .onion
-                        ? browserState.selectedTab?.currentURL?.host : nil
-                )
+                if !foldTorIntoMaximumPill {
+                    SearxlyTorPill(
+                        glassEnabled: glassEnabled,
+                        toolbarMaterial: toolbarMaterial,
+                        onionHost: browserState.selectedTab?.privacyMode == .onion
+                            ? browserState.selectedTab?.currentURL?.host : nil
+                    )
+                }
+                SearxlyPrivacyPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
                 Spacer()
                 RightToolbarControls(
                     activeWebView: activeWebView,
@@ -152,9 +181,9 @@ struct BrowserHeaderView: View {
                     showingFullHistory: $showingFullHistory,
                     showingDownloads: $showingDownloads,
                     showingKeyboardShortcuts: $showingKeyboardShortcuts,
-                    onToggleReaderMode: onToggleReaderMode,
+                    onSummarizePage: AIFeatures.programEnabled ? onSummarizePage : nil,
                     onShowFind: onShowFind,
-                    onOpenLocalAIChat: onOpenLocalAIChat,
+                    onOpenLocalAIChat: AIFeatures.programEnabled ? onOpenLocalAIChat : nil,
                     currentWebDomain: currentWebDomain,
                     hasPasswordFieldOnPage: hasPasswordFieldOnPage,
                     isLikelySignupForm: isLikelySignupForm,
@@ -163,7 +192,13 @@ struct BrowserHeaderView: View {
                     onFillLogin: onFillLogin,
                     onBookmarkCurrentPage: onBookmarkCurrentPage,
                     onGoBack: onGoBack,
-                    onGoForward: onGoForward
+                    onGoForward: onGoForward,
+                    onOpenExtensions: ExtensionFeatures.programEnabled
+                        ? { NotificationCenter.default.post(name: .showExtensionsTabRequested, object: nil) } : nil,
+                    onOpenWallet: walletSurfaceEnabled ? { browserState.showingWallet = true } : nil,
+                    onOpenSettings: { browserState.showingSettings = true },
+                    onClearBrowsingData: { browserState.showingClearData = true },
+                    onImportData: { browserState.showingImportData = true }
                 )
             }
             .padding(.horizontal, 8)

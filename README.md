@@ -1,13 +1,13 @@
 # Searxly
 
 Searxly is a privacy-respecting native macOS browser built with SwiftUI and WebKit.  
-**Core feature:** It runs a fully local, private SearXNG instance on *your own Mac* — a signed SearXNG runtime is bundled right inside the app, so search happens entirely on your machine with no accounts and no telemetry.
+**Core feature:** It runs your own private SearXNG instance on *your own Mac* — a signed SearXNG runtime is bundled right inside the app. Your queries never go through a third-party search frontend: your local instance forwards them directly to the upstream engines (Startpage, Bing, DuckDuckGo, Brave), with no accounts and no telemetry. In Maximum Privacy mode, that engine traffic can additionally be routed through Tor or a VPN so the engines never see your IP either.
 
 **Current status (as of this build):**
 - Local SearXNG (native, bundled inside the app) is the primary, fully supported private search experience.
 - A self-custody Base L2 wallet (BIP-39/32, real EIP-1559 signing) is included in `Searxly/Wallet/`.
 - On-device / local AI assistance lives in `Searxly/LocalAI/`.
-- The ad-block engine and the VPN / WireGuard implementation are **not** included in this public source (see "What's omitted" below).
+- The ad-block engine and the VPN implementation are **not** included in this public source (see "What's omitted" below).
 
 This repository contains source code for transparency, code review, and learning. It is **not** a downloadable or buildable application — see "What's omitted".
 
@@ -25,7 +25,7 @@ To keep this a source-for-review repository rather than a downloadable app, the 
 
 - **App entry point** (`Searxly/App/SearxlyApp.swift`) — without it a clone won't build a runnable app.
 - **Ad-block engine** (`Searxly/AdBlocker/`, filter lists, cosmetic configs).
-- **VPN / WireGuard implementation** (`Searxly/VPN/`, `SearxlyWireGuardTunnel/`, and the VPN UI).
+- **VPN implementation** (`Searxly/VPN/` and the VPN UI).
 - **Build outputs / signed binaries** — no `.app` or `.dmg` is published in the repo.
 - **Signing identity** — `DEVELOPMENT_TEAM` is blanked in the project; set your own to build.
 
@@ -52,7 +52,7 @@ Do your own research. All funds go directly to project development.
 ## Current Feature Status
 
 - **Local SearXNG**: Fully automatic. One-click in onboarding or Settings → Instances. Creates `~/searxng-local/`, injects a strong secret, deploys the premium Searxly theme, launches the bundled SearXNG process, and waits for the instance to be ready.
-- **VPN**: The WireGuard implementation is omitted from this public source (see "What's omitted"). In maintainer builds it requires a paid Apple Developer membership + a provisioning profile with the `packet-tunnel-provider` capability.
+- **VPN**: The VPN implementation (built on the macOS system VPN APIs) is omitted from this public source (see "What's omitted").
 - **Wallet**: A self-custody Base L2 wallet is included (`Searxly/Wallet/`). Keys never leave the device — the seed is encrypted in the macOS Keychain (AES-GCM + PBKDF2, device-only, never iCloud-synced).
 
 ## Local SearXNG (User Side)

@@ -115,8 +115,6 @@ struct RootContainerView: View {
                 loadInWebView: loadInWebView,
                 showingSettings: Binding.constant(false),
                 selectedImageForPreview: $selectedImageForPreview,
-                isReaderMode: .constant(false),
-                onReaderContentExtracted: { _, _ in },
                 onPerformFind: { _ in },
                 onExitFind: {},
                 showingFindBar: .constant(false),

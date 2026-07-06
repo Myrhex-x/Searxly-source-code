@@ -85,6 +85,7 @@ final class WalletTokenDirectory {
 
     private func refresh(chainId: Int) async {
         defer { inFlight.remove(chainId) }
+        guard PrivacyGate.egressAllowedFast else { return }   // fail closed in Maximum Privacy (native egress kill switch)
         guard let slug = listSlug(forChain: chainId),
               let url = URL(string: "https://tokens.coingecko.com/\(slug)/all.json"),
               let (data, _) = try? await URLSession.shared.data(from: url) else { return }
@@ -173,6 +174,7 @@ final class WalletTokenDirectory {
 
     /// The token image DexScreener has for a contract (the logo the project uploaded), if any.
     private static func dexScreenerImageURL(contract: String) async -> String? {
+        guard PrivacyGate.egressAllowedFast else { return nil }   // fail closed in Maximum Privacy
         guard let url = URL(string: "https://api.dexscreener.com/latest/dex/tokens/\(contract)"),
               let (data, _) = try? await URLSession.shared.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

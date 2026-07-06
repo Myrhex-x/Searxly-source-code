@@ -17,6 +17,9 @@ import WebKit
 
 extension Notification.Name {
     static let tabHibernationAutoSweepDue = Notification.Name("TabHibernationAutoSweepDue")
+    /// Posted when the OS signals memory pressure. ContentView responds by hibernating background tabs
+    /// (it owns the tab list). userInfo["critical"] = true for .critical events.
+    static let tabHibernationMemoryPressureDue = Notification.Name("TabHibernationMemoryPressureDue")
 }
 
 /// Lightweight snapshot of tab state, useful for developer tooling.
@@ -105,9 +108,14 @@ final class TabHibernationManager {
     private var autoSweepTimer: Timer?
     private var lastSweepDate: Date = Date()
 
+    /// OS memory-pressure monitor. On warning/critical we purge image caches and ask the UI to
+    /// hibernate background tabs, so the app reclaims memory before the system kills it.
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+
     private init() {
         loadConfiguration()
         startAutoSweepTimer()
+        startMemoryPressureMonitor()
     }
 
     /// Loads hibernation policy from AppData.json (called on init so settings survive restart).
@@ -267,6 +275,46 @@ final class TabHibernationManager {
                 self?.tickAutoSweepTimer()
             }
         }
+    }
+
+    // MARK: - Memory pressure
+
+    private func startMemoryPressureMonitor() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self, let data = self.memoryPressureSource?.data else { return }
+            self.handleMemoryPressure(critical: data.contains(.critical))
+        }
+        memoryPressureSource = source
+        source.resume()
+    }
+
+    private func handleMemoryPressure(critical: Bool) {
+        // Always reclaim image memory — it's cheap and reloads on demand. Drop the disk cache too when critical.
+        SearchThumbnailLoader.purgeCaches(includingDisk: critical)
+
+        if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseTabLifecycleLogging {
+            Log.web.info("[Dev] Memory pressure (\(critical ? "critical" : "warning")) — purged image caches, requesting background-tab hibernation")
+        }
+
+        // The UI layer owns the tab list, so ask it to hibernate background tabs (respects isEnabled there).
+        NotificationCenter.default.post(name: .tabHibernationMemoryPressureDue, object: nil,
+                                        userInfo: ["critical": critical])
+    }
+
+    /// Stops the repeating sweep timer while the app is in the background, so it doesn't wake the CPU
+    /// on battery. `lastSweepDate` is preserved, so background-idle time still counts toward the next
+    /// sweep once the app is active again (see tickAutoSweepTimer's elapsed-since-lastSweep math).
+    /// Memory-pressure reclaim is unaffected — that source fires regardless of this timer.
+    func suspendAutoSweep() {
+        autoSweepTimer?.invalidate()
+        autoSweepTimer = nil
+    }
+
+    /// Restarts the sweep timer when the app becomes active again (no-op if disabled or already running).
+    func resumeAutoSweep() {
+        guard isEnabled, autoSweepTimer == nil else { return }
+        startAutoSweepTimer()
     }
 
     private func tickAutoSweepTimer() {

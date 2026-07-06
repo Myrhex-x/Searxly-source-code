@@ -34,7 +34,10 @@ struct TabButton: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
+        // Use a *simultaneous* tap (not .onTapGesture) so it doesn't exclusively claim the press — the
+        // sidebar row's .onDrag needs the same press to start a drag. A real tap (down+up without moving)
+        // still selects; a press-and-drag begins a reorder instead.
+        .simultaneousGesture(TapGesture().onEnded(onSelect))
         .shadow(
             color: isSelected && style == .horizontalGlass
                 ? AdaptiveChrome.shadow(colorScheme, darkOpacity: 0.1)
@@ -66,8 +69,8 @@ struct TabButton: View {
                 : .thinMaterial,
             in: RoundedRectangle(cornerRadius: 11, style: .continuous)
         )
-        .glassEffect(
-            isSelected && glassEnabled ? .regular.interactive() : .clear,
+        .searxlyGlass(
+            isSelected && glassEnabled ? .interactive : .clear,
             in: RoundedRectangle(cornerRadius: 11)
         )
         .overlay(
@@ -114,20 +117,14 @@ struct TabButton: View {
         .padding(.vertical, 7)
         .background {
             if isSelected {
+                // Fill-only selection (no stroke outline). The outline's top segment used to read as a
+                // hard "line" directly under a section header when the selected tab was the first row.
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(AdaptiveChrome.fill(colorScheme, dark: glassEnabled ? 0.07 : 0.05))
+                    .fill(AdaptiveChrome.fill(colorScheme, dark: glassEnabled ? 0.10 : 0.07))
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .fill(.thinMaterial)
-                            .opacity(glassEnabled ? 0.65 : 0.4)
-                    )
-                    .glassEffect(
-                        glassEnabled ? .regular.interactive() : .clear,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(AdaptiveChrome.border(colorScheme, dark: glassEnabled ? 0.14 : 0.08), lineWidth: 0.6)
+                            .opacity(glassEnabled ? 0.55 : 0.35)
                     )
             } else if isHovered {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -140,8 +137,8 @@ struct TabButton: View {
 
     @ViewBuilder
     private func tabIcon(size: CGFloat, cornerRadius: CGFloat) -> some View {
-        if tab.kind == .passwords {
-            Image(systemName: "key.fill")
+        if tab.kind.isUtility {
+            Image(systemName: tab.kind.utilityIcon)
                 .font(.system(size: size * 0.78, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: size, height: size)
@@ -162,5 +159,7 @@ struct TabButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+        .help("Close tab")
+        .accessibilityLabel(Text("Close tab"))
     }
 }

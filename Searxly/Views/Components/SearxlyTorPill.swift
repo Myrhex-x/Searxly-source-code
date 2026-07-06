@@ -35,7 +35,7 @@ struct SearxlyTorPill: View {
         if connected { return TorPillTheme.green }
         if connecting { return TorPillTheme.amber }
         if case .error = tor.status { return TorPillTheme.red }
-        return Color(white: 0.5)
+        return tor.isEnabled ? TorPillTheme.green.opacity(0.5) : Color(white: 0.4)
     }
 
     var body: some View {
@@ -67,7 +67,7 @@ struct SearxlyTorPill: View {
         .padding(.horizontal, 11)
         .padding(.vertical, 6)
         .background(toolbarMaterial, in: Capsule())
-        .glassEffect(glassEnabled ? .regular.interactive() : .clear, in: Capsule())
+        .searxlyGlass(glassEnabled ? .interactive : .clear, in: Capsule())
         .overlay(
             Capsule().strokeBorder(
                 connected ? statusTint.opacity(0.5) : AdaptiveChrome.border(colorScheme, dark: 0.12),
@@ -89,36 +89,41 @@ struct SearxlyTorPill: View {
     private var panel: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            torToggleRow
 
-            if active {
-                TorCircuitView(relays: tor.circuit, destinationHost: onionHost, tint: statusTint)
-                if connected {
-                    ipHiddenRow
-                    if let onNewCircuit {
-                        Button {
-                            onNewCircuit()
-                        } label: {
-                            HStack(spacing: 6) {
-                                if tor.rebuilding {
-                                    ProgressView().controlSize(.small).tint(.white)
-                                    Text("Building new circuit…").font(.system(size: 12, weight: .semibold))
-                                } else {
-                                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 11, weight: .semibold))
-                                    Text("New circuit for this site").font(.system(size: 12, weight: .semibold))
+            if tor.isEnabled {
+                if active {
+                    TorCircuitView(relays: tor.circuit, destinationHost: onionHost, tint: statusTint)
+                    if connected {
+                        ipHiddenRow
+                        if let onNewCircuit {
+                            Button {
+                                onNewCircuit()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if tor.rebuilding {
+                                        ProgressView().controlSize(.small)
+                                        Text("Building new circuit…").font(.system(size: 12, weight: .semibold))
+                                    } else {
+                                        Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 11, weight: .semibold))
+                                        Text("New circuit for this site").font(.system(size: 12, weight: .semibold))
+                                    }
                                 }
+                                .foregroundStyle(.primary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(TorPillTheme.fillSubtle, in: Capsule())
+                                .overlay(Capsule().strokeBorder(TorPillTheme.hairlineStrong, lineWidth: 1))
                             }
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(Color.white.opacity(0.08), in: Capsule())
-                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                            .buttonStyle(.plain)
+                            .disabled(tor.rebuilding)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(tor.rebuilding)
                     }
+                } else {
+                    stoppedBody
                 }
             } else {
-                stoppedBody
+                offBody
             }
 
             Text("This is not Tor Browser and doesn’t replace its full anti-fingerprinting.")
@@ -129,7 +134,6 @@ struct SearxlyTorPill: View {
         .padding(16)
         .frame(width: 300)
         .background(TorPillTheme.canvas)
-        .preferredColorScheme(.dark)
         .task { await TorManager.shared.refreshCircuit() }
     }
 
@@ -137,7 +141,7 @@ struct SearxlyTorPill: View {
         HStack(spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(TorPillTheme.fillSubtle)
                     .frame(width: 30, height: 30)
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 15, weight: .semibold))
@@ -170,6 +174,29 @@ struct SearxlyTorPill: View {
         }
     }
 
+    private var torToggleRow: some View {
+        Toggle(isOn: Binding(get: { tor.isEnabled }, set: { tor.isEnabled = $0 })) {
+            Text(tor.isEnabled ? "Tor is on" : "Tor is off")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(.primary)
+        }
+        .toggleStyle(.switch)
+        .tint(TorPillTheme.green)
+    }
+
+    private var offBody: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text("Browse .onion sites privately")
+                .font(.system(size: 12.5, weight: .semibold))
+            Text("Turn Tor on to open hidden services. Searxly routes those tabs through the Tor network so your IP stays hidden — your normal browsing isn’t affected.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TorCircuitView(relays: [], destinationHost: nil, tint: Color(white: 0.5))
+                .opacity(0.4)
+        }
+    }
+
     private var ipHiddenRow: some View {
         HStack(spacing: 5) {
             Image(systemName: "eye.slash.fill").font(.system(size: 9, weight: .bold))
@@ -184,7 +211,7 @@ struct SearxlyTorPill: View {
         case .bootstrapping(let p): return p > 0 ? "Building circuit… \(p)%" : "Building circuit…"
         case .stopping: return "Stopping…"
         case .error(let m): return m
-        case .stopped: return "Not connected"
+        case .stopped: return tor.isEnabled ? "On · ready" : "Off"
         }
     }
 }
@@ -193,8 +220,9 @@ struct SearxlyTorPill: View {
 
 /// A vertical "timeline" of the Tor route: this device → relays → the onion destination.
 /// Uses live relay data (country + nickname) from the control port when available, otherwise a
-/// representative diagram.
-private struct TorCircuitView: View {
+/// representative diagram. Internal (not private) so the Maximum-Privacy pill can reuse it when it
+/// folds in the Tor connection.
+struct TorCircuitView: View {
     let relays: [TorRelay]
     let destinationHost: String?
     let tint: Color
@@ -247,10 +275,16 @@ private struct TorCircuitView: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            AdaptiveChrome.dynamic(light: Color.black.opacity(0.03), dark: Color.white.opacity(0.035)),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(
+                    AdaptiveChrome.dynamic(light: Color.black.opacity(0.085), dark: Color.white.opacity(0.08)),
+                    lineWidth: 1
+                )
         )
     }
 
@@ -261,7 +295,10 @@ private struct TorCircuitView: View {
             Circle()
                 .fill(tint.opacity(isFirst || isLast ? 1 : 0.8))
                 .frame(width: 9, height: 9)
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+                .overlay(Circle().strokeBorder(
+                    AdaptiveChrome.dynamic(light: Color.black.opacity(0.2), dark: Color.white.opacity(0.25)),
+                    lineWidth: 1
+                ))
                 .shadow(color: tint.opacity(0.6), radius: isFirst || isLast ? 3 : 0)
             Rectangle().fill(isLast ? Color.clear : line).frame(width: 1.5, height: 16)
         }
@@ -269,9 +306,23 @@ private struct TorCircuitView: View {
     }
 }
 
+// Adaptive: near-black panel in dark mode, white panel in light mode (mirrors the other pill panels).
 private enum TorPillTheme {
-    static let canvas = Color(red: 0.043, green: 0.043, blue: 0.051)
+    static let canvas = AdaptiveChrome.dynamic(
+        light: .white,
+        dark: Color(red: 0.043, green: 0.043, blue: 0.051)
+    )
+    static let card           = AdaptiveChrome.dynamic(light: Color.black.opacity(0.03), dark: Color.white.opacity(0.035))
+    static let hairline       = AdaptiveChrome.dynamic(light: Color.black.opacity(0.085), dark: Color.white.opacity(0.08))
+    static let hairlineStrong = AdaptiveChrome.dynamic(light: Color.black.opacity(0.16), dark: Color.white.opacity(0.14))
+    static let fillSubtle     = AdaptiveChrome.dynamic(light: Color.black.opacity(0.05), dark: Color.white.opacity(0.08))
     static let green = SERPDesign.accentGreen
-    static let amber = Color(red: 1.0, green: 0.62, blue: 0.28)
-    static let red = Color(red: 1.0, green: 0.45, blue: 0.45)
+    static let amber = AdaptiveChrome.dynamic(
+        light: Color(red: 0.8, green: 0.48, blue: 0.1),
+        dark: Color(red: 1.0, green: 0.62, blue: 0.28)
+    )
+    static let red = AdaptiveChrome.dynamic(
+        light: Color(red: 0.78, green: 0.22, blue: 0.22),
+        dark: Color(red: 1.0, green: 0.45, blue: 0.45)
+    )
 }

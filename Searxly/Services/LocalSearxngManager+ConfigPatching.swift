@@ -22,9 +22,15 @@ extension LocalSearxngManager {
         await ensureLanguagesSchemaCompatibleIfNeeded()
         await ensureWebEnginesUpgradedIfNeeded()
         await ensureWebEnginesBroadenedIfNeeded()
+        await ensureNewsEnginesBroadenedIfNeeded()
+        await ensureQwantCategFixedIfNeeded()
+        await ensureSimpleStyleAutoIfNeeded()
         await ensureSearchTuningConfigIfNeeded()
         await ensurePluginsSectionCompatibleIfNeeded()
         await ensureLimiterTomlCompatibleIfNeeded()
+        // Last, so a booting process always matches the privacy mode (Tor-proxied upstream in
+        // Maximum+Tor, direct otherwise) — see LocalSearxngManager+TorRouting.
+        await ensureTorOutgoingProxyMatchesPrivacyMode()
     }
 
     /// SearXNG locales Searxly registers so the macOS system region (en-US, fr-FR, …) survives instead
@@ -296,7 +302,9 @@ extension LocalSearxngManager {
                 additions += "\n  - name: brave\n    engine: brave\n    shortcut: br\n"
             }
             if !content.contains("\n    engine: qwant\n") {
-                additions += "\n  - name: qwant\n    engine: qwant\n    shortcut: qw\n"
+                // qwant_categ is required by the 2026 runtime — without it the engine fails to
+                // load at startup and is silently set inactive.
+                additions += "\n  - name: qwant\n    engine: qwant\n    shortcut: qw\n    qwant_categ: web\n"
             }
             if !additions.isEmpty {
                 content.insert(contentsOf: additions, at: ddgRange.upperBound)
@@ -315,6 +323,143 @@ extension LocalSearxngManager {
             UserDefaults.standard.set(true, forKey: migrationKey)
         } else {
             logs.append("⚠️ Could not broaden web engines (XPC write failed)")
+        }
+    }
+
+    /// Broadens the news category on already-provisioned lean installs to `bing news` + `google news` +
+    /// `reuters`. google_news (RSS-based) responds from residential IPs where the JS-walled `google` web
+    /// engine fails and brings breadth+recency; reuters returns REAL ISO dates (bing/google don't) for
+    /// accurate timestamps/LIVE badges and stays up when google_news is rate-limited. Each engine is
+    /// added only if absent, so installs that already got google_news from the earlier pass just gain
+    /// reuters (hence the bumped key). One-time, idempotent, only touches Searxly-managed lean lists
+    /// (detected by the bundled `bing images` entry). Fresh installs get this from `LeanSearxngEngines`.
+    func ensureNewsEnginesBroadenedIfNeeded() async {
+        let migrationKey = "Searxly.DidBroadenNewsEngines2026_3"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+        guard let proxy = HelperClient.shared.proxy() else { return }
+        let settingsPath = projectFolderURL.appendingPathComponent("searxng/settings.yml").path
+        guard await proxy.fileExistsAsync(atPath: settingsPath),
+              let data = await proxy.readFileAsync(atPath: settingsPath),
+              var content = String(data: data, encoding: .utf8) else { return }
+
+        // Only migrate Searxly-managed lean lists (has the bundled bing-images entry).
+        guard content.contains("  - name: bing images") else {
+            UserDefaults.standard.set(true, forKey: migrationKey)
+            return
+        }
+
+        let bingNewsAnchor = "  - name: bing news\n    engine: bing_news\n    shortcut: bin\n    categories: [news]\n"
+        let bingImagesAnchor = "  - name: bing images\n    engine: bing_images\n    shortcut: bii\n    categories: [images]\n"
+        let googleNewsAnchor = "  - name: google news\n    engine: google_news\n    shortcut: gon\n    categories: [news]\n"
+
+        var changed = false
+        func insert(_ block: String, afterFirstOf anchors: [String]) {
+            for anchor in anchors {
+                if let range = content.range(of: anchor) {
+                    content.insert(contentsOf: block, at: range.upperBound)
+                    changed = true
+                    return
+                }
+            }
+        }
+
+        if !content.contains("\n    engine: google_news\n") {
+            insert("""
+
+  - name: google news
+    engine: google_news
+    shortcut: gon
+    categories: [news]
+""", afterFirstOf: [bingNewsAnchor, bingImagesAnchor])
+        }
+
+        if !content.contains("\n    engine: reuters\n") {
+            insert("""
+
+  - name: reuters
+    engine: reuters
+    shortcut: reut
+    categories: [news]
+    sort_order: "display_date:desc"
+""", afterFirstOf: [googleNewsAnchor, bingNewsAnchor, bingImagesAnchor])
+        } else if !content.contains("display_date:desc") {
+            // Existing reuters from an earlier pass sorted by relevance (surfaced years-old articles) —
+            // switch it to newest-first so the news stays live.
+            let reutersNoSort = "  - name: reuters\n    engine: reuters\n    shortcut: reut\n    categories: [news]\n"
+            content = content.replacingOccurrences(
+                of: reutersNoSort,
+                with: reutersNoSort + "    sort_order: \"display_date:desc\"\n"
+            )
+            changed = true
+        }
+
+        guard changed else {
+            UserDefaults.standard.set(true, forKey: migrationKey)
+            return
+        }
+
+        if let newData = content.data(using: .utf8),
+           await proxy.writeFileAsync(data: newData, toPath: settingsPath) {
+            logs.append("✅ Broadened news engines (google news + reuters alongside bing news) — more breadth, real timestamps, and redundancy when a scraped engine is rate-limited. Restart SearXNG to apply.")
+            UserDefaults.standard.set(true, forKey: migrationKey)
+        } else {
+            logs.append("⚠️ Could not broaden news engines (XPC write failed)")
+        }
+    }
+
+    /// The 2026.6.23 runtime requires `qwant_categ` on the qwant engine (upstream schema change) —
+    /// without it the engine fails to load at startup and is silently set inactive ("loading engine
+    /// qwant failed: set engine to inactive!" in searxng.log). Repairs the qwant block written by
+    /// the earlier broadening migration. Idempotent by content check.
+    func ensureQwantCategFixedIfNeeded() async {
+        guard let proxy = HelperClient.shared.proxy() else { return }
+        let settingsPath = projectFolderURL.appendingPathComponent("searxng/settings.yml").path
+        guard await proxy.fileExistsAsync(atPath: settingsPath),
+              let data = await proxy.readFileAsync(atPath: settingsPath),
+              let content = String(data: data, encoding: .utf8) else { return }
+
+        let broken = "  - name: qwant\n    engine: qwant\n    shortcut: qw\n"
+        guard content.contains(broken), !content.contains("qwant_categ") else { return }
+
+        let fixed = content.replacingOccurrences(
+            of: broken,
+            with: "  - name: qwant\n    engine: qwant\n    shortcut: qw\n    qwant_categ: web\n"
+        )
+        if let newData = fixed.data(using: .utf8),
+           await proxy.writeFileAsync(data: newData, toPath: settingsPath) {
+            logs.append("✅ Fixed qwant engine config (qwant_categ required by the current runtime). Restart SearXNG to apply.")
+        } else {
+            logs.append("⚠️ Could not fix qwant engine config (XPC write failed)")
+        }
+    }
+
+    /// Flips the provisioned `ui.theme_args.simple_style: dark` to `auto` so the local web UI follows
+    /// the browser's prefers-color-scheme (which tracks the app's Appearance setting) instead of
+    /// staying pitch-dark when Searxly is in light mode. Only rewrites the exact provisioned `dark`
+    /// default — a hand-edited `light`/`black` is left alone. Idempotent.
+    func ensureSimpleStyleAutoIfNeeded() async {
+        guard let proxy = HelperClient.shared.proxy() else { return }
+        let settingsPath = projectFolderURL.appendingPathComponent("searxng/settings.yml").path
+        guard await proxy.fileExistsAsync(atPath: settingsPath),
+              let data = await proxy.readFileAsync(atPath: settingsPath),
+              let content = String(data: data, encoding: .utf8) else { return }
+
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(?m)^([ \t]*simple_style:[ \t]*)["']?dark["']?[ \t]*$"#,
+            options: []
+        ) else { return }
+
+        let range = NSRange(content.startIndex..., in: content)
+        guard regex.firstMatch(in: content, options: [], range: range) != nil else { return }
+
+        let patched = regex.stringByReplacingMatches(
+            in: content, options: [], range: range, withTemplate: "$1auto"
+        )
+        if let newData = patched.data(using: .utf8),
+           await proxy.writeFileAsync(data: newData, toPath: settingsPath) {
+            logs.append("✅ Web UI theme now follows the system appearance (simple_style: dark → auto). Restart SearXNG to apply.")
+        } else {
+            logs.append("⚠️ Could not update simple_style in settings.yml (XPC write failed)")
         }
     }
 

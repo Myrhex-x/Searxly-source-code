@@ -12,6 +12,7 @@
 		BFA000050000000000000001 /* libsecp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = BFA000040000000000000001 /* libsecp256k1 */; };
 		BFB000030000000000000001 /* Bulwark in Frameworks */ = {isa = PBXBuildFile; productRef = BFB000020000000000000001 /* Bulwark */; };
 		BFC000030000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BFC000020000000000000001 /* Sparkle */; };
+		BFF000030000000000000001 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = BFF000020000000000000001 /* onnxruntime */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -21,6 +22,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = BF1E144C2FE07FB70064DE5C;
 			remoteInfo = SearxlyHelper;
+		};
+		BFE0000100000000000000A9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BF13CDA62FC3421E0081D8C8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BF13CDAD2FC3421E0081D8C8;
+			remoteInfo = Searxly;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -37,9 +45,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BF1057010000000000000008 /* SearxlyiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SearxlyiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF13CDAE2FC3421E0081D8C8 /* Searxly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Searxly.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = SearxlyHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFC04F1600000000000000C1 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		BFE0000100000000000000A2 /* SearxlyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SearxlyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -53,6 +63,16 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		BF1057010000000000000009 /* SearxlyiOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SearxlyiOS;
+			sourceTree = "<group>";
+		};
+		BF1057010000000000000010 /* SearxlyShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SearxlyShared;
+			sourceTree = "<group>";
+		};
 		BF13CDB02FC3421E0081D8C8 /* Searxly */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Searxly;
@@ -71,9 +91,19 @@
 			path = SearxlyHelper;
 			sourceTree = "<group>";
 		};
+		BFE0000100000000000000A3 /* SearxlyTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SearxlyTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		BF1057010000000000000006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 		BF13CDAB2FC3421E0081D8C8 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
@@ -81,9 +111,15 @@
 				BFA000050000000000000001 /* libsecp256k1 in Frameworks */,
 				BFB000030000000000000001 /* Bulwark in Frameworks */,
 				BFC000030000000000000001 /* Sparkle in Frameworks */,
+				BFF000030000000000000001 /* onnxruntime in Frameworks */,
 			);
 		};
 		BF1E144A2FE07FB70064DE5C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		BFE0000100000000000000A5 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -98,6 +134,9 @@
 				BF13CE082FC458470081D8C8 /* LocalSearxng */,
 				BF13CDB02FC3421E0081D8C8 /* Searxly */,
 				BF1E144E2FE07FB70064DE5C /* SearxlyHelper */,
+				BFE0000100000000000000A3 /* SearxlyTests */,
+				BF1057010000000000000009 /* SearxlyiOS */,
+				BF1057010000000000000010 /* SearxlyShared */,
 				BF13CDAF2FC3421E0081D8C8 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -107,6 +146,8 @@
 			children = (
 				BF13CDAE2FC3421E0081D8C8 /* Searxly.app */,
 				BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */,
+				BFE0000100000000000000A2 /* SearxlyTests.xctest */,
+				BF1057010000000000000008 /* SearxlyiOS.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -114,6 +155,25 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		BF1057010000000000000001 /* SearxlyiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BF1057010000000000000002 /* Build configuration list for PBXNativeTarget "SearxlyiOS" */;
+			buildPhases = (
+				BF1057010000000000000005 /* Sources */,
+				BF1057010000000000000006 /* Frameworks */,
+				BF1057010000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				BF1057010000000000000009 /* SearxlyiOS */,
+				BF1057010000000000000010 /* SearxlyShared */,
+			);
+			name = SearxlyiOS;
+			productName = SearxlyiOS;
+			productReference = BF1057010000000000000008 /* SearxlyiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
 		BF13CDAD2FC3421E0081D8C8 /* Searxly */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = BF13CDB92FC3421F0081D8C8 /* Build configuration list for PBXNativeTarget "Searxly" */;
@@ -131,6 +191,7 @@
 				BF1E14572FE07FB70064DE5C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
+				BF1057010000000000000010 /* SearxlyShared */,
 				BF13CDB02FC3421E0081D8C8 /* Searxly */,
 				BF13CE082FC458470081D8C8 /* LocalSearxng */,
 			);
@@ -140,6 +201,7 @@
 				BFA000040000000000000001 /* libsecp256k1 */,
 				BFB000020000000000000001 /* Bulwark */,
 				BFC000020000000000000001 /* Sparkle */,
+				BFF000020000000000000001 /* onnxruntime */,
 			);
 			productName = Searxly;
 			productReference = BF13CDAE2FC3421E0081D8C8 /* Searxly.app */;
@@ -163,6 +225,26 @@
 			productReference = BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */;
 			productType = "com.apple.product-type.xpc-service";
 		};
+		BFE0000100000000000000A1 /* SearxlyTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BFE0000100000000000000A6 /* Build configuration list for PBXNativeTarget "SearxlyTests" */;
+			buildPhases = (
+				BFE0000100000000000000A4 /* Sources */,
+				BFE0000100000000000000A5 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BFE0000100000000000000AA /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				BFE0000100000000000000A3 /* SearxlyTests */,
+			);
+			name = SearxlyTests;
+			productName = SearxlyTests;
+			productReference = BFE0000100000000000000A2 /* SearxlyTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -173,11 +255,18 @@
 				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					BF1057010000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					BF13CDAD2FC3421E0081D8C8 = {
 						CreatedOnToolsVersion = 26.5;
 					};
 					BF1E144C2FE07FB70064DE5C = {
 						CreatedOnToolsVersion = 27.0;
+					};
+					BFE0000100000000000000A1 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = BF13CDAD2FC3421E0081D8C8;
 					};
 				};
 			};
@@ -195,6 +284,7 @@
 				BFA000010000000000000001 /* XCRemoteSwiftPackageReference "secp256k1" */,
 				BFB000010000000000000001 /* XCRemoteSwiftPackageReference "bulwark" */,
 				BFC000010000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				BFF000010000000000000001 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 			);
 			preferredProjectObjectVersion = 110;
 			productRefGroup = BF13CDAF2FC3421E0081D8C8 /* Products */;
@@ -203,11 +293,18 @@
 			targets = (
 				BF13CDAD2FC3421E0081D8C8 /* Searxly */,
 				BF1E144C2FE07FB70064DE5C /* SearxlyHelper */,
+				BFE0000100000000000000A1 /* SearxlyTests */,
+				BF1057010000000000000001 /* SearxlyiOS */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		BF1057010000000000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
 		BF13CDAC2FC3421E0081D8C8 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
@@ -262,12 +359,22 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		BF1057010000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 		BF13CDAA2FC3421E0081D8C8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
 			);
 		};
 		BF1E14492FE07FB70064DE5C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		BFE0000100000000000000A4 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
 			);
@@ -280,13 +387,85 @@
 			target = BF1E144C2FE07FB70064DE5C /* SearxlyHelper */;
 			targetProxy = BF1E14562FE07FB70064DE5C /* PBXContainerItemProxy */;
 		};
+		BFE0000100000000000000AA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BF13CDAD2FC3421E0081D8C8 /* Searxly */;
+			targetProxy = BFE0000100000000000000A9 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		BF1057010000000000000003 /* Debug configuration for PBXNativeTarget "SearxlyiOS" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KKRU446268;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Face ID to unlock the app when App Lock is enabled.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyiOS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BF1057010000000000000004 /* Release configuration for PBXNativeTarget "SearxlyiOS" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KKRU446268;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Face ID to unlock the app when App Lock is enabled.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyiOS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		BF13CDB72FC3421F0081D8C8 /* Debug configuration for PBXProject "Searxly" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -339,7 +518,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -354,6 +533,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -400,7 +580,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -421,7 +601,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -435,11 +615,12 @@
 					"@executable_path/../Frameworks",
 				);
 				LSMinimumSystemVersion = 26.0;
-				MARKETING_VERSION = 0.9;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -460,7 +641,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -474,11 +655,12 @@
 					"@executable_path/../Frameworks",
 				);
 				LSMinimumSystemVersion = 26.0;
-				MARKETING_VERSION = 0.9;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -494,14 +676,14 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SearxlyHelper/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SearxlyHelper;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyHelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -522,14 +704,14 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SearxlyHelper/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SearxlyHelper;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyHelper;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -543,9 +725,53 @@
 			};
 			name = Release;
 		};
+		BFE0000100000000000000A7 /* Debug configuration for PBXNativeTarget "SearxlyTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KKRU446268;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Searxly.app/Contents/MacOS/Searxly";
+			};
+			name = Debug;
+		};
+		BFE0000100000000000000A8 /* Release configuration for PBXNativeTarget "SearxlyTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KKRU446268;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Searxly.app/Contents/MacOS/Searxly";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		BF1057010000000000000002 /* Build configuration list for PBXNativeTarget "SearxlyiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BF1057010000000000000003 /* Debug configuration for PBXNativeTarget "SearxlyiOS" */,
+				BF1057010000000000000004 /* Release configuration for PBXNativeTarget "SearxlyiOS" */,
+			);
+			defaultConfigurationName = Release;
+		};
 		BF13CDA92FC3421E0081D8C8 /* Build configuration list for PBXProject "Searxly" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -567,6 +793,14 @@
 			buildConfigurations = (
 				BF1E145B2FE07FB70064DE5C /* Debug configuration for PBXNativeTarget "SearxlyHelper" */,
 				BF1E145C2FE07FB70064DE5C /* Release configuration for PBXNativeTarget "SearxlyHelper" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		BFE0000100000000000000A6 /* Build configuration list for PBXNativeTarget "SearxlyTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BFE0000100000000000000A7 /* Debug configuration for PBXNativeTarget "SearxlyTests" */,
+				BFE0000100000000000000A8 /* Release configuration for PBXNativeTarget "SearxlyTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -597,6 +831,14 @@
 				minimumVersion = 2.0.0;
 			};
 		};
+		BFF000010000000000000001 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/microsoft/onnxruntime-swift-package-manager";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.20.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -619,6 +861,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BFC000010000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		BFF000020000000000000001 /* onnxruntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BFF000010000000000000001 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

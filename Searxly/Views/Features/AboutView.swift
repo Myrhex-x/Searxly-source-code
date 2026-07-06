@@ -25,7 +25,7 @@ struct AboutView: View {
             }
 
             VStack(spacing: 2) {
-                Text("Version 0.7 (\(Bundle.main.buildNumber))")
+                Text("Version \(Bundle.main.appVersion) (\(Bundle.main.buildNumber))")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
 
@@ -70,7 +70,7 @@ struct AboutView: View {
 
 extension Bundle {
     var appVersion: String {
-        infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.7"
+        infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
     
     var buildNumber: String {

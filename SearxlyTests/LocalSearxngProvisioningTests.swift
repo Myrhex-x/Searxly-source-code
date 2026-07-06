@@ -10,6 +10,9 @@
 import XCTest
 @testable import Searxly
 
+// LocalSearxngManager (and most of the app, via SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor) is
+// main-actor isolated, so the test methods that touch it must run on the main actor too.
+@MainActor
 final class LocalSearxngProvisioningTests: XCTestCase {
 
     // MARK: - Secret generation
@@ -125,10 +128,14 @@ final class LocalSearxngProvisioningTests: XCTestCase {
             throw XCTSkip("bundled settings.yml.example not found — run tests from the full app target")
         }
 
-        // Verify the bundled settings template is reachable
+        // Verify the bundled settings template is reachable. Synchronized-group resources are
+        // flattened into the bundle (the subdirectory path is not preserved), so accept either the
+        // subdirectoried lookup or the flat one.
         let settingsURL = Bundle.main.url(forResource: "settings", withExtension: "yml", subdirectory: "LocalSearxng/searxng")
             ?? Bundle.main.url(forResource: "settings", withExtension: "yml.example", subdirectory: "LocalSearxng/searxng")
-        XCTAssertNotNil(settingsURL, "Bundled settings.yml (or .yml.example) must exist in LocalSearxng/searxng/")
+            ?? Bundle.main.url(forResource: "settings", withExtension: "yml")
+            ?? Bundle.main.url(forResource: "settings", withExtension: "yml.example")
+        XCTAssertNotNil(settingsURL, "Bundled settings.yml (or .yml.example) must be present in the app bundle")
     }
 
     @MainActor

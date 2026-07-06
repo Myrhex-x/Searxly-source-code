@@ -19,8 +19,6 @@ struct WebViewRepresentable: NSViewRepresentable {
     @Binding var canGoBack: Bool
     @Binding var canGoForward: Bool
 
-    @Binding var isReaderMode: Bool
-    let onReaderContentExtracted: ((String, String) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -28,10 +26,17 @@ struct WebViewRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WebViewContainer {
         webView.navigationDelegate = context.coordinator
+        // UI delegate routes new-window requests (target="_blank", window.open, "Open Link in New Tab")
+        // into Searxly tabs. Without it WKWebView silently drops those navigations.
+        webView.uiDelegate = context.coordinator
 
         let ucc = webView.configuration.userContentController
         ucc.removeScriptMessageHandler(forName: "adblockDiagnostic")
         ucc.add(context.coordinator, name: "adblockDiagnostic")
+
+        // Link-hover reporter → status strip (bottom-left "where this link goes").
+        ucc.removeScriptMessageHandler(forName: "linkHover")
+        ucc.add(context.coordinator, name: "linkHover")
 
         // Wallet provider bridge (EIP-1193). Uses the reply-handler variant so JS can await
         // the result directly. Registered in the page content world so window.ethereum sees it.
@@ -101,29 +106,6 @@ struct WebViewRepresentable: NSViewRepresentable {
         webView.evaluateJavaScript("window.getSelection().removeAllRanges()")
     }
 
-    func toggleReaderMode() {
-        guard let onReaderContentExtracted else { return }
-
-        if isReaderMode {
-            onReaderContentExtracted("", "")
-            return
-        }
-
-        webView.evaluateJavaScript(ReaderExtraction.script) { result, error in
-            if let dict = result as? [String: Any],
-               let html = dict["html"] as? String,
-               let title = dict["title"] as? String {
-                DispatchQueue.main.async {
-                    onReaderContentExtracted(title, html)
-                }
-            } else if let error {
-                if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseTabLifecycleLogging {
-                    Log.web.error("[Dev] Reader extraction error: \(error)")
-                }
-            }
-        }
-    }
-
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var parent: WebViewRepresentable
         weak var observedWebView: WKWebView?
@@ -131,10 +113,16 @@ struct WebViewRepresentable: NSViewRepresentable {
 
         var hasSeededBackForward = false
         var didTeardown = false
+        /// Timestamp of the last auto-reload triggered by a WebContent process crash. Used to rate-limit
+        /// recovery so a page that deterministically kills its renderer can't spin in a reload loop.
+        var lastWebContentCrashReload: Date?
         var youtubeRecoveryTimer: Timer?
         var youtubeHighFreqSource: DispatchSourceTimer?
         var hasReappliedAdBlockLate = false
         var appliedAdBlockRuleListIDs = Set<ObjectIdentifier>()
+
+        /// URL cancelled because the Maximum-Privacy kill switch was closed; reloaded when protection returns.
+        var lastBlockedURL: URL?
 
         func isYouTubeVideoPage(_ url: URL?) -> Bool {
             guard let url = url else { return false }
@@ -159,6 +147,12 @@ struct WebViewRepresentable: NSViewRepresentable {
                 name: AdBlockNotifications.rulesReady,
                 object: nil
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(protectionStateChanged),
+                name: PrivacyGate.protectionStateChangedNotification,
+                object: nil
+            )
         }
 
         func teardown() {
@@ -174,9 +168,11 @@ struct WebViewRepresentable: NSViewRepresentable {
                 webView.removeObserver(self, forKeyPath: #keyPath(WKWebView.canGoBack))
                 webView.removeObserver(self, forKeyPath: #keyPath(WKWebView.canGoForward))
                 webView.configuration.userContentController.removeScriptMessageHandler(forName: "adblockDiagnostic")
+                webView.configuration.userContentController.removeScriptMessageHandler(forName: "linkHover")
             }
 
             NotificationCenter.default.removeObserver(self, name: AdBlockNotifications.rulesReady, object: nil)
+            NotificationCenter.default.removeObserver(self, name: PrivacyGate.protectionStateChangedNotification, object: nil)
             observedWebView = nil
             observedContainer = nil
         }

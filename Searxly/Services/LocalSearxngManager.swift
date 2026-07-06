@@ -57,6 +57,25 @@ engines:
     shortcut: bin
     categories: [news]
 
+  # google_news is the freshest, broadest news source and works from residential IPs (RSS-based,
+  # unlike the JS-walled `google` web engine). It ignores time_range/paging, so bing_news carries the
+  # time-filter + infinite-scroll load; together they give the news tab real breadth and recency.
+  - name: google news
+    engine: google_news
+    shortcut: gon
+    categories: [news]
+
+  # reuters: a wire service that returns REAL ISO publishedDate on every result (bing/google don't) —
+  # so it drives accurate timestamps + LIVE badges + recency sort — and it stays up when google_news
+  # gets rate-limited, so the tab never empties. sort_order=display_date:desc keeps it LIVE (the default
+  # "relevance" surfaces years-old archive articles). yahoo_news was tested and dropped (dead from
+  # residential IPs).
+  - name: reuters
+    engine: reuters
+    shortcut: reut
+    categories: [news]
+    sort_order: "display_date:desc"
+
   - name: bing videos
     engine: bing_videos
     shortcut: biv
@@ -204,9 +223,28 @@ final class LocalSearxngManager {
     /// UserDefaults key mirrored from ContentView's @AppStorage — gates background auto-start.
     static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
 
+    /// The user's REAL home directory (e.g. `/Users/alice`), resolved from the account record via
+    /// `getpwuid(3)` rather than `FileManager.homeDirectoryForCurrentUser`.
+    ///
+    /// This app is sandboxed, so `homeDirectoryForCurrentUser` (and `NSHomeDirectory()`) is redirected
+    /// to the container at `~/Library/Containers/<bundle-id>/Data`. But the bundled SearXNG runs under
+    /// the UNSANDBOXED SearxlyHelper, whose file-operation allow-list is rooted at the *real*
+    /// `~/searxng-local`. Both sides must name the exact same absolute path, so we resolve the true home
+    /// here. `getpwuid` reads the account record and is not redirected by the sandbox; the app never
+    /// touches this path directly (all I/O routes through the helper), so no file entitlement is needed.
+    static var realHomeDirectory: URL {
+        if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
+            let path = FileManager.default.string(withFileSystemRepresentation: dir, length: strlen(dir))
+            if !path.isEmpty { return URL(fileURLWithPath: path, isDirectory: true) }
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+    }
+
     /// Default location created by the onboarding "Create Local SearXNG Setup Folder" button.
-    /// This is the canonical path Searxly uses for its private local instance.
-    let projectFolderURL: URL = FileManager.default.homeDirectoryForCurrentUser
+    /// This is the canonical path Searxly uses for its private local instance. It must resolve to the
+    /// real home (not the sandbox container) so it matches the unsandboxed helper's allow-list — see
+    /// `realHomeDirectory`.
+    let projectFolderURL: URL = LocalSearxngManager.realHomeDirectory
         .appendingPathComponent("searxng-local")
 
     /// Whether Searxly may start the local SearXNG instance without an explicit user action.
@@ -228,6 +266,14 @@ final class LocalSearxngManager {
         }
         return ["http://127.0.0.1:8080", "http://localhost:8080"]
     }
+
+    /// True only while the RUNNING local instance is verified to send its upstream engine traffic
+    /// through Tor (outgoing.proxies patched + process restarted onto it). PrivacyGate's loopback
+    /// search lane keys off this in Maximum Privacy + Tor — see LocalSearxngManager+TorRouting.
+    var torSearchRouted = false
+
+    /// Coalesces concurrent Tor-routing reconciles (mode flips while one is already in flight).
+    var torRoutingReconcileTask: Task<Void, Never>?
 
     var currentTask: Task<Void, Never>?
 

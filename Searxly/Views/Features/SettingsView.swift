@@ -29,7 +29,14 @@ enum SettingsSidebarGroup: String, CaseIterable, Identifiable {
         case .search:
             return [.search, .instances]
         case .features:
-            return [.wallet, .localAI, .performance]
+            var categories: [SettingsCategory] = [.wallet, .performance]
+            if AIFeatures.programEnabled {
+                categories.insert(contentsOf: [.searxlyAI, .localAI], at: 0)
+            }
+            if ExtensionFeatures.programEnabled {
+                categories.insert(.extensions, at: categories.count - 1)
+            }
+            return categories
         case .support:
             return [.feedback, .about]
         }
@@ -45,10 +52,12 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case vpn = "VPN"
     case tor = "Tor"
     case performance = "Performance"
+    case extensions = "Extensions"
     case search = "Search"
     case instances = "SearXNG Instances"
     case wallet = "Wallet"
-    case localAI = "Searxly Agent"
+    case searxlyAI = "Searxly AI"
+    case localAI = "On-Device & Local AI"
     case feedback = "Feedback"
     case about = "About"
 
@@ -64,9 +73,11 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .tor: return "point.3.connected.trianglepath.dotted"
         case .wallet:      return "hexagon.fill"
         case .performance: return "speedometer"
+        case .extensions: return "puzzlepiece.extension.fill"
         case .search: return "text.magnifyingglass"
         case .instances: return "network"
-        case .localAI: return "sparkles"
+        case .searxlyAI: return "sparkles"
+        case .localAI: return "cpu"
         case .feedback: return "exclamationmark.bubble.fill"
         case .about: return "info.circle"
         }
@@ -81,10 +92,12 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .vpn:         return Localization.string("vpn_title", defaultValue: "VPN")
         case .tor:         return Localization.string("tor_title", defaultValue: "Tor / Onion")
         case .performance: return Localization.string("performance_title", defaultValue: "Performance")
+        case .extensions:  return Localization.string("extensions_title", defaultValue: "Extensions")
         case .search:      return Localization.string("search_settings_title", defaultValue: "Search")
         case .instances:   return Localization.string("instances_title", defaultValue: "SearXNG Instances")
         case .wallet:      return "Wallet"
-        case .localAI:     return Localization.string("local_ai_title", defaultValue: "Searxly Agent")
+        case .searxlyAI:   return Localization.string("searxly_ai_title", defaultValue: "Searxly AI")
+        case .localAI:     return Localization.string("local_ai_title", defaultValue: "On-Device & Local AI")
         case .feedback:    return Localization.string("feedback_title", defaultValue: "Feedback")
         case .about:       return Localization.string("about_title", defaultValue: "About")
         }
@@ -143,9 +156,11 @@ struct SettingsView: View {
                 contentColumn
             }
         }
-        .frame(minWidth: 800, idealWidth: 860, maxWidth: 920, minHeight: 580, idealHeight: 700)
+        // minHeight kept low so the sheet can shrink to fit short parent windows / laptop screens
+        // instead of overflowing and clipping the header (top) and the last sidebar item (bottom).
+        // Both columns scroll internally, so a smaller height stays fully usable.
+        .frame(minWidth: 800, idealWidth: 860, maxWidth: 920, minHeight: 420, idealHeight: 660)
         .background(SettingsTheme.canvas)
-        .environment(\.colorScheme, .dark)
         .onAppear { selectedCategory = initialCategory }
         .alert("Notice", isPresented: $showClearConfirmation) {
             Button("OK") { }
@@ -185,10 +200,10 @@ struct SettingsView: View {
             } label: {
                 Text(Localization.string("settings_done", defaultValue: "Done"))
                     .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(SettingsTheme.onInk)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
-                    .background(.white, in: Capsule())
+                    .background(SettingsTheme.inkFill, in: Capsule())
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.defaultAction)
@@ -211,7 +226,7 @@ struct SettingsView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 28)
                 .padding(.bottom, 44)
-                .tint(.white)
+                .tint(SettingsTheme.textPrimary)
                 .toggleStyle(PremiumToggleStyle())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -233,10 +248,8 @@ struct SettingsView: View {
                 showingClearData: $showingClearData,
                 requestReauth: requestReauthForSensitiveAction,
                 onExportRecovery: {
-                    if let code = PrivacyManager.shared.exportEncryptionRecoveryCode() {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(code, forType: .string)
-                        clearedMessage = Localization.string("recovery_code_copied", defaultValue: "Recovery code copied to clipboard. Store it somewhere safe — anyone with this code can decrypt your data.")
+                    if PrivacyManager.shared.copyEncryptionRecoveryCodeToClipboard() {
+                        clearedMessage = Localization.string("recovery_code_copied", defaultValue: "Recovery code copied — paste it somewhere safe now. The clipboard clears itself after 45 seconds.")
                         showClearConfirmation = true
                     } else {
                         clearedMessage = Localization.string("no_encryption_key", defaultValue: "No encryption key found to export.")
@@ -252,15 +265,13 @@ struct SettingsView: View {
         case .passwords:
             PasswordsSettingsView(onOpenVault: openPasswordVaultFromSettings)
         case .vpn:
-            VStack(alignment: .leading, spacing: 24) {
-                VPNManagedView()
-                SettingsDivider()
-                VPNOwnServersView()
-            }
+            VPNManagedView()
         case .tor:
             TorSettingsView()
         case .performance:
             PerformanceSettingsView()
+        case .extensions:
+            ExtensionsSettingsView()
         case .search:
             SearchSettingsView(knowledgePanelEnabled: $knowledgePanelEnabled)
         case .instances:
@@ -270,6 +281,8 @@ struct SettingsView: View {
             )
         case .wallet:
             WalletSettingsSection()
+        case .searxlyAI:
+            SearxlyAICloudSettingsView()
         case .localAI:
             LocalAISettingsView()
         case .feedback:
@@ -285,32 +298,35 @@ struct SettingsView: View {
     // MARK: - Sidebar
 
     private var sidebarView: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(SettingsSidebarGroup.allCases) { group in
-                Text(group.rawValue.uppercased())
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .tracking(0.7)
-                    .foregroundStyle(SettingsTheme.textTertiary)
-                    .padding(.horizontal, 12)
-                    .padding(.top, group == SettingsSidebarGroup.allCases.first ? 2 : 16)
-                    .padding(.bottom, 5)
+        // Scrollable so the last items (Feedback / About) are always reachable even when the Settings
+        // sheet is shorter than the full category list (short parent window / laptop screen). Shows the
+        // standard macOS scroller so it's obvious the list scrolls.
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(SettingsSidebarGroup.allCases) { group in
+                    Text(group.rawValue.uppercased())
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .tracking(0.7)
+                        .foregroundStyle(SettingsTheme.textTertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.top, group == SettingsSidebarGroup.allCases.first ? 2 : 16)
+                        .padding(.bottom, 5)
 
-                ForEach(group.categories) { category in
-                    SidebarCategoryRow(
-                        category: category,
-                        isSelected: selectedCategory == category
-                    ) {
-                        selectedCategory = category
+                    ForEach(group.categories) { category in
+                        SidebarCategoryRow(
+                            category: category,
+                            isSelected: selectedCategory == category
+                        ) {
+                            selectedCategory = category
+                        }
                     }
                 }
             }
-
-            Spacer(minLength: 20)
+            .frame(width: 208, alignment: .leading)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
+            .padding(.horizontal, 10)
         }
-        .frame(width: 208, alignment: .leading)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
-        .padding(.horizontal, 10)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(SettingsTheme.canvasRaised)
         .overlay(alignment: .trailing) {
@@ -456,8 +472,8 @@ private struct SidebarCategoryRow: View {
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected
-                          ? Color.white.opacity(0.09)
-                          : (isHovering ? Color.white.opacity(0.045) : Color.clear))
+                          ? SettingsTheme.fillStrong
+                          : (isHovering ? SettingsTheme.fillSubtle : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)

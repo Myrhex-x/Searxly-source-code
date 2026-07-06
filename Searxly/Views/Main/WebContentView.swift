@@ -18,8 +18,6 @@ struct WebContentView: View {
     @Binding var webCurrentURL: URL?
     @Binding var webViewCanGoBack: Bool
     @Binding var webViewCanGoForward: Bool
-    @Binding var isReaderMode: Bool
-    let onReaderContentExtracted: (String, String) -> Void
 
     // Find bar
     @Binding var showingFindBar: Bool
@@ -57,14 +55,14 @@ struct WebContentView: View {
                 pageTitle: $webPageTitle,
                 currentURL: $webCurrentURL,
                 canGoBack: $webViewCanGoBack,
-                canGoForward: $webViewCanGoForward,
-                isReaderMode: $isReaderMode,
-                onReaderContentExtracted: onReaderContentExtracted
+                canGoForward: $webViewCanGoForward
             )
             .id(activeWebView)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.regularMaterial)
+        // (The "where this link goes" strip is drawn as an AppKit subview inside WebViewContainer so
+        // it sits above the heavyweight WKWebView — a SwiftUI overlay here would render behind it.)
         // Clip to the true content pane bounds. Prevents any transient overflow visuals
         // during first paint or while the container is settling size after a tab switch / wake.
         .clipped()

@@ -173,6 +173,8 @@ struct WebResultRow: View {
             }
             .onHover { hovering in
                 DispatchQueue.main.async { isHovering = hovering }
+                if hovering { HoverLinkState.shared.enter(result.url) }
+                else { HoverLinkState.shared.leave(result.url) }
             }
         }
         .buttonStyle(.plain)

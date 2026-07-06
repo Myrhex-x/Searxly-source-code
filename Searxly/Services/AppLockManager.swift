@@ -69,10 +69,15 @@ final class AppLockManager {
     private var eventMonitor: Any?
     private var didBecomeActiveObserver: NSObjectProtocol?
 
+    /// Observers that lock the app + vault the instant the Mac sleeps or the screen locks.
+    private var systemLockObservers: [NSObjectProtocol] = []
+
     private init() {
         loadState()
         // Best-effort: clean any old PIN data the very first time this manager runs.
         cleanupLegacyPINDataIfPresent()
+        // Lock immediately on sleep / screen lock (the inactivity timer alone doesn't cover a lid-close).
+        setupSystemLockObservers()
     }
 
     // MARK: - Public API
@@ -244,18 +249,30 @@ final class AppLockManager {
                 self.authorizationInProgress = false
 
                 if success {
-                    self.isUnlocked = true
-                    self.markSessionAsAuthenticated()
-                    completion(true)
-
+                    // Second factor: when a security key is required for App Lock, biometric success
+                    // alone is not enough — also require a tap on an enrolled key before unlocking.
                     Task { @MainActor in
+                        let keyOK = await SecurityKeyManager.shared.assertIfRequiredForAppLock()
+                        guard keyOK else {
+                            // Biometric passed but the security-key step failed / was cancelled → stay locked.
+                            if DeveloperSettings.shared.verboseSecurityLogging {
+                                Log.security.notice("AppLockManager: biometric ok but security key not provided — staying locked")
+                            }
+                            completion(false)
+                            return
+                        }
+
+                        self.isUnlocked = true
+                        self.markSessionAsAuthenticated()
+                        completion(true)
+
                         if PrivacyManager.shared.dataEncryptionEnabled {
                             PrivacyManager.shared.onSessionAuthenticatedForEncryption()
                         }
                         self.recordActivity()
                         self.startOrStopInactivityMonitoring()
                         if DeveloperSettings.shared.verboseSecurityLogging {
-                            Log.security.info("AppLockManager: authenticated successfully via LocalAuthentication")
+                            Log.security.info("AppLockManager: authenticated successfully via LocalAuthentication + security key")
                         }
                     }
                 } else {
@@ -335,6 +352,40 @@ final class AppLockManager {
         // If we are currently locked, also force on next launch (user explicitly wanted protection).
         if !isUnlocked {
             UserDefaults.standard.set(true, forKey: pendingForceLockKey)
+        }
+    }
+
+    // MARK: - System sleep / screen-lock auto-lock
+
+    /// Registers observers that lock the app (and the password vault) the moment the Mac sleeps or the
+    /// screen is locked — the "closed the lid / walked away" defense. The inactivity timer alone would
+    /// leave things unlocked until it expires; this closes that window.
+    private func setupSystemLockObservers() {
+        let onEvent: @Sendable (Notification) -> Void = { _ in
+            Task { @MainActor in AppLockManager.shared.lockForSystemSecurityEvent() }
+        }
+        let ws = NSWorkspace.shared.notificationCenter
+        systemLockObservers.append(ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main, using: onEvent))
+        systemLockObservers.append(ws.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main, using: onEvent))
+        // Screen lock (Lock Screen menu, hot corner, ⌃⌘Q, fast user switch) — a system notification.
+        systemLockObservers.append(
+            DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main, using: onEvent)
+        )
+    }
+
+    /// Locks the app (if App Lock is on + currently unlocked) and the password vault (if unlocked) in
+    /// response to a system sleep / screen-lock event.
+    private func lockForSystemSecurityEvent() {
+        if isAppLockEnabled && isUnlocked {
+            lock()
+            if DeveloperSettings.shared.verboseSecurityLogging {
+                Log.security.notice("AppLockManager: locked on system sleep / screen lock")
+            }
+        }
+        // The vault has its own lock, independent of App Lock — don't let it survive a lid-close.
+        let vault = PasswordVaultManager.shared
+        if vault.isVaultUnlocked {
+            vault.lockVault()
         }
     }
 

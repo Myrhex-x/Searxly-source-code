@@ -10,15 +10,14 @@
 import SwiftUI
 
 struct TorSettingsView: View {
-    private var tor: TorManager { TorManager.shared }
+    @Bindable private var tor = TorManager.shared
     @State private var showLogs = false
-    @State private var consentAcknowledged = false
 
     var body: some View {
         SettingsPane {
             SettingsPaneHeader(
                 title: "Tor / Onion Sites",
-                subtitle: "Reach .onion hidden services privately. Searxly runs a bundled Tor client and routes only onion tabs through it — your normal browsing is untouched."
+                subtitle: "Reach .onion hidden services over the bundled Tor client. Off by default — onion tabs route through Tor without touching normal browsing. Separate from Maximum Privacy, which can also route search and app traffic over Tor (Settings → Privacy & Data)."
             )
 
             if !tor.isAvailable {
@@ -31,60 +30,52 @@ struct TorSettingsView: View {
             }
 
             SettingsSection(
-                title: "Status",
-                footer: "Tor starts automatically the first time you open a .onion link, and stops when you close the last onion tab."
+                title: "Onion routing",
+                footer: "When on, opening a .onion address routes that tab through the bundled Tor client. Tor starts on your first onion and stops when the last onion tab closes."
             ) {
-                statusRow
-                SettingsDivider()
-                infoRow(label: "Bundled Tor", value: tor.bundledVersion)
-                SettingsDivider()
-                infoRow(label: "SOCKS proxy", value: "\(tor.socksHost):\(tor.socksPort)")
-
-                if tor.isRunning {
-                    SettingsDivider()
-                    SettingsActionChip(title: "Stop Tor", systemImage: "stop.circle") {
-                        Task { await TorManager.shared.stop() }
-                    }
-                }
+                SettingsToggleRow(
+                    title: "Enable Tor for onion sites",
+                    description: "Hides your IP and reaches .onion services with no DNS leaks. Not a Tor Browser replacement (see below).",
+                    isOn: $tor.isEnabled
+                )
             }
 
-            SettingsSection(title: "Activity") {
-                SettingsActionChip(title: showLogs ? "Hide log" : "View log",
-                                   systemImage: "text.alignleft") {
-                    showLogs.toggle()
-                }
-                if showLogs {
-                    SettingsInsetPanel {
-                        if tor.logs.isEmpty {
-                            Text("No Tor activity yet.")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(SettingsTheme.textTertiary)
-                        } else {
-                            Text(tor.logs.suffix(40).joined(separator: "\n"))
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(SettingsTheme.textSecondary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
+            if tor.isEnabled {
+                SettingsSection(title: "Status") {
+                    statusRow
+                    SettingsDivider()
+                    infoRow(label: "Bundled Tor", value: tor.bundledVersion)
+                    SettingsDivider()
+                    infoRow(label: "SOCKS proxy", value: "\(tor.socksHost):\(tor.socksPort)")
+
+                    if tor.isRunning {
+                        SettingsDivider()
+                        SettingsActionChip(title: "Stop Tor", systemImage: "stop.circle") {
+                            Task { await TorManager.shared.stop() }
                         }
                     }
                 }
-            }
 
-            SettingsSection(
-                title: "Permissions",
-                footer: "Searxly asks once, the first time you open a .onion site, before routing it through Tor. Reset it and you’ll be asked again next time."
-            ) {
-                if consentAcknowledged {
-                    infoRow(label: "Onion consent", value: "Granted")
-                    SettingsDivider()
-                    SettingsActionChip(title: "Reset Tor consent", systemImage: "arrow.counterclockwise") {
-                        BrowserState.hasAcknowledgedTorDisclosure = false
-                        consentAcknowledged = false
+                SettingsSection(title: "Activity") {
+                    SettingsActionChip(title: showLogs ? "Hide log" : "View log",
+                                       systemImage: "text.alignleft") {
+                        showLogs.toggle()
                     }
-                } else {
-                    Text("You’ll be asked to confirm the next time you open a .onion site.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(SettingsTheme.textSecondary)
+                    if showLogs {
+                        SettingsInsetPanel {
+                            if tor.logs.isEmpty {
+                                Text("No Tor activity yet.")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(SettingsTheme.textTertiary)
+                            } else {
+                                Text(tor.logs.suffix(40).joined(separator: "\n"))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(SettingsTheme.textSecondary)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -95,7 +86,6 @@ struct TorSettingsView: View {
                 systemImage: "hand.raised.fill"
             )
         }
-        .onAppear { consentAcknowledged = BrowserState.hasAcknowledgedTorDisclosure }
     }
 
     // MARK: - Rows

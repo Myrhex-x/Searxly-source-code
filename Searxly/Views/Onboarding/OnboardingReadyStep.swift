@@ -35,7 +35,7 @@ struct OnboardingReadyStep: View {
                     ? "Touch ID or your password is required to open Searxly."
                     : "Turn it on anytime in Settings → Privacy."
             ),
-            SummaryRow(done: true, title: "Wallet & VPN ready", detail: "Self-custody wallet and WireGuard VPN are built in.")
+            SummaryRow(done: true, title: "Wallet, VPN & Tor ready", detail: "Self-custody wallet, one-tap VPN, and .onion access — all built in.")
         ]
     }
 
@@ -77,6 +77,52 @@ struct OnboardingReadyStep: View {
                 }
             }
             .frame(maxWidth: 500)
+
+            if !DefaultBrowserManager.shared.isDefault {
+                Button {
+                    DefaultBrowserManager.shared.makeDefault()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Make Searxly your default browser")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background(
+                        Capsule()
+                            .fill(AdaptiveChrome.fill(colorScheme, dark: 0.12))
+                            .overlay(Capsule().strokeBorder(AdaptiveChrome.border(colorScheme, dark: 0.22), lineWidth: 1))
+                    )
+                }
+                .buttonStyle(.plain)
+                .onboardingVisualReveal(revealed, reduceMotion: reduceMotion, delay: 0.46)
+                .padding(.top, 22)
+            }
+
+            Button {
+                NotificationCenter.default.post(name: .importDataRequested, object: nil)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Import from another browser")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .background(
+                    Capsule()
+                        .fill(AdaptiveChrome.fill(colorScheme, dark: 0.08))
+                        .overlay(Capsule().strokeBorder(AdaptiveChrome.border(colorScheme, dark: 0.16), lineWidth: 1))
+                )
+            }
+            .buttonStyle(.plain)
+            .onboardingVisualReveal(revealed, reduceMotion: reduceMotion, delay: DefaultBrowserManager.shared.isDefault ? 0.46 : 0.5)
+            .padding(.top, DefaultBrowserManager.shared.isDefault ? 22 : 10)
 
             Spacer(minLength: 4)
 

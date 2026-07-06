@@ -27,9 +27,21 @@ struct AppData: Codable {
     /// This is the main lever for "Maximum privacy" vs "Balanced" experience.
     var defaultNewTabsToPrivate: Bool = true
 
+    /// App-wide privacy posture (Normal / Encrypted / Maximum Privacy). See AppPrivacyMode.
+    /// Persisted here so the chosen mode survives restarts and participates in at-rest encryption.
+    var appPrivacyMode: AppPrivacyMode = .normal
+
+    /// Which protection network Maximum Privacy enforces via the kill switch (Searxly VPN or Tor).
+    /// Only meaningful while appPrivacyMode == .maximum. See PrivacyGate.
+    var maxProtection: MaxProtection = .tor
+
     /// Stores the list of open tabs (URL + privacy mode) so they can be restored on next launch.
     /// Moving this out of UserDefaults reduces sensitive data living in unprotected storage.
     var tabSnapshots: [TabSnapshot] = []
+
+    /// User-created sidebar categories for organizing tabs (see TabCategory). Capped at
+    /// BrowserState.maxCustomCategories. Tab→category membership is stored per-tab in tabSnapshots.
+    var customTabCategories: [TabCategory] = []
 
     // Tab Hibernation settings (Performance category)
     var tabHibernationEnabled: Bool = true
@@ -107,8 +119,10 @@ struct AppData: Codable {
     var passwordVaultSuggestPasswordsEnabled: Bool = true
     var passwordVaultCopyGeneratedToClipboard: Bool = true
 
-    /// SERP right-column knowledge panel (entity + dictionary cards via private SearXNG only).
-    var knowledgePanelEnabled: Bool = true
+    /// SERP right-column knowledge panel (entity + dictionary cards). OPT-IN: the cards are fetched
+    /// directly from grokipedia.com / wikipedia.org (outside the local SearXNG), so the feature stays
+    /// off until the user explicitly enables it in Settings → Search.
+    var knowledgePanelEnabled: Bool = false
 
     // Custom decoder for backward compatibility.
     // Older AppData.json files won't have the newer keys (historyEnabled, defaultNewTabsToPrivate, tabSnapshots).
@@ -116,51 +130,65 @@ struct AppData: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
-        searxInstances     = try container.decodeIfPresent([SearXNGInstance].self, forKey: .searxInstances) ?? []
-        history            = try container.decodeIfPresent([HistoryItem].self,    forKey: .history) ?? []
-        bookmarks          = try container.decodeIfPresent([BookmarkItem].self,   forKey: .bookmarks) ?? []
-        currentInstanceID  = try container.decodeIfPresent(String.self,           forKey: .currentInstanceID)
+        // Resilient decode: every field is wrapped so a single bad or schema-changed value degrades
+        // to its default instead of throwing. A thrown decode would fail the whole-file load and
+        // reset ALL app state (history, bookmarks, instances, …) to defaults — the exact cascade that
+        // previously quarantined AppData.json and wiped data. `decodeIfPresent` already tolerates a
+        // missing key; the surrounding `try?` additionally tolerates a present-but-undecodable value
+        // (wrong type, or a nested struct whose shape changed between builds).
+        searxInstances     = (try? container.decodeIfPresent([SearXNGInstance].self, forKey: .searxInstances)) ?? []
+        history            = (try? container.decodeIfPresent([HistoryItem].self,    forKey: .history)) ?? []
+        bookmarks          = (try? container.decodeIfPresent([BookmarkItem].self,   forKey: .bookmarks)) ?? []
+        currentInstanceID  = (try? container.decodeIfPresent(String.self,           forKey: .currentInstanceID)) ?? nil
 
-        historyEnabled            = try container.decodeIfPresent(Bool.self, forKey: .historyEnabled) ?? false
-        defaultNewTabsToPrivate   = try container.decodeIfPresent(Bool.self, forKey: .defaultNewTabsToPrivate) ?? true
-        tabSnapshots = try container.decodeIfPresent([TabSnapshot].self, forKey: .tabSnapshots) ?? []
+        historyEnabled            = (try? container.decodeIfPresent(Bool.self, forKey: .historyEnabled)) ?? false
+        defaultNewTabsToPrivate   = (try? container.decodeIfPresent(Bool.self, forKey: .defaultNewTabsToPrivate)) ?? true
+        tabSnapshots = (try? container.decodeIfPresent([TabSnapshot].self, forKey: .tabSnapshots)) ?? []
+        customTabCategories = (try? container.decodeIfPresent([TabCategory].self, forKey: .customTabCategories)) ?? []
 
-        tabHibernationEnabled = try container.decodeIfPresent(Bool.self, forKey: .tabHibernationEnabled) ?? true
-        tabHibernationMaxActiveTabs      = try container.decodeIfPresent(Int.self, forKey: .tabHibernationMaxActiveTabs) ?? 8
-        tabHibernationInactivityTimeout  = try container.decodeIfPresent(Int.self, forKey: .tabHibernationInactivityTimeout) ?? 600
+        tabHibernationEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .tabHibernationEnabled)) ?? true
+        tabHibernationMaxActiveTabs      = (try? container.decodeIfPresent(Int.self, forKey: .tabHibernationMaxActiveTabs)) ?? 8
+        tabHibernationInactivityTimeout  = (try? container.decodeIfPresent(Int.self, forKey: .tabHibernationInactivityTimeout)) ?? 600
 
-        autoTabCleanupEnabled             = try container.decodeIfPresent(Bool.self, forKey: .autoTabCleanupEnabled) ?? false
-        autoCloseUnusedAfterSeconds       = try container.decodeIfPresent(Int.self, forKey: .autoCloseUnusedAfterSeconds) ?? 86400
-        autoClosePrivateTabsAfterSeconds  = try container.decodeIfPresent(Int.self, forKey: .autoClosePrivateTabsAfterSeconds) ?? 3600
-        autoCloseWhenExceedsTabCount      = try container.decodeIfPresent(Int.self, forKey: .autoCloseWhenExceedsTabCount) ?? 0
-        autoCloseBackgroundTabsOnQuit     = try container.decodeIfPresent(Bool.self, forKey: .autoCloseBackgroundTabsOnQuit) ?? false
+        autoTabCleanupEnabled             = (try? container.decodeIfPresent(Bool.self, forKey: .autoTabCleanupEnabled)) ?? false
+        autoCloseUnusedAfterSeconds       = (try? container.decodeIfPresent(Int.self, forKey: .autoCloseUnusedAfterSeconds)) ?? 86400
+        autoClosePrivateTabsAfterSeconds  = (try? container.decodeIfPresent(Int.self, forKey: .autoClosePrivateTabsAfterSeconds)) ?? 3600
+        autoCloseWhenExceedsTabCount      = (try? container.decodeIfPresent(Int.self, forKey: .autoCloseWhenExceedsTabCount)) ?? 0
+        autoCloseBackgroundTabsOnQuit     = (try? container.decodeIfPresent(Bool.self, forKey: .autoCloseBackgroundTabsOnQuit)) ?? false
 
-        appLockEnabled            = try container.decodeIfPresent(Bool.self, forKey: .appLockEnabled) ?? false
-        appLockInactivityMinutes  = try container.decodeIfPresent(Int.self, forKey: .appLockInactivityMinutes) ?? 5
-        appLockRequireOnNextLaunch = try container.decodeIfPresent(Bool.self, forKey: .appLockRequireOnNextLaunch) ?? true
+        appLockEnabled            = (try? container.decodeIfPresent(Bool.self, forKey: .appLockEnabled)) ?? false
+        appLockInactivityMinutes  = (try? container.decodeIfPresent(Int.self, forKey: .appLockInactivityMinutes)) ?? 5
+        appLockRequireOnNextLaunch = (try? container.decodeIfPresent(Bool.self, forKey: .appLockRequireOnNextLaunch)) ?? true
 
-        vpnProfiles = try container.decodeIfPresent([VPNProfile].self, forKey: .vpnProfiles) ?? []
-        vpnBrowserControlsEnabled = try container.decodeIfPresent(Bool.self, forKey: .vpnBrowserControlsEnabled) ?? false
-        vpnAccessPass = try container.decodeIfPresent(VPNAccessPass.self, forKey: .vpnAccessPass)
+        vpnProfiles = (try? container.decodeIfPresent([VPNProfile].self, forKey: .vpnProfiles)) ?? []
+        vpnBrowserControlsEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .vpnBrowserControlsEnabled)) ?? false
+        vpnAccessPass = (try? container.decodeIfPresent(VPNAccessPass.self, forKey: .vpnAccessPass)) ?? nil
 
         // NEW Phase 0 — safe decode (older files get the .default which has everything off)
-        aiPreferences = try container.decodeIfPresent(AIPreferences.self, forKey: .aiPreferences) ?? .default
+        aiPreferences = (try? container.decodeIfPresent(AIPreferences.self, forKey: .aiPreferences)) ?? .default
 
-        // Password Vault (new dedicated feature). Safe decode for older AppData.json files.
-        passwordVaultEntries = try container.decodeIfPresent([PasswordVaultEntry].self, forKey: .passwordVaultEntries) ?? []
+        // Password Vault legacy fields — retained only so PasswordVaultStore can perform a one-time
+        // migration into its own resilient file. Nothing writes these anymore.
+        passwordVaultEntries = (try? container.decodeIfPresent([PasswordVaultEntry].self, forKey: .passwordVaultEntries)) ?? []
 
-        passwordVaultUseCustomPassword = try container.decodeIfPresent(Bool.self, forKey: .passwordVaultUseCustomPassword) ?? false
-        passwordVaultCustomSalt = try container.decodeIfPresent(Data.self, forKey: .passwordVaultCustomSalt)
-        passwordVaultCustomVerifier = try container.decodeIfPresent(Data.self, forKey: .passwordVaultCustomVerifier)
+        passwordVaultUseCustomPassword = (try? container.decodeIfPresent(Bool.self, forKey: .passwordVaultUseCustomPassword)) ?? false
+        passwordVaultCustomSalt = (try? container.decodeIfPresent(Data.self, forKey: .passwordVaultCustomSalt)) ?? nil
+        passwordVaultCustomVerifier = (try? container.decodeIfPresent(Data.self, forKey: .passwordVaultCustomVerifier)) ?? nil
 
-        passwordVaultAutoLockMinutes = try container.decodeIfPresent(Int.self, forKey: .passwordVaultAutoLockMinutes) ?? 10
+        passwordVaultAutoLockMinutes = (try? container.decodeIfPresent(Int.self, forKey: .passwordVaultAutoLockMinutes)) ?? 10
 
-        passwordVaultAutofillEnabled = try container.decodeIfPresent(Bool.self, forKey: .passwordVaultAutofillEnabled) ?? true
-        passwordVaultOfferToSaveEnabled = try container.decodeIfPresent(Bool.self, forKey: .passwordVaultOfferToSaveEnabled) ?? true
-        passwordVaultSuggestPasswordsEnabled = try container.decodeIfPresent(Bool.self, forKey: .passwordVaultSuggestPasswordsEnabled) ?? true
-        passwordVaultCopyGeneratedToClipboard = try container.decodeIfPresent(Bool.self, forKey: .passwordVaultCopyGeneratedToClipboard) ?? true
+        passwordVaultAutofillEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .passwordVaultAutofillEnabled)) ?? true
+        passwordVaultOfferToSaveEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .passwordVaultOfferToSaveEnabled)) ?? true
+        passwordVaultSuggestPasswordsEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .passwordVaultSuggestPasswordsEnabled)) ?? true
+        passwordVaultCopyGeneratedToClipboard = (try? container.decodeIfPresent(Bool.self, forKey: .passwordVaultCopyGeneratedToClipboard)) ?? true
 
-        knowledgePanelEnabled = try container.decodeIfPresent(Bool.self, forKey: .knowledgePanelEnabled) ?? true
+        knowledgePanelEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .knowledgePanelEnabled)) ?? false
+
+        // App-wide privacy posture. Older files (pre-feature) lack these keys and fall back to the
+        // privacy-neutral defaults, so upgrading users are untouched; users who chose Maximum now have
+        // it restored on launch instead of silently dropping to Normal.
+        appPrivacyMode = (try? container.decodeIfPresent(AppPrivacyMode.self, forKey: .appPrivacyMode)) ?? .normal
+        maxProtection  = (try? container.decodeIfPresent(MaxProtection.self,  forKey: .maxProtection))  ?? .tor
     }
 
     // Memberwise initializer (needed because we have custom init(from:) + init()).
@@ -172,6 +200,7 @@ struct AppData: Codable {
         historyEnabled: Bool = false,
         defaultNewTabsToPrivate: Bool = true,
         tabSnapshots: [TabSnapshot] = [],
+        customTabCategories: [TabCategory] = [],
         tabHibernationEnabled: Bool = true,
         tabHibernationMaxActiveTabs: Int = 8,
         tabHibernationInactivityTimeout: Int = 600,
@@ -209,7 +238,7 @@ struct AppData: Codable {
         passwordVaultOfferToSaveEnabled: Bool = true,
         passwordVaultSuggestPasswordsEnabled: Bool = true,
         passwordVaultCopyGeneratedToClipboard: Bool = true,
-        knowledgePanelEnabled: Bool = true
+        knowledgePanelEnabled: Bool = false
     ) {
         self.searxInstances = searxInstances
         self.history = history
@@ -218,6 +247,7 @@ struct AppData: Codable {
         self.historyEnabled = historyEnabled
         self.defaultNewTabsToPrivate = defaultNewTabsToPrivate
         self.tabSnapshots = tabSnapshots
+        self.customTabCategories = customTabCategories
         self.tabHibernationEnabled = tabHibernationEnabled
         self.tabHibernationMaxActiveTabs = tabHibernationMaxActiveTabs
         self.tabHibernationInactivityTimeout = tabHibernationInactivityTimeout
@@ -262,6 +292,7 @@ struct AppData: Codable {
         case historyEnabled
         case defaultNewTabsToPrivate
         case tabSnapshots
+        case customTabCategories
         case tabHibernationEnabled
         case tabHibernationMaxActiveTabs
         case tabHibernationInactivityTimeout
@@ -302,6 +333,13 @@ struct AppData: Codable {
         case passwordVaultSuggestPasswordsEnabled
         case passwordVaultCopyGeneratedToClipboard
         case knowledgePanelEnabled
+
+        // App-wide privacy posture (Normal / Encrypted / Maximum) + which network Maximum enforces.
+        // These MUST be listed here: with an explicit CodingKeys enum, the synthesized encoder only
+        // writes listed keys, so a missing case means the value is silently dropped on save and resets
+        // to its default on every relaunch (the "Maximum Privacy reverts to Normal after quit" bug).
+        case appPrivacyMode
+        case maxProtection
     }
 }
 
@@ -346,6 +384,12 @@ enum Persistence {
     /// When data encryption is enabled, this goes through EncryptedDataStore.
     static func save(_ data: AppData) {
         EncryptedDataStore.save(data)
+    }
+
+    /// Drops the in-memory AppData cache so the next `load()` re-reads from disk.
+    /// Use after an out-of-band change to AppData.json (e.g. backup restore / encryption recovery).
+    static func invalidateCache() {
+        EncryptedDataStore.invalidateCaches()
     }
     
     /// Convenience: Save just the instances (preserves other fields including currentInstanceID)
@@ -394,6 +438,26 @@ enum Persistence {
         current.bookmarks = []
         save(current)
         Log.privacy.info("Persistence: bookmarks cleared")
+    }
+
+    /// Clears any stored VPN profiles (legacy user-supplied "own server" configs that could contain
+    /// private keys). Part of the privacy-wipe / reset flows. Replaces the old per-manager clear now
+    /// that the unused WireGuard manager is gone — the data still lives in AppData.vpnProfiles.
+    static func clearVPNProfiles() {
+        var current = load()
+        current.vpnProfiles = []
+        save(current)
+        Log.privacy.info("Persistence: VPN profiles cleared")
+    }
+
+    /// Clears the persisted tab session (open-tab snapshots + custom categories). Part of the
+    /// panic-wipe flow — session restore would otherwise resurrect every URL the user had open.
+    static func clearTabSession() {
+        var current = load()
+        current.tabSnapshots = []
+        current.customTabCategories = []
+        save(current)
+        Log.privacy.info("Persistence: tab session snapshots cleared")
     }
 
     /// Clears only bookmarks whose URL host matches the given normalized host (or subdomain).
@@ -452,6 +516,22 @@ enum Persistence {
         Log.privacy.info("Persistence: defaultNewTabsToPrivate set to \(enabled, privacy: .public)")
     }
 
+    /// Persists the app-wide privacy mode atomically inside AppData.json.
+    static func setAppPrivacyMode(_ mode: AppPrivacyMode) {
+        var current = load()
+        current.appPrivacyMode = mode
+        save(current)
+        Log.privacy.info("Persistence: appPrivacyMode set to \(mode.rawValue, privacy: .public)")
+    }
+
+    /// Persists the Maximum-Privacy protection-network choice (VPN or Tor) atomically.
+    static func setMaxProtection(_ protection: MaxProtection) {
+        var current = load()
+        current.maxProtection = protection
+        save(current)
+        Log.privacy.info("Persistence: maxProtection set to \(protection.rawValue, privacy: .public)")
+    }
+
     /// One-time migration for the new default tab privacy preference.
     static func migrateDefaultTabPrivacyIfNeeded() {
         let oldKey = "Searxly.DefaultNewTabsToPrivate"
@@ -508,70 +588,11 @@ enum Persistence {
         }
     }
 
-    // MARK: - Password Vault (metadata only — passwords live in PasswordVaultSecureStore in the Keychain)
-    // The vault is a first-class privacy feature. Entries participate in optional at-rest encryption
-    // and encrypted backups exactly like appLock preferences.
-    // "Accounts" terminology is deliberately avoided (Searxly value: no accounts inside the app).
-
-    static func savePasswordVaultEntries(_ entries: [PasswordVaultEntry]) {
-        var current = load()
-        current.passwordVaultEntries = entries
-        save(current)
-    }
-
-    static func loadPasswordVaultEntries() -> [PasswordVaultEntry] {
-        return load().passwordVaultEntries
-    }
-
-    static func savePasswordVaultLockConfig(useCustom: Bool, salt: Data?, verifier: Data?) {
-        var current = load()
-        current.passwordVaultUseCustomPassword = useCustom
-        current.passwordVaultCustomSalt = salt
-        current.passwordVaultCustomVerifier = verifier
-        save(current)
-    }
-
-    static func loadPasswordVaultLockConfig() -> (useCustom: Bool, salt: Data?, verifier: Data?) {
-        let d = load()
-        return (d.passwordVaultUseCustomPassword, d.passwordVaultCustomSalt, d.passwordVaultCustomVerifier)
-    }
-
-    static func savePasswordVaultAutoLockMinutes(_ minutes: Int) {
-        var current = load()
-        current.passwordVaultAutoLockMinutes = max(0, min(minutes, 1440)) // cap at 24h
-        save(current)
-    }
-
-    static func loadPasswordVaultAutoLockMinutes() -> Int {
-        return load().passwordVaultAutoLockMinutes
-    }
-
-    static func loadPasswordVaultBehaviorPreferences() -> (
-        autofillEnabled: Bool,
-        offerToSaveEnabled: Bool,
-        suggestPasswordsEnabled: Bool,
-        copyGeneratedToClipboard: Bool
-    ) {
-        let d = load()
-        return (
-            d.passwordVaultAutofillEnabled,
-            d.passwordVaultOfferToSaveEnabled,
-            d.passwordVaultSuggestPasswordsEnabled,
-            d.passwordVaultCopyGeneratedToClipboard
-        )
-    }
-
-    static func savePasswordVaultBehaviorPreferences(
-        autofillEnabled: Bool,
-        offerToSaveEnabled: Bool,
-        suggestPasswordsEnabled: Bool,
-        copyGeneratedToClipboard: Bool
-    ) {
-        var current = load()
-        current.passwordVaultAutofillEnabled = autofillEnabled
-        current.passwordVaultOfferToSaveEnabled = offerToSaveEnabled
-        current.passwordVaultSuggestPasswordsEnabled = suggestPasswordsEnabled
-        current.passwordVaultCopyGeneratedToClipboard = copyGeneratedToClipboard
-        save(current)
-    }
+    // MARK: - Password Vault
+    // Vault metadata (the saved-login index, lock config, and behavior prefs) now lives in its own
+    // resilient file via PasswordVaultStore — NOT in this shared AppData.json. This prevents a decode
+    // failure of any unrelated field here from resetting the whole file and wiping the user's logins
+    // (which would orphan their Keychain secrets). The `passwordVault*` properties on AppData remain
+    // ONLY so PasswordVaultStore can perform a one-time migration of pre-existing data; nothing writes
+    // them anymore. Passwords themselves stay in the Keychain via PasswordVaultSecureStore.
 }

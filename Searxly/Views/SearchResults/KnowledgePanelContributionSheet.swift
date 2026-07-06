@@ -23,9 +23,6 @@ struct KnowledgePanelContributionSheet: View {
     @State private var sendError: String? = nil
     @State private var copyMessage: String? = nil
 
-    private static let discordWebhookURL =
-        "INPUT"
-
     private enum ContributionType: String, CaseIterable {
         case error, change, missing, other
 
@@ -414,8 +411,10 @@ struct KnowledgePanelContributionSheet: View {
             "footer": ["text": "Searxly Knowledge Panel • \(selectedType.displayName)"]
         ]
 
-        guard let webhookURL = URL(string: Self.discordWebhookURL) else {
-            sendError = "Could not reach the contribution service."
+        // Resolved per-build (Secrets.xcconfig → Info.plist, or env var). Public-source builds have
+        // none — say so honestly instead of a bogus network error.
+        guard let webhookURL = FeedbackWebhook.knowledgePanelURL else {
+            sendError = FeedbackWebhook.notConfiguredMessage
             isSending = false
             return
         }

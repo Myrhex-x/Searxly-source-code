@@ -9,6 +9,29 @@ import Foundation
 
 enum WalletNetwork {
 
+    /// Fail-closed native-egress guard for ADDRESS-KEYED wallet traffic (RPC balance/tx reads,
+    /// Etherscan history, approval scans). Those ride `URLSession.shared`, which the whole-device VPN
+    /// covers but Tor's per-tab SOCKS proxy does NOT. So in Maximum Privacy with protection down
+    /// (Tor mode, or VPN not yet connected) this is false and every such request is suppressed —
+    /// otherwise the wallet address would leave from the user's REAL IP, letting block explorers /
+    /// RPC providers correlate an on-chain identity with it. Inert (true) outside Maximum.
+    /// Mirrors the native-search kill switch (`PrivacyGate.assertEgressAllowed`).
+    ///
+    /// PUBLIC market data (prices/charts, keyed only by public token/pool addresses) uses
+    /// `marketLane()` instead, which may ride the bundled Tor client when this gate is closed.
+    private static var egressAllowed: Bool { PrivacyGate.egressAllowedFast }
+
+    // MARK: - Market-data lane (public data: prices, charts, pool lookup)
+
+    /// Resolves the network lane for PUBLIC market data — requests keyed only by public token / pool
+    /// addresses (or global asset ids), never the wallet address. Because these requests carry nothing
+    /// user-identifying, they ride the shared `TorLane`: the plain session outside Maximum Privacy,
+    /// the bundled Tor client inside Maximum+Tor once it's up, and nil (fail closed) otherwise.
+    /// Callers use `viaTor` to skip Tor-hostile sources (GeckoTerminal's Cloudflare blocks Tor exits).
+    static func marketLane() async -> TorLane.Lane? {
+        await TorLane.current()
+    }
+
     // MARK: - ETH balance
 
     static func ethBalance(address: String, rpc: String) async -> Decimal? {
@@ -31,6 +54,41 @@ enum WalletNetwork {
                                    params: [callObj, "latest"])
         guard let hex = result as? String, hex.count > 2 else { return nil }
         return hexToDecimal(hex.dropFirst(2), decimals: decimals)
+    }
+
+    /// Reads one coin's balance from EVERY endpoint of its chain — each queried once, without the usual
+    /// "first node to answer wins" failover — and returns the highest value any node reports. A broken,
+    /// pruned, or lagging node under-reports a held balance (often as a clean `0`), and because a `0`
+    /// response still counts as "answered", that stale value can win a normal read and make funds vanish
+    /// on refresh. Taking the max across endpoints trusts whichever healthy node is most up to date.
+    /// Returns nil only when no endpoint returned a usable number (keep the last-known then); a unanimous
+    /// `0` comes back as `0` (a genuine spend). `contract == nil` reads the native coin.
+    static func bestBalance(contract: String?, decimals: Int, walletAddress: String, rpc: String) async -> Decimal? {
+        var endpoints = [rpc]
+        for u in failoverList(for: rpc) where !endpoints.contains(u) { endpoints.append(u) }
+        let callData: String? = contract == nil ? nil
+            : "0x70a08231" + walletAddress.dropFirst(2).lowercased().leftPadded(toLength: 64)
+        return await withTaskGroup(of: Decimal?.self) { group in
+            for ep in endpoints {
+                group.addTask {
+                    let method = contract == nil ? "eth_getBalance" : "eth_call"
+                    let params: [Any] = contract == nil
+                        ? [walletAddress, "latest"]
+                        : [["to": contract!, "data": callData!], "latest"]
+                    let (result, _, _) = await singleRPC(rpc: ep, method: method, params: params)
+                    guard let hex = result as? String else { return nil }
+                    if contract != nil {
+                        return hex.count > 2 ? hexToDecimal(hex.dropFirst(2), decimals: decimals) : nil
+                    }
+                    return hexWeiToDecimalETH(hex)
+                }
+            }
+            var best: Decimal? = nil
+            for await v in group where v != nil {
+                best = Swift.max(best ?? 0, v!)
+            }
+            return best
+        }
     }
 
     // MARK: - Prices
@@ -71,9 +129,10 @@ enum WalletNetwork {
     static func fxRate(usdTo code: String) async -> Double? {
         // frankfurter.dev is the current canonical host (api.frankfurter.app now only 301-redirects
         // here; calling .dev/v1 directly avoids relying on a redirect that may be removed later).
+        guard let lane = await marketLane() else { return nil }   // public data — may ride Tor in Maximum
         guard code != "USD",
               let url = URL(string: "https://api.frankfurter.dev/v1/latest?from=USD&to=\(code)") else { return nil }
-        guard let (data, _) = try? await URLSession.shared.data(from: url),
+        guard let (data, _) = try? await lane.session.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rates = json["rates"] as? [String: Any],
               let rate = rates[code] as? Double else { return nil }
@@ -83,8 +142,9 @@ enum WalletNetwork {
     // MARK: - CoinGecko (ETH price, no API key needed for simple calls)
 
     private static func coinGeckoPrice(id: String) async -> Double? {
+        guard let lane = await marketLane() else { return nil }   // public data — may ride Tor in Maximum
         guard let url = URL(string: "https://api.coingecko.com/api/v3/simple/price?ids=\(id)&vs_currencies=usd") else { return nil }
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        guard let (data, _) = try? await lane.session.data(from: url) else { return nil }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let coin = json[id] as? [String: Any],
               let price = coin["usd"] as? Double else { return nil }
@@ -94,8 +154,9 @@ enum WalletNetwork {
     // MARK: - DexScreener (SEARXLY / tiny token price)
 
     private static func dexScreenerPrice(tokenAddress: String) async -> (Double, Double)? {
+        guard let lane = await marketLane() else { return nil }   // public data — may ride Tor in Maximum
         guard let url = URL(string: "https://api.dexscreener.com/latest/dex/tokens/\(tokenAddress)") else { return nil }
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        guard let (data, _) = try? await lane.session.data(from: url) else { return nil }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let pairs = json["pairs"] as? [[String: Any]],
               let first = pairs.first else { return nil }
@@ -171,15 +232,48 @@ enum WalletNetwork {
             return pts
         }
         if token.isStablecoin { return flatSeries(value: 1.0, range: range) }
-        guard let pool = await topPoolAddress(forToken: contract, dexSlug: chain.dexScreenerSlug) else { return [] }
-        return await geckoTerminalOHLCV(pool: pool, range: range, network: chain.geckoTerminalSlug)
+        guard let lane = await marketLane() else { return [] }
+
+        // Preferred source: GeckoTerminal OHLCV for the token's top pool (minute-level candles for the
+        // short ranges). Its Cloudflare blocks Tor exits, so the Tor lane skips straight to the
+        // fallback rather than burning a doomed request.
+        if !lane.viaTor,
+           let pool = await topPoolAddress(forToken: contract, dexSlug: chain.dexScreenerSlug) {
+            let points = await geckoTerminalOHLCV(pool: pool, range: range, network: chain.geckoTerminalSlug)
+            if !points.isEmpty { return points }
+        }
+
+        // Fallback: CoinGecko's keyless by-contract series. Tor-friendly (works for the Tor lane) and
+        // also rescues the direct lane when GeckoTerminal is down or rate-limited. Coarser granularity
+        // (5-min at best), so short ranges are trimmed exactly like the native-coin path above.
+        var pts = await coinGeckoContractMarketChart(
+            platform: coinGeckoPlatform(for: chain), contract: contract, days: range.coinGeckoDays
+        )
+        if let trim = range.coinGeckoTrimSeconds, let last = pts.last?.t {
+            let cutoff = last.addingTimeInterval(-trim)
+            pts = pts.filter { $0.t >= cutoff }
+        }
+        return pts
+    }
+
+    /// CoinGecko asset-platform slug for a chain (their naming differs from GeckoTerminal's).
+    private static func coinGeckoPlatform(for chain: WalletChain) -> String {
+        switch chain.geckoTerminalSlug {
+        case "base":        return "base"
+        case "eth":         return "ethereum"
+        case "optimism":    return "optimistic-ethereum"
+        case "arbitrum":    return "arbitrum-one"
+        case "polygon_pos": return "polygon-pos"
+        default:            return chain.geckoTerminalSlug
+        }
     }
 
     /// The highest-liquidity pool for a token ON `dexSlug`'s chain, via the (already-trusted)
     /// DexScreener tokens endpoint. Used as the GeckoTerminal OHLCV pool. Sends only the token address.
     static func topPoolAddress(forToken contract: String, dexSlug: String = "base") async -> String? {
+        guard let lane = await marketLane() else { return nil }   // public data — may ride Tor in Maximum
         guard let url = URL(string: "https://api.dexscreener.com/latest/dex/tokens/\(contract)"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let (data, _) = try? await lane.session.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let pairs = json["pairs"] as? [[String: Any]] else { return nil }
         let onChain = pairs.filter { ($0["chainId"] as? String)?.lowercased() == dexSlug.lowercased() }
@@ -192,6 +286,7 @@ enum WalletNetwork {
     }
 
     private static func geckoTerminalOHLCV(pool: String, range: ChartRange, network: String = "base") async -> [PricePoint] {
+        guard let lane = await marketLane() else { return [] }   // public data — may ride Tor in Maximum
         let p = range.ohlcv
         var comps = URLComponents(string: "\(WalletConfig.geckoTerminalAPIBase)/networks/\(network)/pools/\(pool)/ohlcv/\(p.timeframe)")
         comps?.queryItems = [
@@ -200,7 +295,7 @@ enum WalletNetwork {
             .init(name: "currency", value: "usd"),
         ]
         guard let url = comps?.url,
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let (data, _) = try? await lane.session.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let dataObj = json["data"] as? [String: Any],
               let attrs = dataObj["attributes"] as? [String: Any],
@@ -215,8 +310,22 @@ enum WalletNetwork {
     }
 
     private static func coinGeckoMarketChart(id: String, days: String) async -> [PricePoint] {
-        guard let url = URL(string: "\(WalletConfig.coinGeckoAPIBase)/coins/\(id)/market_chart?vs_currency=usd&days=\(days)"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+        guard let url = URL(string: "\(WalletConfig.coinGeckoAPIBase)/coins/\(id)/market_chart?vs_currency=usd&days=\(days)") else { return [] }
+        return await coinGeckoPricesSeries(url: url)
+    }
+
+    /// CoinGecko's keyless by-contract market chart — same response shape as `market_chart` by id.
+    /// Covers on-chain tokens (anything GeckoTerminal indexes), and its API allows Tor exits, which
+    /// is what makes token charts possible in Maximum Privacy + Tor.
+    private static func coinGeckoContractMarketChart(platform: String, contract: String, days: String) async -> [PricePoint] {
+        guard let url = URL(string: "\(WalletConfig.coinGeckoAPIBase)/coins/\(platform)/contract/\(contract)/market_chart?vs_currency=usd&days=\(days)") else { return [] }
+        return await coinGeckoPricesSeries(url: url)
+    }
+
+    /// Shared fetch+parse for CoinGecko `market_chart`-shaped responses (`{"prices": [[ms, usd], …]}`).
+    private static func coinGeckoPricesSeries(url: URL) async -> [PricePoint] {
+        guard let lane = await marketLane() else { return [] }   // public data — may ride Tor in Maximum
+        guard let (data, _) = try? await lane.session.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let prices = json["prices"] as? [[Any]] else { return [] }
         var points: [PricePoint] = []
@@ -327,6 +436,7 @@ enum WalletNetwork {
     /// Full-history Approval-log scan via the Basescan/Etherscan logs API — works without an
     /// archive RPC (public RPCs cap getLogs ranges). Returns nil if the API errors / has no key.
     static func approvalSpendersViaExplorer(owner: String, tokenContracts: [String]) async -> [(token: String, spender: String)]? {
+        guard egressAllowed else { return nil }   // fail closed in Maximum Privacy (see `egressAllowed`)
         let ownerTopic = "0x" + String(owner.dropFirst(2)).lowercased().leftPadded(toLength: 64)
         // The v2 logs endpoint requires a key — satisfied by the user's own key OR the gateway's.
         guard !WalletFeatures.basescanAPIKey.isEmpty || SearxlyGateway.isConfigured else { return nil }
@@ -442,6 +552,8 @@ enum WalletNetwork {
     /// One JSON-RPC call. `reachable` is true when the node returned a real JSON-RPC response
     /// (a result OR a `{error}`), false on a transport failure / garbage body → caller fails over.
     private static func singleRPC(rpc: String, method: String, params: [Any]) async -> (result: Any?, error: String?, reachable: Bool) {
+        // Fail closed in Maximum Privacy when protection is down — never leak the address from the real IP.
+        guard egressAllowed else { return (nil, "Network error", false) }
         guard let url = URL(string: rpc) else { return (nil, "Invalid RPC URL", false) }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -513,6 +625,7 @@ enum WalletNetwork {
     }
 
     private static func singleBatch(rpc: String, calls: [(id: Int, method: String, params: [Any])]) async -> [Int: Any]? {
+        guard egressAllowed else { return nil }   // fail closed in Maximum Privacy (see `egressAllowed`)
         guard let url = URL(string: rpc) else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -607,6 +720,7 @@ enum WalletNetwork {
 
     private static func etherscanAccount(action: String, address: String,
                                          chainId: Int = WalletConfig.baseChainID) async -> [[String: Any]]? {
+        guard egressAllowed else { return nil }   // fail closed in Maximum Privacy (see `egressAllowed`)
         guard let req = explorerRequest([
             .init(name: "chainid", value: String(chainId)),
             .init(name: "module", value: "account"),
@@ -709,15 +823,18 @@ enum WalletNetwork {
     }
 
     // MARK: - Hex conversion helpers
+    //
+    // `nonisolated`: pure hex→number math, called synchronously from concurrent task-group
+    // closures (bestBalance) as well as MainActor code — must be callable from anywhere.
 
-    private static func hexWeiToDecimalETH(_ hex: String) -> Decimal? {
+    private nonisolated static func hexWeiToDecimalETH(_ hex: String) -> Decimal? {
         guard let raw = hexToBigEndianBytes(hex) else { return nil }
         // raw bytes → Double division (sufficient precision for display)
         let eth = Double(bigEndianBytes: raw) / 1e18
         return Decimal(eth)
     }
 
-    private static func hexToDecimal(_ hex: Substring, decimals: Int) -> Decimal? {
+    private nonisolated static func hexToDecimal(_ hex: Substring, decimals: Int) -> Decimal? {
         guard let raw = hexToBigEndianBytes(String(hex)) else { return nil }
         let divisor = pow(10.0, Double(decimals))
         return Decimal(Double(bigEndianBytes: raw) / divisor)
@@ -727,7 +844,7 @@ enum WalletNetwork {
     /// `eth_getBalance` gives a minimal quantity hex, while `eth_call` (e.g. ERC-20 `balanceOf`) gives
     /// a full 32-byte zero-padded word (64 hex chars). Leading zeros are stripped first so a real
     /// uint256 result isn't rejected — the earlier 16-byte cap made every non-zero token balance read 0.
-    private static func hexToBigEndianBytes(_ hex: String) -> [UInt8]? {
+    private nonisolated static func hexToBigEndianBytes(_ hex: String) -> [UInt8]? {
         var h = hex.hasPrefix("0x") ? String(hex.dropFirst(2)) : hex
         while h.first == "0" { h.removeFirst() }
         if h.isEmpty { return [0] }                 // value was zero (or all-zero padding)
@@ -746,7 +863,7 @@ enum WalletNetwork {
 }
 
 private extension Double {
-    init(bigEndianBytes bytes: [UInt8]) {
+    nonisolated init(bigEndianBytes bytes: [UInt8]) {
         // Interpret 16 big-endian bytes as a 128-bit unsigned int, return as Double
         var value: Double = 0
         for b in bytes { value = value * 256 + Double(b) }
