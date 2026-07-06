@@ -18,14 +18,18 @@ enum WikipediaTitleResolver {
         let q = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty,
               let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://en.wikipedia.org/w/api.php?action=opensearch&namespace=0&format=json&limit=\(limit)&search=\(encoded)")
+              // redirects=resolve canonicalizes redirect titles ("Ellon Musk" → "Elon Musk"), which is
+              // what makes misspelled queries resolvable — Grokipedia only has the canonical slug.
+              let url = URL(string: "https://en.wikipedia.org/w/api.php?action=opensearch&namespace=0&format=json&redirects=resolve&limit=\(limit)&search=\(encoded)")
         else { return [] }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 6
         request.setValue("Searxly/1.0 (Knowledge Panel; macOS)", forHTTPHeaderField: "User-Agent")
 
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        // Anonymous fetch (subject words only) — rides Tor in Maximum Privacy, fail-closed otherwise.
+        guard let lane = await TorLane.current() else { return [] }
+        guard let (data, response) = try? await lane.session.data(for: request),
               let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
               // opensearch shape: [ query, [titles], [descriptions], [urls] ]
               let json = try? JSONSerialization.jsonObject(with: data) as? [Any],

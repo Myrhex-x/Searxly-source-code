@@ -76,9 +76,10 @@ enum KnowledgeQueryDetector {
         guard word.count >= 2, word.count <= 24 else { return false }
         guard word.allSatisfy({ $0.isLetter || $0 == "-" }) else { return false }
 
-        // Known brands / entities should show the entity card, not a dictionary entry.
+        // Known brands / entities should show the entity card, not a dictionary entry. Use only exact
+        // lookups here — the loose `fuzzyMatchURL` mis-flags common words ("site", "maps", "ai") as
+        // brands, which is both wrong and pointless now that entity resolution is relevance-gated.
         if OfficialEntityDatabase.entity(for: word) != nil { return false }
-        if OfficialEntityDatabase.fuzzyMatchURL(for: word) != nil { return false }
         // Any word with an explicit curated Grokipedia slug is a brand/entity, not a dictionary word.
         if GrokipediaSlugCatalog.hasExplicitSlug(for: word) { return false }
 

@@ -1,0 +1,52 @@
+services:
+  redis:
+    image: valkey/valkey:8-alpine
+    container_name: searxly-redis
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: unless-stopped
+    networks: [searxly]
+    volumes:
+      - valkey-data:/data
+    cap_drop: [ALL]
+    cap_add: [SETGID, SETUID, DAC_OVERRIDE]
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxly-searxng
+    restart: unless-stopped
+    depends_on: [redis]
+    networks: [searxly]
+    ports:
+      - "127.0.0.1:8080:8080"          # local only; Caddy fronts it with TLS
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=https://search.searxly.app/
+      - SEARXNG_REDIS_URL=redis://redis:6379/0
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    logging:
+      driver: json-file
+      options: { max-size: "1m", max-file: "1" }
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: searxly-caddy
+    restart: unless-stopped
+    depends_on: [searxng]
+    networks: [searxly]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+networks:
+  searxly:
+
+volumes:
+  valkey-data:
+  caddy-data:
+  caddy-config:

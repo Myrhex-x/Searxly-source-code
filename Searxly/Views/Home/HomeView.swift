@@ -53,42 +53,139 @@ struct HomeView: View {
     let onEnableAITools: () -> Void
     let onLaterAITools: () -> Void
     let onOpenLocalAIChat: () -> Void
+    /// Opens a home-news story in the browser.
+    var onOpenNewsStory: (SearXNGResult) -> Void = { _ in }
+    /// Runs the News tab for a topic (the "See all" action).
+    var onOpenTopicNews: (String) -> Void = { _ in }
 
     @State private var heroRevealed = false
     @State private var addressBarHeight: CGFloat = 52
+    @State private var scrollHintBounce = false
+
+    /// The news home renders below the hero unless we're in Maximum Privacy or have no instance.
+    private var showsNewsHome: Bool {
+        HomeNewsFeed.isEnabled(instances: browserState.searxInstances)
+    }
 
     var body: some View {
         // Ambient background is hoisted in ContentView (behind header + hero) on pure home.
         GeometryReader { proxy in
-                let upwardBias = min(72, proxy.size.height * 0.09)
+            let upwardBias = min(72, proxy.size.height * 0.09)
+            if showsNewsHome {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .center, spacing: 34) {
+                        heroSection(height: proxy.size.height, upwardBias: upwardBias, withScrollHint: true)
 
-                VStack {
-                    Spacer(minLength: 20)
-                        .contentShape(Rectangle())
-                        .onTapGesture { dismissHomeFocus() }
+                        breakingHeroSlot
+                            .frame(maxWidth: 1060, alignment: .leading)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 28)
 
-                    VStack(alignment: .center, spacing: 0) {
-                        logoBlock
-                            .padding(.bottom, 18)
+                        ForEach(HomeNewsFeed.topics) { topic in
+                            HomeTopicSection(
+                                topic: topic,
+                                feed: HomeNewsFeed.shared,
+                                glassEnabled: glassEnabled,
+                                instances: browserState.searxInstances,
+                                onOpenStory: { onOpenNewsStory($0) },
+                                onSeeAll: { onOpenTopicNews($0) }
+                            )
+                            .frame(maxWidth: 1060, alignment: .leading)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 28)
+                        }
 
-                        taglineBlock
-                            .padding(.bottom, 26)
-                            .heroReveal(heroRevealed, reduceMotion: reduceMotion, delay: 0.06)
-
-                        searchCluster
-                            .heroReveal(heroRevealed, reduceMotion: reduceMotion, delay: 0.12)
+                        Color.clear.frame(height: 52)
                     }
-                    .frame(maxWidth: 720)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .offset(y: -upwardBias)
-                    .onAppear { revealHero() }
-
-                    Spacer(minLength: 120)
-                        .contentShape(Rectangle())
-                        .onTapGesture { dismissHomeFocus() }
+                    .background(HideScrollerBackground())
                 }
+                .scrollIndicators(.hidden)
+                .onAppear {
+                    revealHero()
+                    // Preload the hero + all topics up front so scrolling reveals ready content.
+                    HomeNewsFeed.shared.loadAll(instances: browserState.searxInstances)
+                }
+            } else {
+                heroSection(height: proxy.size.height, upwardBias: upwardBias, withScrollHint: false)
+                    .onAppear { revealHero() }
             }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The centered hero (logo + tagline + search), sized to fill one screen; optionally with the
+    /// "Scroll down to see news" hint pinned near the bottom.
+    private func heroSection(height: CGFloat, upwardBias: CGFloat, withScrollHint: Bool) -> some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 20)
+                .contentShape(Rectangle())
+                .onTapGesture { dismissHomeFocus() }
+
+            VStack(alignment: .center, spacing: 0) {
+                logoBlock
+                    .padding(.bottom, 18)
+
+                taglineBlock
+                    .padding(.bottom, 26)
+                    .heroReveal(heroRevealed, reduceMotion: reduceMotion, delay: 0.06)
+
+                searchCluster
+                    .heroReveal(heroRevealed, reduceMotion: reduceMotion, delay: 0.12)
+            }
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .offset(y: -upwardBias)
+
+            Spacer(minLength: withScrollHint ? 40 : 120)
+                .contentShape(Rectangle())
+                .onTapGesture { dismissHomeFocus() }
+
+            if withScrollHint {
+                scrollHint
+                    .padding(.bottom, 20)
+            }
+        }
+        .frame(height: height)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The "top story" hero atop the news home. Loads lazily like the topics; collapses if none found.
+    @ViewBuilder
+    private var breakingHeroSlot: some View {
+        let feed = HomeNewsFeed.shared
+        if let top = feed.topStory {
+            HomeBreakingHero(
+                cluster: top,
+                glassEnabled: glassEnabled,
+                onOpen: { onOpenNewsStory($0) },
+                onOpenInNewTab: { onOpenNewsStory($0) }
+            )
+        } else if feed.topStoryLoading {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.quaternary.opacity(0.22))
+                .frame(height: 300)
+                .onAppear { feed.loadAll(instances: browserState.searxInstances) }
+        }
+    }
+
+    private var scrollHint: some View {
+        VStack(spacing: 3) {
+            Text(Localization.string("home_scroll_news", defaultValue: "Scroll down to see news"))
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .tracking(0.3)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .offset(y: scrollHintBounce ? 3 : -1)
+        }
+        .heroReveal(heroRevealed, reduceMotion: reduceMotion, delay: 0.22)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                scrollHintBounce = true
+            }
+        }
     }
 
     private func dismissHomeFocus() {
@@ -161,7 +258,9 @@ struct HomeView: View {
 
     @ViewBuilder
     private var heroFloatingSuggestionsPanel: some View {
-        if isAddressBarFocused && browserState.shouldShowSuggestionsPanel {
+        // Not gated on focus — see slimSuggestionsVisible: clicking a suggestion blurs the field, so the
+        // panel must survive that blur (BrowserState clears suggestions on blur after a short grace period).
+        if browserState.shouldShowSuggestionsPanel {
             VStack(spacing: 0) {
                 Color.clear
                     .frame(height: heroSuggestionsTopInset)
@@ -316,7 +415,7 @@ struct HomeView: View {
                 glassEnabled ? .thinMaterial : .regularMaterial,
                 in: Capsule()
             )
-            .glassEffect(glassEnabled ? .regular.interactive() : .clear, in: Capsule())
+            .searxlyGlass(glassEnabled ? .interactive : .clear, in: Capsule())
             .overlay(
                 Capsule()
                     .strokeBorder(
@@ -350,6 +449,21 @@ struct HomeView: View {
 private extension View {
     func heroReveal(_ revealed: Bool, reduceMotion: Bool, delay: Double) -> some View {
         modifier(HomeHeroRevealModifier(revealed: revealed, reduceMotion: reduceMotion, delay: delay))
+    }
+}
+
+/// Force-hides the enclosing NSScrollView's scrollers. SwiftUI's `.scrollIndicators(.hidden)` doesn't
+/// win against the system "Always show scroll bars" setting on macOS, so we reach the backing scroll
+/// view and turn the scroller off outright.
+private struct HideScrollerBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let scrollView = nsView.enclosingScrollView else { return }
+            scrollView.hasVerticalScroller = false
+            scrollView.hasHorizontalScroller = false
+            scrollView.verticalScroller?.isHidden = true
+        }
     }
 }
 

@@ -32,6 +32,14 @@ extension LocalAIChatSheet {
         - Read the returned results, then write a direct, natural answer in your own words.
         - Cite the specific results you used with their bracket numbers EXACTLY as shown, e.g. [1], [2], placed right after the sentence they support. Only cite numbers that actually appear in the results; never invent sources or URLs.
         - Use open_website ONLY for an explicit navigation request ("open …", "go to …").
+
+        YOU ALSO HAVE THESE TOOLS — prefer the most specific one for the job, and cite their [n] results the same way:
+        - search_history / search_bookmarks: the user's OWN private browsing history and saved bookmarks. Use when they refer to something they previously visited or saved ("that article I read", "did I bookmark…").
+        - fetch_url: read ONE page's full text when a snippet isn't enough. deep_research: a thorough multi-source pass (searches AND auto-reads the top results) for involved questions, comparisons, or "give me a detailed breakdown".
+        - search_category: a private search limited to news / images / videos / science / it / files / map / music when the user clearly wants that kind of result.
+        - open_results_in_tabs: only when the user explicitly asks to open several pages at once.
+        - knowledge_lookup: a structured fact card for a single well-known entity (person/company/place).
+        - crypto_price, wallet_balance, privacy_status: the user's own wallet prices/holdings (read-only — never move funds) and live Tor/VPN/onion posture. Only use when they ask about those.
         """
         let systemWithCitations = systemPrompt + citationRule
 
@@ -165,6 +173,12 @@ extension LocalAIChatSheet {
             }
         )
 
-        return [webSearch, openWebsiteTool]
+        // The canonical two plus the richer cloud-only surface (history/bookmarks, fetch_url,
+        // deep_research, search_category, open_results_in_tabs, knowledge_lookup, crypto/wallet,
+        // privacy_status). All share the same citation source box for stable [n] numbering.
+        // Honor the per-tool on/off switches (Available Tools popup / Searxly AI settings); the master
+        // toolsEnabled gate has already been checked before we get here.
+        let assembled = [webSearch, openWebsiteTool] + makeExtendedCloudTools(sourceBox: box)
+        return assembled.filter { manager.isToolEnabled($0.name) }
     }
 }

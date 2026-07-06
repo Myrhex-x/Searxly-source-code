@@ -49,7 +49,11 @@ final class WalletProviderBridge {
     func register(_ webView: WKWebView) { webViews.add(webView) }
 
     private func emit(_ event: String, _ payload: Any) {
-        let json = (try? JSONSerialization.data(withJSONObject: payload))
+        // `.fragmentsAllowed` is required: `chainChanged` sends a BARE STRING ("0x2105") as the
+        // payload, and without the option JSONSerialization raises an ObjC NSInvalidArgumentException
+        // ("Invalid top-level type in JSON write") that Swift's `try?` cannot catch — it crashed the
+        // app (or froze it under the debugger) on every chain switch.
+        let json = (try? JSONSerialization.data(withJSONObject: payload, options: [.fragmentsAllowed]))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         // Pass the JSON payload as a base64 blob decoded by atob() instead of hand-escaping it into a
         // JS string literal. base64 is [A-Za-z0-9+/=] only, so there is nothing to break out of the

@@ -63,6 +63,7 @@ private struct VideoGridItem: View {
     let onPreview: () -> Void
     let proxyBaseURL: String?
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isHovering = false
 
     private var candidates: [URL] {
@@ -138,7 +139,10 @@ private struct VideoGridItem: View {
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.white.opacity(isHovering ? 0.14 : 0.06), lineWidth: 0.5)
+                    .strokeBorder(
+                        AdaptiveChrome.border(colorScheme, dark: isHovering ? 0.14 : 0.06),
+                        lineWidth: 0.5
+                    )
             )
             .shadow(color: .black.opacity(isHovering ? 0.18 : 0.06), radius: isHovering ? 8 : 3, y: 2)
 

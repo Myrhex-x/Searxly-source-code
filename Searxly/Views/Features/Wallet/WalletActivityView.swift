@@ -59,7 +59,7 @@ struct WalletActivityView: View {
         VStack(spacing: 16) {
             VStack(spacing: 6) {
                 Text(req.cancel ? "Cancel transaction" : "Speed up transaction")
-                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 Text(req.cancel
                      ? "Replaces the stuck transaction with a 0-value transfer to yourself at the same nonce, at higher gas. If the original already confirmed, this does nothing."
                      : "Re-broadcasts the same transaction at the same nonce with ~25% higher gas so it confirms sooner. You'll pay the higher fee.")
@@ -73,8 +73,8 @@ struct WalletActivityView: View {
                         Image(systemName: WalletBiometric.symbol).font(.system(size: 14))
                         Text("Confirm with \(WalletBiometric.label)").font(.system(size: 13, weight: .semibold))
                     }
-                    .foregroundStyle(.black).frame(maxWidth: 240).padding(.vertical, 11)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                    .foregroundStyle(WalletTheme.onInk).frame(maxWidth: 240).padding(.vertical, 11)
+                    .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 10))
                 }.buttonStyle(.plain)
                 Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             } else {
@@ -83,7 +83,7 @@ struct WalletActivityView: View {
 
             HStack(spacing: 12) {
                 ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
+                    Circle().fill(i < pin.count ? WalletTheme.ink : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                 }
             }
             if let actionError { Text(actionError).font(.system(size: 12)).foregroundStyle(WalletTheme.negative).multilineTextAlignment(.center) }
@@ -95,7 +95,7 @@ struct WalletActivityView: View {
         }
         .padding(22)
         .frame(width: 340)
-        .background(WalletTheme.canvas).preferredColorScheme(.dark)
+        .background(WalletTheme.canvas)
     }
 
     private func runReplace(_ req: ReplaceRequest, pin maybePin: String?) async {

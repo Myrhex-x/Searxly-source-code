@@ -36,6 +36,7 @@ struct WalletSetupView: View {
     @State private var importError = ""
     @State private var seedRevealed = false
     @State private var setupError = false
+    @State private var setupErrorMessage = ""
     @State private var restorePass = ""
     @State private var restoreError = false
 
@@ -58,6 +59,7 @@ struct WalletSetupView: View {
                     // Only advance if the wallet was actually persisted & verified. On failure nothing
                     // is configured, so we bounce back to start rather than show an unusable wallet.
                     guard let code = wallet.prepareNewWallet(mnemonic: mnemonic, pin: pin) else {
+                        setupErrorMessage = "Your Mac’s secure storage rejected the wallet, so nothing was saved. Don’t deposit any funds — try again, and if it keeps failing, restart your Mac and retry."
                         setupError = true
                         step = .choose
                         return
@@ -73,7 +75,7 @@ struct WalletSetupView: View {
         .alert("Couldn’t create your wallet", isPresented: $setupError) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text("Your Mac’s secure storage rejected the wallet, so nothing was saved. Don’t deposit any funds — try again, and if it keeps failing, restart your Mac and retry.")
+            Text(setupErrorMessage)
         }
     }
 
@@ -110,6 +112,18 @@ struct WalletSetupView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Experimental beta — keep only small amounts while the wallet matures.")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .foregroundStyle(WalletTheme.warning)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(WalletTheme.warning.opacity(0.08), in: Capsule())
+                .padding(.top, 2)
             }
 
             VStack(spacing: 12) {
@@ -118,7 +132,14 @@ struct WalletSetupView: View {
                     title: "Create a new wallet",
                     subtitle: "We'll give you a 12-word backup phrase to write down."
                 ) {
+                    // An empty result means the system CSPRNG failed. Never proceed — a wallet built
+                    // on anything but fresh entropy would be predictable and drainable.
                     let words = wallet.generateMnemonic()
+                    guard !words.isEmpty else {
+                        setupErrorMessage = "Your Mac couldn’t provide the secure randomness a new wallet needs, so nothing was created. Try again — if it keeps failing, restart your Mac."
+                        setupError = true
+                        return
+                    }
                     step = .seedDisplay(words)
                 }
 
@@ -163,8 +184,8 @@ struct WalletSetupView: View {
         VStack(spacing: 20) {
             Spacer()
             ZStack {
-                Circle().fill(Color.white.opacity(0.08)).frame(width: 72, height: 72)
-                Image(systemName: "lock.doc").font(.system(size: 30)).foregroundStyle(.white)
+                Circle().fill(WalletTheme.surfaceStrong).frame(width: 72, height: 72)
+                Image(systemName: "lock.doc").font(.system(size: 30)).foregroundStyle(WalletTheme.textPrimary)
             }
             VStack(spacing: 8) {
                 Text("Unlock your backup").font(.system(size: 18, weight: .semibold))
@@ -184,7 +205,7 @@ struct WalletSetupView: View {
             }
             VStack(spacing: 12) {
                 Button("Restore Wallet") { tryRestore(fileData: fileData) }
-                    .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black).controlSize(.large)
+                    .buttonStyle(.borderedProminent).tint(WalletTheme.ink).foregroundStyle(WalletTheme.onInk).controlSize(.large)
                     .disabled(restorePass.isEmpty)
                 Button("Back") { restorePass = ""; restoreError = false; step = .choose }
                     .buttonStyle(.bordered).controlSize(.regular)
@@ -216,11 +237,11 @@ struct WalletSetupView: View {
             HStack(spacing: 16) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(WalletTheme.surfaceStrong)
                         .frame(width: 44, height: 44)
                     Image(systemName: icon)
                         .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(WalletTheme.textPrimary)
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -301,12 +322,15 @@ struct WalletSetupView: View {
                             Text("Tap to reveal").font(.system(size: 12, weight: .semibold))
                             Text("Make sure no one is watching").font(.system(size: 10)).foregroundStyle(WalletTheme.textTertiary)
                         }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(WalletTheme.textPrimary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     .buttonStyle(.plain)
                 }
             }
+            // While the recovery phrase is on screen, exclude this window from screenshots / screen
+            // recording / screen sharing — a leaked seed phrase is a total wallet compromise.
+            .screenCaptureProtected()
 
             // Optional: copy the phrase to the clipboard to stash in a password manager, instead of
             // (or as well as) writing it down. Shown once revealed, alongside the "I Wrote It Down" path.
@@ -327,8 +351,8 @@ struct WalletSetupView: View {
                     step = .seedConfirmWarning(words)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.white)
-                .foregroundStyle(.black)
+                .tint(WalletTheme.ink)
+                .foregroundStyle(WalletTheme.onInk)
                 .controlSize(.regular)
                 .disabled(!seedRevealed)
             }
@@ -375,8 +399,8 @@ struct WalletSetupView: View {
 
                 Button("Next") { validateAndImport() }
                     .buttonStyle(.borderedProminent)
-                    .tint(.white)
-                    .foregroundStyle(.black)
+                    .tint(WalletTheme.ink)
+                    .foregroundStyle(WalletTheme.onInk)
                     .controlSize(.regular)
                     .disabled(importText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -431,8 +455,8 @@ struct WalletSetupView: View {
             VStack(spacing: 12) {
                 Button("Yes, I Saved It — Continue") { step = .seedVerify(words) }
                     .buttonStyle(.borderedProminent)
-                    .tint(.white)
-                    .foregroundStyle(.black)
+                    .tint(WalletTheme.ink)
+                    .foregroundStyle(WalletTheme.onInk)
                     .controlSize(.large)
 
                 Button("Go Back") { step = .seedDisplay(words) }
@@ -451,11 +475,11 @@ struct WalletSetupView: View {
             Spacer()
             ZStack {
                 Circle()
-                    .fill(Color.white.opacity(0.08))
+                    .fill(WalletTheme.surfaceStrong)
                     .frame(width: 72, height: 72)
                 Image(systemName: "key.fill")
                     .font(.system(size: 30))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(WalletTheme.textPrimary)
             }
 
             VStack(spacing: 8) {
@@ -495,8 +519,8 @@ struct WalletSetupView: View {
                 // WalletPanelView will switch to unlocked content once unlockState changes.
             }
             .buttonStyle(.borderedProminent)
-            .tint(.white)
-            .foregroundStyle(.black)
+            .tint(WalletTheme.ink)
+            .foregroundStyle(WalletTheme.onInk)
             .controlSize(.large)
 
             Spacer()
@@ -572,7 +596,7 @@ private struct PINSetupStepView: View {
                     let displayPin = isConfirming ? confirmPin : pin
                     ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
                         Circle()
-                            .fill(i < displayPin.count ? Color.white : WalletTheme.surfaceStrong)
+                            .fill(i < displayPin.count ? WalletTheme.ink : WalletTheme.surfaceStrong)
                             .frame(width: 14, height: 14)
                             .animation(.spring(response: 0.2), value: displayPin.count)
                     }
@@ -685,9 +709,9 @@ private struct SeedVerifyStepView: View {
                                 } label: {
                                     Text(opt)
                                         .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(picks[ch.position] == opt ? .black : .white)
+                                        .foregroundStyle(picks[ch.position] == opt ? WalletTheme.onInk : WalletTheme.textPrimary)
                                         .frame(maxWidth: .infinity).padding(.vertical, 9)
-                                        .background(picks[ch.position] == opt ? Color.white : WalletTheme.surfaceStrong,
+                                        .background(picks[ch.position] == opt ? WalletTheme.ink : WalletTheme.surfaceStrong,
                                                     in: RoundedRectangle(cornerRadius: 8))
                                 }
                                 .buttonStyle(.plain)
@@ -708,7 +732,7 @@ private struct SeedVerifyStepView: View {
                 Button("Continue") {
                     if allCorrect { onVerified() } else { showError = true }
                 }
-                .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black).controlSize(.large)
+                .buttonStyle(.borderedProminent).tint(WalletTheme.ink).foregroundStyle(WalletTheme.onInk).controlSize(.large)
                 .disabled(!allAnswered)
 
                 Button("Show my phrase again") { onBack() }

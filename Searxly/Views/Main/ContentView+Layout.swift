@@ -13,8 +13,10 @@ extension ContentView {
     // MARK: - Slim header suggestions
 
     var slimSuggestionsVisible: Bool {
+        // Intentionally NOT gated on isAddressBarFocused: clicking a suggestion blurs the field, and if
+        // the panel unmounted on that blur the click would be cancelled mid-press. BrowserState clears
+        // the suggestions on blur (after a short grace period) instead, so the panel still goes away.
         !isPureHomeState
-            && isAddressBarFocused
             && browserState.shouldShowSuggestionsPanel
             && slimAddressBarFrame.width > 0
             && slimAddressBarFrame.height > 0
@@ -74,6 +76,7 @@ extension ContentView {
                 selectedTabID: $browserState.selectedTabID,
                 glassEnabled: glassEnabled,
                 toolbarMaterial: toolbarMaterial,
+                isFloating: floatingSidebarActive,
                 sidebarWidth: browserState.sidebarWidth,
                 isCollapsed: browserState.isSidebarCollapsed,
                 toggleCollapse: {
@@ -85,7 +88,6 @@ extension ContentView {
                 newPrivateTabAction: newPrivateTab,
                 closeTabAction: closeTab,
                 closeAllTabsAction: closeAllTabs,
-                moveTab: moveTab,
                 pinTabAction: { tab in
                     tab.isPinned.toggle()
                     guard let idx = browserState.tabs.firstIndex(where: { $0.id == tab.id }) else { return }
@@ -97,21 +99,43 @@ extension ContentView {
                 },
                 duplicateTabAction: { tab in browserState.duplicateTab(tab) },
                 muteTabAction: { tab in
+                    // @Observable BrowserTab → the sidebar mute icon refreshes on its own (no array hack).
                     tab.isMuted.toggle()
                     tab.applyMute()
-                    guard let idx = browserState.tabs.firstIndex(where: { $0.id == tab.id }) else { return }
-                    let t = browserState.tabs.remove(at: idx)
-                    browserState.tabs.insert(t, at: idx)
                 },
                 forgetDomainAction: forgetDomainInSidebar,
                 reopenClosedTabAction: browserState.recentlyClosedSnapshots.isEmpty ? nil : { browserState.reopenLastClosedTab() },
                 hasClosedTabs: !browserState.recentlyClosedSnapshots.isEmpty,
+                bookmarkTabAction: { tab in browserState.bookmarkTab(tab) },
+                customCategories: browserState.customTabCategories,
+                canAddCategory: browserState.customTabCategories.count < BrowserState.maxCustomCategories,
+                moveTabToCategory: { tab, categoryID in browserState.moveTab(tab, toCategory: categoryID) },
+                reorderTabBefore: { tab, target in browserState.moveTab(tab, before: target) },
+                addCategoryAction: { name, tabToMove in
+                    if let category = browserState.addCategory(named: name), let tabToMove {
+                        browserState.moveTab(tabToMove, toCategory: category.id)
+                    }
+                },
+                renameCategoryAction: { category, name in browserState.renameCategory(category, to: name) },
+                deleteCategoryAction: { category in browserState.deleteCategory(category) },
+                bookmarks: browserState.bookmarks,
+                onOpenBookmark: { bookmark in
+                    if let url = URL(string: bookmark.url) { browserState.openURLPreferringCurrentTab(url) }
+                },
+                onRemoveBookmark: { bookmark in
+                    browserState.bookmarks.removeAll { $0.id == bookmark.id }
+                },
                 showingSettings: $browserState.showingSettings,
                 showingWallet: $browserState.showingWallet,
                 showingBookmarks: $browserState.showingBookmarks,
                 showingFullHistory: $browserState.showingFullHistory,
                 showingDownloads: $browserState.showingDownloads
             )
+            .modifier(FloatingSidebarChrome(
+                enabled: floatingSidebarActive,
+                glassEnabled: glassEnabled,
+                scheme: resolvedColorScheme
+            ))
             .frame(width: browserState.sidebarWidth)
 
             VStack(spacing: 0) {
@@ -149,7 +173,7 @@ extension ContentView {
                             showingFullHistory: $browserState.showingFullHistory,
                             showingDownloads: $browserState.showingDownloads,
                             showingKeyboardShortcuts: $browserState.showingKeyboardShortcuts,
-                            onToggleReaderMode: { browserState.toggleReaderModeAction() },
+                            onSummarizePage: { browserState.summarizeCurrentPageAction() },
                             onShowFind: { browserState.showFindInPage() },
                             onOpenLocalAIChat: { browserState.openLocalAIChat() },
                             onBookmarkCurrentPage: { browserState.bookmarkCurrentPage() },
@@ -171,6 +195,18 @@ extension ContentView {
                                 }
                             } : nil
                         )
+
+                        if bookmarksBarVisible && !browserState.bookmarks.isEmpty {
+                            BookmarksBarView(
+                                bookmarks: browserState.bookmarks,
+                                glassEnabled: glassEnabled,
+                                onOpen: { url in browserState.openURLPreferringCurrentTab(url) },
+                                onOpenInNewTab: { url in browserState.openExternalURL(url) },
+                                onRemove: { bookmark in
+                                    browserState.bookmarks.removeAll { $0.id == bookmark.id }
+                                }
+                            )
+                        }
 
                         mainContentArea
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -268,12 +304,8 @@ extension ContentView {
                 .keyboardShortcut("w", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
 
-                // Find in page (⌘F) — will show the bar when on a web page
-                Button("Find in Page") {
-                    browserState.showFindInPage()
-                }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+                // Find in page (⌘F) is now a real menu command (SearxlyApp → .findInPageRequested)
+                // so it fires even when a web page is focused. No hidden button needed here.
 
                 // Stop loading (⌘.)
                 Button("Stop Loading") {
@@ -290,6 +322,16 @@ extension ContentView {
                 }
                 .keyboardShortcut("d", modifiers: .command)
                 .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+
+                // Zoom is handled by real View-menu commands (see SearxlyApp + ZoomCommandReceiver),
+                // because a focused WKWebView shadows hidden-button keyboard shortcuts. The receiver
+                // turns those menu commands into page-zoom calls.
+                ZoomCommandReceiver(browserState: browserState)
+
+                // Print the current web page (⌘P)
+                Button("Print…") { browserState.printCurrentPage() }
+                    .keyboardShortcut("p", modifiers: .command)
+                    .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
 
                 // New Tab / New Private Tab (global, in addition to sidebar buttons)
                 Button("New Tab") { newTab() }
@@ -308,19 +350,19 @@ extension ContentView {
                     guard let tab = browserState.tabs.first(where: { $0.id == browserState.selectedTabID }) else { return }
                     tab.isMuted.toggle()
                     tab.applyMute()
-                    guard let idx = browserState.tabs.firstIndex(where: { $0.id == tab.id }) else { return }
-                    let t = browserState.tabs.remove(at: idx)
-                    browserState.tabs.insert(t, at: idx)
                 }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
                 .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
 
-                // ⌘1–9: jump to tab by position
+                // ⌘1–8: jump to tab by position; ⌘9 is always the LAST tab (the standard
+                // Safari/Chrome contract — "take me to the end" regardless of tab count).
                 ForEach(Array(1...9), id: \.self) { i in
                     Button("Tab \(i)") {
-                        let index = i - 1
-                        guard index < browserState.tabs.count else { return }
-                        browserState.selectedTabID = browserState.tabs[index].id
+                        let ts = browserState.tabs
+                        guard !ts.isEmpty else { return }
+                        let index = i == 9 ? ts.count - 1 : i - 1
+                        guard index < ts.count else { return }
+                        browserState.selectedTabID = ts[index].id
                     }
                     .keyboardShortcut(KeyEquivalent(Character("\(i)")), modifiers: .command)
                     .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
@@ -353,27 +395,35 @@ extension ContentView {
                 let headerH = AdaptiveChrome.slimToolbarRowHeight
                 let isExpanded = !browserState.isSidebarCollapsed
 
+                // Floating sidebar: the card's own rounded border IS the separation, so the sidebar
+                // edge divider disappears and the header divider stops at the content column.
+                let floating = floatingSidebarActive
+
                 if isPureHomeState {
-                    Rectangle()
-                        .fill(divider)
-                        .frame(width: 1, height: geo.size.height)
-                        .offset(x: sidebarW - 1)
+                    if !floating {
+                        Rectangle()
+                            .fill(divider)
+                            .frame(width: 1, height: geo.size.height)
+                            .offset(x: sidebarW - 1)
+                    }
                 } else {
                     Rectangle()
                         .fill(divider)
                         .frame(
-                            width: isExpanded ? geo.size.width : geo.size.width - sidebarW,
+                            width: (isExpanded && !floating) ? geo.size.width : geo.size.width - sidebarW,
                             height: 1
                         )
-                        .offset(x: isExpanded ? 0 : sidebarW, y: headerH - 1)
+                        .offset(x: (isExpanded && !floating) ? 0 : sidebarW, y: headerH - 1)
 
-                    Rectangle()
-                        .fill(divider)
-                        .frame(
-                            width: 1,
-                            height: isExpanded ? max(0, geo.size.height - headerH) : geo.size.height
-                        )
-                        .offset(x: sidebarW - 1, y: isExpanded ? headerH : 0)
+                    if !floating {
+                        Rectangle()
+                            .fill(divider)
+                            .frame(
+                                width: 1,
+                                height: isExpanded ? max(0, geo.size.height - headerH) : geo.size.height
+                            )
+                            .offset(x: sidebarW - 1, y: isExpanded ? headerH : 0)
+                    }
                 }
             }
             .allowsHitTesting(false)
@@ -384,6 +434,37 @@ extension ContentView {
 // AddressBar has been extracted to Views/Components/AddressBar.swift (compact/fluid redesign for sidebar search use).
 
 // (SearchResultCard definition removed — now in Components/SearchResultCard.swift after monster refactor.)
+
+// MARK: - Floating sidebar chrome
+
+/// The macOS-26-style floating tab sidebar (Settings → Appearance → Effects, off by default):
+/// the list becomes an inset panel with SUPER-round continuous corners on a frosted glass surface —
+/// the look Apple shipped in macOS 26 sidebars and dropped as the default in 27. Monochrome per the
+/// Searxly brand: neutral glass (a solid adaptive panel when the user reduces liquid glass), a plain
+/// hairline border in place of the edge divider, and a soft neutral shadow. The window's traffic
+/// lights land ON the panel's top-left, exactly like the original. Applies ONLY to the tab sidebar.
+private struct FloatingSidebarChrome: ViewModifier {
+    let enabled: Bool
+    let glassEnabled: Bool
+    let scheme: ColorScheme
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                // The shared floating-panel surface (SearxlyFloatingPanel.swift) — same chrome as the
+                // SERP knowledge panel, passed the app-resolved scheme so the appearance override wins.
+                .searxlyFloatingPanel(scheme: scheme)
+                // Inset = the float. Slightly tighter on the trailing edge so the gap to the web
+                // content reads intentional rather than like a gutter.
+                .padding(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 8))
+                // The gap around the card shows the app canvas, same surface the classic sidebar used.
+                .background(Rectangle().fill(AdaptiveChrome.appCanvas(scheme, glassEnabled: glassEnabled)))
+        } else {
+            content
+        }
+    }
+}
 
 #Preview {
     ContentView()

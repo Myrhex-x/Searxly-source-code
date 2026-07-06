@@ -24,12 +24,14 @@ import FoundationModels
 
 #if canImport(FoundationModels)
 
+@available(macOS 26.0, *)
 @Generable
 struct WebSearchArgs {
     @Guide(description: "The exact search query to send to the user's private SearXNG instance(s). Use the user's words or refine slightly for better results on people/companies/events/facts.")
     var query: String
 }
 
+@available(macOS 26.0, *)
 struct WebSearchTool: Tool {
     let name = "web_search"
     let description = "Perform a private web search using ONLY the user's own configured local or self-hosted SearXNG instance(s). Use this for almost any informational, factual, knowledge, or explanatory question (examples: 'who is Elon Musk?', 'Elon Musk Terafab chip facility', 'latest Tesla', 'what is Rust borrow checker?', 'browse and tell me about X', current events, biographies). Never uses public instances. You will receive titles + URLs + short snippets — read them and synthesize a direct, natural, to-the-point answer **in the chat**. Do NOT use numbers, [1], [N], citations, or a sources list. Just give the answer using the info. Do NOT use for explicit navigation ('open the official site', 'go to x.com') — use open_website only for those."

@@ -11,17 +11,20 @@ import SwiftUI
 struct WalletWindowHost: View {
     @Bindable var browserState: BrowserState
 
+    /// Wallet is an opt-in surface — turning it off in Settings also closes an open wallet card.
+    @AppStorage(WalletConfig.Keys.surfaceEnabled) private var walletSurfaceEnabled = WalletConfig.surfaceEnabledDefault
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                if browserState.showingWallet {
+                if browserState.showingWallet && walletSurfaceEnabled {
                     // Dimmed backdrop — click outside (or Esc) to dismiss.
                     Color.black.opacity(0.5)
                         .ignoresSafeArea()
                         .transition(.opacity)
                         .onTapGesture { close() }
 
-                    WalletPanelView(onClose: close, onOpenURL: openURL)
+                    WalletPanelView(onClose: close)
                         .frame(width: min(524, geo.size.width - 40),
                                height: min(728, geo.size.height - 40))
                         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
@@ -37,10 +40,4 @@ struct WalletWindowHost: View {
     }
 
     private func close() { browserState.showingWallet = false }
-
-    /// Opens a Discover dApp in a new browser tab, then closes the wallet panel.
-    private func openURL(_ url: String) {
-        browserState.openResultsInTabs(urls: [url])
-        close()
-    }
 }

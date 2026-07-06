@@ -44,9 +44,6 @@ struct BookmarksHistoryToolbarControl: View {
 
     private var hoverFill: Color {
         guard isHovering else { return .clear }
-        if usesHeaderMetrics {
-            return Color.white.opacity(0.065)
-        }
         return AdaptiveChrome.fill(colorScheme, dark: 0.065, light: 0.05)
     }
 }

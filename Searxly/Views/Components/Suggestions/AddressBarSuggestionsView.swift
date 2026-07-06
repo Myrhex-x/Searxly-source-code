@@ -69,8 +69,8 @@ struct AddressBarSuggestionsView: View {
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
         .background(panelBackground)
-        .glassEffect(
-            glassEnabled ? .regular.interactive() : .clear,
+        .searxlyGlass(
+            glassEnabled ? .interactive : .clear,
             in: RoundedRectangle(cornerRadius: effectiveCorner, style: .continuous)
         )
         .overlay(

@@ -16,6 +16,11 @@ import os
 import FoundationModels
 #endif
 
+// FoundationModels (LanguageModelSession, SystemLanguageModel, Tool, @Generable) is a macOS 26+
+// framework. The whole provider is gated to macOS 26 so the app can deploy to older macOS (where
+// on-device Apple Intelligence simply reports unavailable and the AI UI disables itself). Apple
+// Silicon only — there is no Intel path to support.
+@available(macOS 26.0, *)
 final class AppleIntelligenceProvider: IntelligenceProvider {
 
     let capabilities = ProviderCapabilities(
@@ -78,31 +83,27 @@ final class AppleIntelligenceProvider: IntelligenceProvider {
         }
 
         #if canImport(FoundationModels)
-        if #available(macOS 15.4, *) {
-            let model = SystemLanguageModel.default
-            switch model.availability {
-            case .available:
-                if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
-                    Log.ai.info("[LocalAI] Probe: SystemLanguageModel is .available")
-                }
-                return .available
-            case .unavailable(let reason):
-                // The exact case names in SystemLanguageModel.Availability.UnavailableReason can vary slightly by SDK.
-                // We map the common ones defensively and fall back gracefully.
-                // P6: lowercased contains for extra robustness across SDK descriptions.
-                let reasonString = String(describing: reason).lowercased()
-                if reasonString.contains("appleintelligencenotenabled") || reasonString.contains("notenabled") {
-                    return .appleIntelligenceNotEnabled
-                } else if reasonString.contains("devicenotsupported") || reasonString.contains("notsupported") {
-                    return .deviceNotSupported
-                } else if reasonString.contains("modelnotready") || reasonString.contains("notready") {
-                    return .modelNotReady
-                } else {
-                    return .unavailable("Apple Intelligence unavailable: \(reasonString)")
-                }
+        let model = SystemLanguageModel.default
+        switch model.availability {
+        case .available:
+            if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
+                Log.ai.info("[LocalAI] Probe: SystemLanguageModel is .available")
             }
-        } else {
-            return .deviceNotSupported
+            return .available
+        case .unavailable(let reason):
+            // The exact case names in SystemLanguageModel.Availability.UnavailableReason can vary slightly by SDK.
+            // We map the common ones defensively and fall back gracefully.
+            // P6: lowercased contains for extra robustness across SDK descriptions.
+            let reasonString = String(describing: reason).lowercased()
+            if reasonString.contains("appleintelligencenotenabled") || reasonString.contains("notenabled") {
+                return .appleIntelligenceNotEnabled
+            } else if reasonString.contains("devicenotsupported") || reasonString.contains("notsupported") {
+                return .deviceNotSupported
+            } else if reasonString.contains("modelnotready") || reasonString.contains("notready") {
+                return .modelNotReady
+            } else {
+                return .unavailable("Apple Intelligence unavailable: \(reasonString)")
+            }
         }
         #else
         return .deviceNotSupported
@@ -113,47 +114,43 @@ final class AppleIntelligenceProvider: IntelligenceProvider {
 
     func generate(prompt: String, instructions: String?) async throws -> String {
         #if canImport(FoundationModels)
-        if #available(macOS 15.4, *) {
-            // Reuse the LanguageModelSession across turns for much better speed (avoids full model reload on every message).
-            // Use only the *stable base contract* (core identity + grounding + tool rules) for the hash and for
-            // the LanguageModelSession(instructions:) initializer. Per-turn varying context (search, RAG, attached
-            // files for *this* question) must be supplied by the caller inside the `prompt` (or history string).
-            // This is what allows real transcript state to be kept by the framework across normal follow-ups.
-            let baseForSession = baseInstructionsForSession(instructions)
-            let newHash = baseForSession.hashValue
-            let shouldRecreate = currentSession == nil || (!baseForSession.isEmpty && newHash != lastInstructionsHash)
-            if shouldRecreate {
-                if !baseForSession.isEmpty {
-                    currentSession = LanguageModelSession(instructions: baseForSession)
-                } else {
-                    currentSession = LanguageModelSession()
-                }
-                lastInstructionsHash = newHash
+        // Reuse the LanguageModelSession across turns for much better speed (avoids full model reload on every message).
+        // Use only the *stable base contract* (core identity + grounding + tool rules) for the hash and for
+        // the LanguageModelSession(instructions:) initializer. Per-turn varying context (search, RAG, attached
+        // files for *this* question) must be supplied by the caller inside the `prompt` (or history string).
+        // This is what allows real transcript state to be kept by the framework across normal follow-ups.
+        let baseForSession = baseInstructionsForSession(instructions)
+        let newHash = baseForSession.hashValue
+        let shouldRecreate = currentSession == nil || (!baseForSession.isEmpty && newHash != lastInstructionsHash)
+        if shouldRecreate {
+            if !baseForSession.isEmpty {
+                currentSession = LanguageModelSession(instructions: baseForSession)
+            } else {
+                currentSession = LanguageModelSession()
             }
+            lastInstructionsHash = newHash
+        }
 
-            guard let session = currentSession else {
-                throw NSError(domain: "Searxly.LocalAI", code: -12, userInfo: [NSLocalizedDescriptionKey: "Failed to create LanguageModelSession"])
-            }
+        guard let session = currentSession else {
+            throw NSError(domain: "Searxly.LocalAI", code: -12, userInfo: [NSLocalizedDescriptionKey: "Failed to create LanguageModelSession"])
+        }
 
-            if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
-                Log.ai.info("[LocalAI] Plain respond (no tools) — prompt len: \(prompt.count)")
-            }
+        if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
+            Log.ai.info("[LocalAI] Plain respond (no tools) — prompt len: \(prompt.count)")
+        }
 
-            do {
-                let response = try await session.respond(to: prompt)
-                return response.content
-            } catch {
-                // On token limit errors the LanguageModelSession can be left in a bad state for the next turn.
-                // Clearing it forces a fresh session on the subsequent request (cheap to recreate).
-                let desc = (error as NSError).localizedDescription
-                if desc.contains("maximum allowed") || desc.contains("tokens") || desc.contains("4096") {
-                    currentSession = nil
-                    lastInstructionsHash = nil
-                }
-                throw error
+        do {
+            let response = try await session.respond(to: prompt)
+            return response.content
+        } catch {
+            // On token limit errors the LanguageModelSession can be left in a bad state for the next turn.
+            // Clearing it forces a fresh session on the subsequent request (cheap to recreate).
+            let desc = (error as NSError).localizedDescription
+            if desc.contains("maximum allowed") || desc.contains("tokens") || desc.contains("4096") {
+                currentSession = nil
+                lastInstructionsHash = nil
             }
-        } else {
-            throw NSError(domain: "Searxly.LocalAI", code: -10, userInfo: [NSLocalizedDescriptionKey: "FoundationModels not available on this OS version"])
+            throw error
         }
         #else
         throw NSError(domain: "Searxly.LocalAI", code: -11, userInfo: [NSLocalizedDescriptionKey: "FoundationModels framework not present at compile time"])
@@ -165,51 +162,45 @@ final class AppleIntelligenceProvider: IntelligenceProvider {
             Task {
                 do {
                     #if canImport(FoundationModels)
-                    if #available(macOS 15.4, *) {
-                        // Reuse or create session (same logic as non-streaming for consistency).
-                        // Use stable base contract only (see generate() for full rationale).
-                        let baseForSession = baseInstructionsForSession(instructions)
-                        let newHash = baseForSession.hashValue
-                        let shouldRecreate = currentSession == nil || (!baseForSession.isEmpty && newHash != lastInstructionsHash)
-                        if shouldRecreate {
-                            if !baseForSession.isEmpty {
-                                currentSession = LanguageModelSession(instructions: baseForSession)
-                            } else {
-                                currentSession = LanguageModelSession()
-                            }
-                            lastInstructionsHash = newHash
+                    // Reuse or create session (same logic as non-streaming for consistency).
+                    // Use stable base contract only (see generate() for full rationale).
+                    let baseForSession = baseInstructionsForSession(instructions)
+                    let newHash = baseForSession.hashValue
+                    let shouldRecreate = currentSession == nil || (!baseForSession.isEmpty && newHash != lastInstructionsHash)
+                    if shouldRecreate {
+                        if !baseForSession.isEmpty {
+                            currentSession = LanguageModelSession(instructions: baseForSession)
+                        } else {
+                            currentSession = LanguageModelSession()
                         }
+                        lastInstructionsHash = newHash
+                    }
 
-                        guard let session = currentSession else {
-                            continuation.finish(throwing: NSError(domain: "Searxly.LocalAI", code: -12, userInfo: [NSLocalizedDescriptionKey: "Failed to create LanguageModelSession"]))
-                            return
-                        }
+                    guard let session = currentSession else {
+                        continuation.finish(throwing: NSError(domain: "Searxly.LocalAI", code: -12, userInfo: [NSLocalizedDescriptionKey: "Failed to create LanguageModelSession"]))
+                        return
+                    }
 
-                        // Real streaming from Apple Intelligence when available.
-                        // The API often yields cumulative content, so we compute deltas to avoid
-                        // repeating previous text in the bubble (which was causing mangled repeated outputs).
-                        // FIX: use common prefix length (robust to small rephrases or non-strict appends)
-                        // instead of blind dropFirst(count). Also reset on non-prefix to avoid total garbage.
-                        var previousContent = ""
-                        for try await partial in session.streamResponse(to: prompt) {
-                            let current = partial.content
-                            if !current.hasPrefix(previousContent) {
-                                // Unexpected non-extension; start fresh from this partial to avoid
-                                // producing garbage deltas. Still better than dropping the turn.
-                                previousContent = ""
-                            }
-                            if current.count > previousContent.count {
-                                let delta = String(current.dropFirst(previousContent.count))
-                                if !delta.isEmpty {
-                                    continuation.yield(delta)
-                                }
-                                previousContent = current
-                            }
+                    // Real streaming from Apple Intelligence when available.
+                    // The API often yields cumulative content, so we compute deltas to avoid
+                    // repeating previous text in the bubble (which was causing mangled repeated outputs).
+                    // FIX: use common prefix length (robust to small rephrases or non-strict appends)
+                    // instead of blind dropFirst(count). Also reset on non-prefix to avoid total garbage.
+                    var previousContent = ""
+                    for try await partial in session.streamResponse(to: prompt) {
+                        let current = partial.content
+                        if !current.hasPrefix(previousContent) {
+                            // Unexpected non-extension; start fresh from this partial to avoid
+                            // producing garbage deltas. Still better than dropping the turn.
+                            previousContent = ""
                         }
-                    } else {
-                        // Fallback to full generate + yield once on older OS
-                        let full = try await generate(prompt: prompt, instructions: instructions)
-                        continuation.yield(full)
+                        if current.count > previousContent.count {
+                            let delta = String(current.dropFirst(previousContent.count))
+                            if !delta.isEmpty {
+                                continuation.yield(delta)
+                            }
+                            previousContent = current
+                        }
                     }
                     #else
                     let full = try await generate(prompt: prompt, instructions: instructions)
@@ -246,52 +237,47 @@ final class AppleIntelligenceProvider: IntelligenceProvider {
             return try await generate(prompt: prompt, instructions: instructions)
         }
 
-        if #available(macOS 15.4, *) {
-            // For tool-aware turns we maintain a separate session so the framework can keep
-            // the full agentic transcript (previous tool results, etc.). We still honor the
-            // "recreate only on material instructions change" discipline for the base contract.
-            // Use the same stable base (stripped of per-turn RAG/search/files) as the plain path.
-            let baseForSession = baseInstructionsForSession(instructions)
-            let newHash = baseForSession.hashValue
-            let shouldRecreate = currentToolAwareSession == nil || (!baseForSession.isEmpty && newHash != lastInstructionsHash)
+        // For tool-aware turns we maintain a separate session so the framework can keep
+        // the full agentic transcript (previous tool results, etc.). We still honor the
+        // "recreate only on material instructions change" discipline for the base contract.
+        // Use the same stable base (stripped of per-turn RAG/search/files) as the plain path.
+        let baseForSession = baseInstructionsForSession(instructions)
+        let newHash = baseForSession.hashValue
+        let shouldRecreate = currentToolAwareSession == nil || (!baseForSession.isEmpty && newHash != lastInstructionsHash)
 
-            if shouldRecreate {
-                if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
-                    Log.ai.info("[LocalAI] Creating new tool-aware LanguageModelSession (tools: \(tools.count), instructions len: \(instructions?.count ?? 0))")
-                }
-                if !baseForSession.isEmpty {
-                    currentToolAwareSession = LanguageModelSession(tools: tools, instructions: baseForSession)
-                } else {
-                    currentToolAwareSession = LanguageModelSession(tools: tools)
-                }
-                lastInstructionsHash = newHash
-            }
-
-            guard let session = currentToolAwareSession else {
-                throw NSError(domain: "Searxly.LocalAI", code: -12, userInfo: [NSLocalizedDescriptionKey: "Failed to create tool-aware LanguageModelSession"])
-            }
-
+        if shouldRecreate {
             if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
-                Log.ai.info("[LocalAI] Calling session.respond(to:) for native tools (prompt len: \(prompt.count))")
+                Log.ai.info("[LocalAI] Creating new tool-aware LanguageModelSession (tools: \(tools.count), instructions len: \(instructions?.count ?? 0))")
             }
+            if !baseForSession.isEmpty {
+                currentToolAwareSession = LanguageModelSession(tools: tools, instructions: baseForSession)
+            } else {
+                currentToolAwareSession = LanguageModelSession(tools: tools)
+            }
+            lastInstructionsHash = newHash
+        }
 
-            do {
-                let response = try await session.respond(to: prompt)
-                if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
-                    Log.ai.info("[LocalAI] Native tools respond completed, content len: \(response.content.count)")
-                }
-                return response.content
-            } catch {
-                let desc = (error as NSError).localizedDescription
-                if desc.contains("maximum allowed") || desc.contains("tokens") || desc.contains("4096") {
-                    currentToolAwareSession = nil
-                    lastInstructionsHash = nil
-                }
-                throw error
+        guard let session = currentToolAwareSession else {
+            throw NSError(domain: "Searxly.LocalAI", code: -12, userInfo: [NSLocalizedDescriptionKey: "Failed to create tool-aware LanguageModelSession"])
+        }
+
+        if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
+            Log.ai.info("[LocalAI] Calling session.respond(to:) for native tools (prompt len: \(prompt.count))")
+        }
+
+        do {
+            let response = try await session.respond(to: prompt)
+            if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseAILogging {
+                Log.ai.info("[LocalAI] Native tools respond completed, content len: \(response.content.count)")
             }
-        } else {
-            // Older OS: fall back to plain (tools ignored)
-            return try await generate(prompt: prompt, instructions: instructions)
+            return response.content
+        } catch {
+            let desc = (error as NSError).localizedDescription
+            if desc.contains("maximum allowed") || desc.contains("tokens") || desc.contains("4096") {
+                currentToolAwareSession = nil
+                lastInstructionsHash = nil
+            }
+            throw error
         }
     }
     #endif

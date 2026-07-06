@@ -9,13 +9,12 @@ struct LocalAISettingsView: View {
     @State private var manager = LocalIntelligenceManager.shared
     @State private var showActivityLog = false
     @State private var showRAGAudit = false
-    @State private var showCloudEgressConfirm = false
 
     var body: some View {
         SettingsPane {
             SettingsPaneHeader(
-                title: "Searxly Agent",
-                subtitle: "Private AI on your Mac using Apple Intelligence. Off by default — nothing leaves this device."
+                title: "On-Device & Local AI",
+                subtitle: "Run AI privately on your Mac — Apple Intelligence or your own Ollama model. Nothing leaves this device. (The Searxly AI cloud has its own tab.)"
             )
 
             SettingsSection(
@@ -24,7 +23,7 @@ struct LocalAISettingsView: View {
             ) {
                 SettingsToggleRow(
                     title: "Searxly Agent",
-                    description: "Turns on on-device AI features below.",
+                    description: "The master switch for all of Searxly's AI — on-device, local, and the Searxly AI cloud.",
                     isOn: Binding(
                         get: { manager.isEnabled },
                         set: { manager.isEnabled = $0 }
@@ -43,33 +42,19 @@ struct LocalAISettingsView: View {
             }
 
             if manager.isEnabled {
+                appleSection
+                backendSection
                 searchSection
                 chatSection
-                backendSection
-                searxlyAISection
                 toolsSection
+                agentToolsSection
                 personalDataSection
                 resourcesSection
                 transparencySection
-                availabilitySection
             }
         }
         .sheet(isPresented: $showActivityLog) { activityLogSheet }
         .sheet(isPresented: $showRAGAudit) { ragAuditSheet }
-        .alert("Searxly AI runs in the cloud", isPresented: $showCloudEgressConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Enable") { enableSearxlyAICloud() }
-        } message: {
-            Text("Unlike on-device AI, Searxly AI sends what you ask it off this Mac to Searxly's cloud: your chat messages, any page text you ask it to summarize, and the private search results behind a grounded answer. It stays off until you pick \"Searxly AI\" in the chat. Enable it?")
-        }
-    }
-
-    /// Actually flips Searxly AI (cloud) on after the user acknowledges the egress disclosure.
-    private func enableSearxlyAICloud() {
-        manager.preferences.searxlyAIEnabled = true
-        manager.persistPreferences()
-        LocalIntelligenceManager.shared.noteSearxlyAIToggled()
-        Task { await LocalIntelligenceManager.shared.refreshAvailability() }
     }
 
     // MARK: - Sections
@@ -144,6 +129,27 @@ struct LocalAISettingsView: View {
                     set: { manager.preferences.toolsEnabled = $0; manager.persistPreferences() }
                 )
             )
+        }
+    }
+
+    @ViewBuilder
+    private var agentToolsSection: some View {
+        SettingsSection(
+            title: "Agent tools",
+            footer: "Tools the on-device model can use. Searxly AI's extra cloud tools (history, deep research, wallet, and more) are managed in the Searxly AI tab."
+        ) {
+            ForEach(Array(AIToolCatalog.all.filter { $0.availableOnDevice }.enumerated()), id: \.element.id) { index, tool in
+                if index > 0 { SettingsDivider() }
+                SettingsToggleRow(
+                    title: tool.name,
+                    description: tool.summary,
+                    isOn: Binding(
+                        get: { manager.isToolEnabled(tool.id) },
+                        set: { manager.setToolEnabled(tool.id, $0) }
+                    )
+                )
+                .disabled(!manager.preferences.toolsEnabled)
+            }
         }
     }
 
@@ -243,16 +249,9 @@ struct LocalAISettingsView: View {
     @ViewBuilder
     private var backendSection: some View {
         SettingsSection(
-            title: "Local AI",
-            footer: "Run a model on your own Mac. Ollama works on any Mac with no restrictions. Apple Intelligence requires specific hardware, English language, and Siri enabled."
+            title: "Local · Ollama",
+            footer: "Run your own open model on this Mac via Ollama — free, private, and works on any Mac (no special hardware). Requires Ollama installed and running."
         ) {
-            SettingsCallout(
-                title: "Ollama recommended",
-                message: "Apple Intelligence has strict device requirements and limited availability. Ollama lets you run powerful open models locally on any Mac.",
-                tint: .blue,
-                systemImage: "sparkles"
-            )
-
             SettingsToggleRow(
                 title: "Use Ollama",
                 description: "Run a local open model via Ollama instead of Apple Intelligence. Requires Ollama installed and running.",
@@ -294,43 +293,61 @@ struct LocalAISettingsView: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.caption)
 
-                Text("Only use a server you control. Remote URLs send your messages off this Mac.")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
+                if ollamaEndpointIsRemote {
+                    SettingsCallout(
+                        title: "Remote Ollama endpoint active",
+                        message: "Your AI prompts, chat messages, and any page content you share go over the network to \(ollamaEndpointHost). Only use a server you control and trust.",
+                        tint: .orange,
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                } else {
+                    Text("Only use a server you control. Remote URLs send your messages off this Mac.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             }
         }
     }
 
+    /// True when the configured Ollama URL points somewhere other than this Mac.
+    private var ollamaEndpointIsRemote: Bool {
+        guard let host = URL(string: manager.preferences.ollamaBaseURL)?.host?.lowercased() else { return false }
+        return !(host == "localhost" || host == "127.0.0.1" || host == "::1")
+    }
+
+    private var ollamaEndpointHost: String {
+        URL(string: manager.preferences.ollamaBaseURL)?.host ?? "the remote server"
+    }
+
     @ViewBuilder
-    private var searxlyAISection: some View {
+    private var appleSection: some View {
         SettingsSection(
-            title: "Searxly AI (cloud)",
-            footer: "Searxly AI runs in the cloud — no model to install. Unlike on-device AI, it sends your chat messages, any page text you summarize, and the search results behind grounded answers off this Mac to Searxly's cloud. It only does so once you pick Searxly AI in the chat."
+            title: "On-device · Apple Intelligence",
+            footer: "Runs entirely on this Mac — the most private option, and free. Needs Apple Silicon and macOS 26 with Apple Intelligence turned on."
         ) {
-            SettingsToggleRow(
-                title: "Enable Searxly AI",
-                description: "Adds Searxly AI to the chat model selector. Some prompts are free.",
-                isOn: Binding(
-                    get: { manager.preferences.searxlyAIEnabled },
-                    set: { newValue in
-                        if newValue && !manager.preferences.searxlyAIEnabled {
-                            // First enable: require explicit acknowledgement that data leaves the Mac.
-                            showCloudEgressConfirm = true
-                        } else {
-                            manager.preferences.searxlyAIEnabled = newValue
-                            if !newValue { manager.preferences.useSearxlyAI = false }
-                            manager.persistPreferences()
-                            LocalIntelligenceManager.shared.noteSearxlyAIToggled()
-                            Task { await LocalIntelligenceManager.shared.refreshAvailability() }
+            Text(manager.statusDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if case .unavailable(let reason) = manager.status {
+                switch reason {
+                case .appleIntelligenceNotEnabled:
+                    Button("Open Apple Intelligence settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AppleIntelligence") {
+                            NSWorkspace.shared.open(url)
                         }
                     }
-                )
-            )
-
-            if manager.preferences.searxlyAIEnabled && !SearxlyAICloud.isConfigured {
-                Text("Searxly AI isn't set up yet.")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .font(.caption)
+                    .buttonStyle(.link)
+                case .deviceNotSupported:
+                    Text("This Mac can't run Apple Intelligence. Use **Local · Ollama** below (any Mac), or **Searxly AI** in its own tab.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                default:
+                    EmptyView()
+                }
             }
         }
     }
@@ -380,24 +397,6 @@ struct LocalAISettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private var availabilitySection: some View {
-        SettingsSection(title: "Status") {
-            Text(manager.statusDescription)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if case .unavailable = manager.status {
-                Button("Open Apple Intelligence settings") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AppleIntelligence") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .font(.caption)
-                .buttonStyle(.link)
-            }
-        }
-    }
 
     // MARK: - Sheets
 

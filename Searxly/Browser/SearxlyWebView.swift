@@ -40,15 +40,34 @@ final class SearxlyWebView: WKWebView {
         "WKMenuItemIdentifierSearchWeb"
     ]
 
+    override init(frame frameRect: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frameRect, configuration: configuration)
+        // Safari-like trackpad behaviors (off by default on WKWebView):
+        allowsBackForwardNavigationGestures = true   // two-finger swipe ← / → to go back/forward
+        allowsMagnification = true                    // pinch-to-zoom the page
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("SearxlyWebView is created programmatically, never from a coder")
+    }
+
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
+
+        // 0. Relabel "Open Link in New Window" → "Open Link in New Tab": our WKUIDelegate routes every
+        // new-window request (this item, plus target="_blank" and window.open) into a Searxly tab, so
+        // the default "Window" wording is misleading.
+        if let openInNew = menu.items.first(where: { $0.identifier?.rawValue == "WKMenuItemIdentifierOpenLinkInNewWindow" }) {
+            openInNew.title = "Open Link in New Tab"
+        }
 
         // 1. Text-selection actions (top of menu) when something is selected.
         let hasSelection = menu.items.contains { item in
             guard let id = item.identifier?.rawValue else { return false }
             return Self.textSelectionMenuIDs.contains(id)
         }
-        if hasSelection {
+        if hasSelection, AIFeatures.programEnabled {
             let ask = NSMenuItem(title: "Ask Searxly AI", action: nil, keyEquivalent: "")
             let submenu = NSMenu()
             submenu.addItem(makeAskItem(title: "Ask about selection", action: .ask))
@@ -62,7 +81,8 @@ final class SearxlyWebView: WKWebView {
         }
 
         // 2. Whole-page summary (bottom of menu) for real web pages only.
-        if let scheme = url?.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+        if AIFeatures.programEnabled,
+           let scheme = url?.scheme?.lowercased(), scheme == "http" || scheme == "https" {
             let item = NSMenuItem(title: "Summarize this page with Searxly AI",
                                   action: #selector(summarizePageWithSearxly(_:)),
                                   keyEquivalent: "")

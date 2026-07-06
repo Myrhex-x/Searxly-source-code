@@ -2,121 +2,32 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!--
-		================================================================================
-		App Sandbox — ENABLED (Phase 2, 2026)
-		================================================================================
-		All ~/searxng-local file I/O and spawning of the bundled native SearXNG
-		(Python) process now routes through the SearxlyHelper XPC service
-		(no sandbox), so the main app can be sandboxed.
-
-		Hardened Runtime is also enabled.
-	-->
-
-	<!-- App Sandbox (Phase 2: all ~/searxng-local I/O routes through SearxlyHelper XPC service) -->
-	<key>com.apple.security.app-sandbox</key>
-	<true/>
-
-	<!-- Network access for WKWebView and HTTP probes -->
-	<key>com.apple.security.network.client</key>
-	<true/>
-
-	<!--
-		=== PERSONAL VPN ===
-		Lets the app create and control a system-wide VPN using macOS's BUILT-IN VPN client
-		(NEVPNManager + NEVPNProtocolIPSec / IKEv2). No Packet Tunnel extension is needed — the OS
-		does the tunnelling. Enable the "Personal VPN" capability on the Searxly target in Xcode
-		(Signing & Capabilities) so the provisioning profile grants this; then approve the VPN config
-		once in System Settings on first Connect.
-	-->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:www.searxly.app</string>
+	</array>
 	<key>com.apple.developer.networking.vpn.api</key>
 	<array>
 		<string>allow-vpn</string>
 	</array>
-
-	<!--
-		Keychain access group — REQUIRED for the modern data-protection keychain
-		(kSecUseDataProtectionKeychain), which the wallet uses for the seed phrase, API keys, etc.
-
-		Without an access group (this, or an application-identifier from a provisioning profile), the
-		data-protection keychain has no scope and its capability probe fails, so WalletKeychain falls
-		back to the LEGACY keychain. The legacy keychain gates each item by the app's code signature,
-		so every dev rebuild re-prompts "Searxly wants to use your confidential information…" for EVERY
-		wallet item — the popup spam. This one entitlement fixes that.
-
-		$(AppIdentifierPrefix) is substituted with the signing team's App ID prefix at build time, so it
-		works on both a personal and a paid team without hardcoding the team id.
-	-->
-	<key>keychain-access-groups</key>
-	<array>
-		<string>$(AppIdentifierPrefix)com.myrhex.Searxly</string>
-	</array>
-
-	<!-- Downloads folder: read-write access for files the user saves from the browser -->
-	<key>com.apple.security.files.downloads.read-write</key>
+	<key>com.apple.security.app-sandbox</key>
 	<true/>
-
-	<!--
-		User-selected files: REQUIRED for NSSavePanel / NSOpenPanel to work in a sandboxed app
-		(e.g. saving the encrypted wallet backup, or restoring one). Without this, the moment the
-		app opens a Save/Open dialog the sandbox traps the process (EXC_BREAKPOINT).
-	-->
-	<key>com.apple.security.files.user-selected.read-write</key>
-	<true/>
-
-	<!--
-		=== NETWORK EXTENSIONS (for real WireGuard VPN / Packet Tunnel Provider) ===
-
-		This capability is what allows the app to start a real system-wide full-tunnel
-		WireGuard connection via the separate SearxlyWireGuardTunnel extension target.
-
-		Because this project is being prepared for open source (not yet publicly released),
-		the COMPLETE / PRODUCTION configuration is documented here so that anyone looking
-		at the source can see exactly what a working paid-team setup looks like.
-
-		Current state (for the developer's personal team):
-		- The key is commented out below so the project builds and runs on a free
-		  personal Apple ID team without provisioning profile errors.
-		- The entire VPN UI, pill (top-left), popovers, config management, fake
-		  "connect", status, browser button, demo warnings, etc. continue to work fully.
-		- Real routing is not possible on a personal team (Apple limitation).
-
-		Full production version (uncomment this block when you have a paid Apple
-		Developer membership + a provisioning profile that includes the capability):
-	-->
-	<!--
-	<key>com.apple.developer.networking.networkextension</key>
-	<array>
-		<string>packet-tunnel-provider</string>
-	</array>
-	-->
-	<!-- <key>com.apple.developer.system-extension.install</key> <true/> -->
-
-	<!--
-		See VPN/IMPLEMENTATION_NOTES.md (the big "Critical: Signing / Team / Capability
-		Requirements" section right at the top) + the SearxlyWireGuardTunnel/ folder
-		for the complete instructions, support files (Info.plist + entitlements for
-		the extension), and how to create the target.
-	-->
-
-	<!-- Required for good JavaScript performance and modern site rendering (YouTube, etc.) -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
-
-	<!-- Helps with modern web features and some network-related operations in WebContent -->
 	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
 	<true/>
-
-	<!-- Allows the WebContent process to read network configuration (directly addresses the networkd plist warnings) -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
 	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
 	<array>
 		<string>/Library/Preferences/com.apple.networkd.plist</string>
 	</array>
-
-	<!-- Broad temporary exceptions so WebContent can reach system services -->
 	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
 	<array>
-		<!-- Sparkle auto-update installer XPC services (sandboxed app). -->
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
 		<string>com.apple.runningboard</string>
@@ -126,7 +37,6 @@
 		<string>com.apple.coreservices</string>
 		<string>com.apple.CoreServices.coreservicesd</string>
 		<string>com.apple.audio.AudioComponentRegistrar</string>
-		<!-- Additional for media / audio / video in WebContent processes (helps with "WebKit Media Playback" and audio registrar issues) -->
 		<string>com.apple.coremedia</string>
 		<string>com.apple.audio.audiohald</string>
 		<string>com.apple.media</string>
@@ -136,103 +46,14 @@
 		<string>com.apple.coreaudio</string>
 		<string>com.apple.CARenderServer</string>
 		<string>com.apple.mediaremoted</string>
-		<!-- Extra services hit in Xcode 27 beta / macOS 27 WebContent sandbox violations (from console logs) -->
 		<string>com.apple.tccd</string>
 		<string>com.apple.tccd.system</string>
 		<string>com.apple.iconservices</string>
 		<string>com.apple.iconservices.store</string>
 	</array>
-
-	<!--
-		NOTE: We cannot add the private entitlements that the WebContent logs repeatedly request:
-		  com.apple.runningboard.assertions.webkit
-		  com.apple.multitasking.systemappassertions
-		They cause exactly this provisioning error with automatic signing.
-		These are required for full "WebKit Media Playback" RBS assertions in the sandboxed
-		WebContent processes. Without them, YouTube (and other heavy video sites) often fail
-		to initialize the decoder / audio session even if our adblock JS is a complete no-op.
-
-		All other mitigations below are applied to make videos work as much as possible.
-	-->
-
-	<!--
-		NOTE on "WebKit Media Playback" / RunningBoard assertion errors:
-		The logs showed many:
-		  "Failed to acquire RBS assertion 'WebKit Media Playback'"
-		  "originator doesn't have entitlement com.apple.runningboard.assertions.webkit"
-		  etc.
-
-		Those specific entitlements (com.apple.runningboard.assertions.webkit,
-		com.apple.multitasking.systemappassertions, com.apple.private.allow-explicit-graphics-priority)
-		are private/internal and cannot be used with automatic signing / standard
-		developer profiles. Xcode will refuse to provision (exactly the error you got).
-
-		We keep the mach-lookup temporary exceptions (above) which can help some
-		WebContent <-> system service connections (pboard, audio, launchservices, runningboard, etc.).
-
-		Real fixes for video have to come from the WebView configuration + adblock JS side
-		(we have already relaxed network blocks for YT, stopped forcing styles on <video>
-		elements themselves, changed media gesture requirement to .audio, removed src=''
-		nuking on unload, etc.).
-	-->
-
-	<!--
-		XCODE 27 BETA / WWDC26 WEBKIT + LOCAL AI CRASH NOTES (2026-06)
-		===========================================================
-		Console shows repeated WebContent deaths:
-		  - CRASHSTRING: rdar://problem/28724618 Couldn't connect to launchservicesd.
-		  - Sandbox restriction (159) on pboard, coreservicesd, AudioComponentRegistrar, tccd (TCCAccessRequest kTCCServiceListenEvent)
-		  - "kLSServerConnectionStatusProcessIsDaemonMask is set"
-		  - networkd plist sandbox, FSNode/IOKit failures, "invalid product id '(null)'"
-		  - ViewBridge to RemoteViewService Terminated (Code=18)
-		  - NSHostingView reentrant layout warnings (directly tied to Local AI chat send)
-
-		Root causes observed when "send a prompt" in Local AI Chat:
-		1. LocalAIChatSheet + custom .overlay (ZStack + spring transition) + inner ScrollViewReader +
-		   streaming per-token (or coalesced) @State mutations + .onChange + withAnimation(proxy.scrollTo) +
-		   conditional tool cards / follow-up chips / attachment chips + suggestions background Tasks
-		   = massive layout thrashing while the view is being laid out.
-		2. The main window is a complex hybrid (WKWebViews everywhere via WebViewContainer/Representable +
-		   NSHostingView for the SwiftUI ContentView/Root). Dying WebContent processes + ViewBridge
-		   terminations make the hosting view extremely sensitive to reentrant layout from the AI overlay.
-		3. Even with App Sandbox = NO + Hardened Runtime + the temporary-exception.mach-lookup list,
-		   Xcode 27 beta WebKit (WebContent XPC services) is stricter about what child renderers can
-		   reach. Many of the failing services (especially full launchservicesd / coreservicesd behavior,
-		   and private RunningBoard assertions) require entitlements that are either:
-		     - Private (com.apple.runningboard.assertions.webkit etc.) → provisioning failure on auto-sign
-		     - Or only fully effective when the *main* app bundle declares App Sandbox + a matching
-		       provisioning profile that propagates the exceptions to the WebContent bootstrap.
-
-		TCC kTCCServiceListenEvent ("Input Monitoring" in Privacy & Security) requests from WebContent
-		are surprising but appeared in the logs. If the app starts prompting the user for it, or if
-		WebContent stays broken, try granting "Input Monitoring" to Searxly in System Settings.
-		(We added com.apple.tccd / tccd.system to the mach-lookup list above as a best-effort.)
-
-		What we did:
-		- Added a few more services seen in the 27-beta logs.
-		- (Critical) Made Local AI send/stream/scroll/tool-dismissal paths use DispatchQueue.main.async
-		  for *all* @State mutations and proxy.scrollTo that happen during/after prompt generation.
-		  Coalesce small streaming deltas. Removed withAnimation from the hot paths.
-		- This should stop the "send prompt → reentrant warnings → ViewBridge death → crash/unstable"
-		  cascade even while the underlying WebContent sandbox spam continues.
-
-		Longer term options (documented for when you have a paid team + custom profile):
-		- Turn App Sandbox back on (ENABLE_APP_SANDBOX=YES) + add the full set of WebKit-friendly
-		  exceptions + com.apple.security.device.audio-input etc. if needed. Test the local SearXNG
-		  paths carefully (~/searxng-local I/O + spawning the native SearXNG process currently route
-		  through the unsandboxed SearxlyHelper XPC service).
-		- Or keep unsandboxed but embed a small XPC service whose only job is to host WKWebViews
-		  (gives the WebContent processes a different (less daemon-like) bootstrap environment).
-		- File feedbacks with Apple on the rdar and the "WebContent in hardened+unsandboxed app on 27"
-		  behavior; include the exact CRASHSTRING lines.
-
-		While iterating on 27 beta: use the built-in "Copy full Local AI diagnostics" button in
-		Settings → Local AI. It includes prompt versions, prefs, RAG state, recent actions, and
-		instructions to also paste filtered Xcode console ([LocalAI] + the WebContent / NSHostingView lines).
-
-		Unrelated but visible in your log: any ~/searxng-local errors are from LocalSearxngManager
-		spawning the bundled native SearXNG process via SearxlyHelper. Only relevant if you are
-		testing the one-click local SearXNG feature; they do not affect the on-device Apple Intelligence path.
-	-->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.myrhex.Searxly</string>
+	</array>
 </dict>
 </plist>

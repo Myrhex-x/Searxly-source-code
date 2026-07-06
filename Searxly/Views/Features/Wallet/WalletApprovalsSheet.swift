@@ -20,6 +20,7 @@ struct WalletApprovalsSheet: View {
     @State private var revoking = false
     @State private var revokedIDs: Set<String> = []
     @State private var resultMessage: String? = nil
+    @State private var resultIsError = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,7 +31,7 @@ struct WalletApprovalsSheet: View {
         .frame(width: 400)
         .frame(minHeight: 440, maxHeight: 640)
         .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
+
         .task { await reload() }
     }
 
@@ -38,7 +39,7 @@ struct WalletApprovalsSheet: View {
         HStack(spacing: 10) {
             SearxlyWalletBadge(size: 30, cornerRadius: 8)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Token Approvals").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                Text("Token Approvals").font(.system(size: 15, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 Text("Who can move your tokens").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             }
             Spacer()
@@ -84,7 +85,7 @@ struct WalletApprovalsSheet: View {
             TokenIconView(token: approval.token, size: 34)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(approval.token.symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                    Text(approval.token.symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                     if approval.isUnlimited {
                         Text("UNLIMITED")
                             .font(.system(size: 8, weight: .heavy)).tracking(0.4)
@@ -101,7 +102,7 @@ struct WalletApprovalsSheet: View {
             Spacer()
             Button { pendingRevoke = approval; pin = ""; pinError = false } label: {
                 Text("Revoke")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(WalletTheme.negative.opacity(0.18), in: Capsule())
                     .overlay(Capsule().strokeBorder(WalletTheme.negative.opacity(0.4), lineWidth: 0.8))
@@ -119,7 +120,7 @@ struct WalletApprovalsSheet: View {
             VStack(spacing: 6) {
                 TokenIconView(token: approval.token, size: 40)
                 Text("Revoke \(approval.token.symbol) approval")
-                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 Text("Stops \(abbrev(approval.spender)) from moving your \(approval.token.symbol). Costs a small gas fee in ETH.")
                     .font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -136,8 +137,8 @@ struct WalletApprovalsSheet: View {
                             Image(systemName: WalletBiometric.symbol).font(.system(size: 14))
                             Text("Authorize with \(WalletBiometric.label)").font(.system(size: 13, weight: .semibold))
                         }
-                        .foregroundStyle(.black).frame(maxWidth: 240).padding(.vertical, 11)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                        .foregroundStyle(WalletTheme.onInk).frame(maxWidth: 240).padding(.vertical, 11)
+                        .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .buttonStyle(.plain)
                     Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
@@ -147,7 +148,7 @@ struct WalletApprovalsSheet: View {
 
                 HStack(spacing: 12) {
                     ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                        Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
+                        Circle().fill(i < pin.count ? WalletTheme.ink : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                     }
                 }
                 if pinError {
@@ -178,12 +179,16 @@ struct WalletApprovalsSheet: View {
 
     private func banner(_ text: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(WalletTheme.positive)
+            Image(systemName: resultIsError ? "xmark.octagon.fill" : "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(resultIsError ? WalletTheme.negative : WalletTheme.positive)
             Text(text).font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .padding(11)
-        .background(WalletTheme.positive.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
+        .background((resultIsError ? WalletTheme.negative : WalletTheme.positive).opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 9))
     }
 
     private func abbrev(_ s: String) -> String {
@@ -219,14 +224,42 @@ struct WalletApprovalsSheet: View {
         Task {
             let res = await wallet.revokeApproval(tokenContract: contract, spender: approval.spender, pin: pin)
             revoking = false
-            if res.hash != nil {
+            if let hash = res.hash {
                 revokedIDs.insert(approval.id)
-                resultMessage = "Revoke sent for \(approval.token.symbol). It clears once the transaction confirms."
+                resultMessage = "Revoke sent for \(approval.token.symbol) — confirming on-chain…"
+                resultIsError = false
                 pendingRevoke = nil
+                await trackRevoke(hash, approval: approval)
             } else {
                 resultMessage = res.error ?? "Revoke failed."
+                resultIsError = true
                 pendingRevoke = nil
             }
         }
+    }
+
+    /// Follows the revoke to its on-chain outcome so the banner reports the truth: confirmed, or
+    /// reverted (in which case the approval is still active and its row comes back).
+    private func trackRevoke(_ hash: String, approval: TokenApproval) async {
+        let rpc = wallet.activeRPCURL
+        for _ in 0..<40 {
+            let status = await WalletNetwork.transactionReceipt(hash: hash, rpc: rpc)
+            switch status {
+            case .success:
+                resultMessage = "\(approval.token.symbol) approval revoked — \(abbrev(approval.spender)) can no longer move it."
+                resultIsError = false
+                return
+            case .failed:
+                revokedIDs.remove(approval.id)   // still active — bring the row back
+                resultMessage = "The revoke failed on-chain — the \(approval.token.symbol) approval is still active. Try again."
+                resultIsError = true
+                return
+            case .pending:
+                break
+            }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+        }
+        resultMessage = "Revoke sent for \(approval.token.symbol) — still confirming. Track it in Activity."
+        resultIsError = false
     }
 }

@@ -38,7 +38,50 @@
 "category_videos" = "Vidéos";
 "category_news" = "Actualités";
 
+/* News tab controls */
+"news_range_any" = "À tout moment";
+"news_range_day" = "24 heures";
+"news_range_week" = "Semaine";
+"news_range_month" = "Mois";
+"news_range_year" = "Année";
+"news_sort_top" = "À la une";
+"news_sort_latest" = "Récents";
+"news_refresh" = "Actualiser";
+"news_badge_live" = "EN DIRECT";
+"news_badge_breaking" = "URGENT";
+"news_updated_now" = "Mis à jour à l’instant";
+"news_updated_min" = "Mis à jour il y a %dm";
+"news_updated_hr" = "Mis à jour il y a %dh";
+"news_empty" = "Aucune actualité pour cette recherche.";
+"news_empty_in_range" = "Aucune actualité sur cette période.";
+"news_show_any_time" = "Afficher toutes les périodes";
+"news_top_stories" = "À la une";
+"news_top_story" = "À LA UNE";
+"news_in_the_news" = "Dans l’actualité";
+"news_more" = "Plus d’actualités";
+"news_full_coverage" = "Couverture complète · %d sources";
+"news_full_coverage_label" = "Couverture complète";
+"news_full_coverage_hint" = "Autres médias couvrant ce sujet";
+"news_n_sources" = "%d sources";
+"news_n_sources_dot" = "· %d sources";
+"news_live_now" = "%d en direct";
+"news_new_story" = "1 nouvelle actualité";
+"news_new_stories" = "%d nouvelles actualités";
+"news_new_stories_hint" = "Afficher les plus récentes";
+
 "home_tagline" = "Recherche privée, vos règles.";
+"home_scroll_news" = "Défilez pour voir l’actualité";
+"home_see_all" = "Tout voir";
+"home_topic_technology" = "Technologie";
+"home_topic_world" = "Monde";
+"home_topic_war" = "Guerre";
+"home_topic_politics" = "Politique";
+"home_topic_justice" = "Justice";
+"home_topic_business" = "Économie";
+"home_topic_science" = "Science";
+"home_topic_health" = "Santé";
+"home_topic_sports" = "Sport";
+"home_topic_entertainment" = "Divertissement";
 "home_subtitle" = "Toutes les requêtes passent par votre instance SearXNG.\nAucun suivi. Aucun journal de notre part.";
 "private_instance_active" = "Instance privée active";
 "home_instance_not_detected" = "Instance SearXNG introuvable";
@@ -99,7 +142,7 @@
 "clear_standard_tab_data" = "Effacer les données des onglets Standard";
 "reset_all_local_data" = "Réinitialiser toutes les données locales";
 
-"recovery_code_copied" = "Code de récupération copié dans le presse-papiers. Stockez-le en lieu sûr — quiconque possède ce code peut déchiffrer vos données.";
+"recovery_code_copied" = "Code de récupération copié — collez-le en lieu sûr dès maintenant ; quiconque possède ce code peut déchiffrer vos données. Le presse-papiers s'efface automatiquement après 45 secondes.";
 "no_encryption_key" = "Aucune clé de chiffrement trouvée à exporter.";
 "max_privacy_activated" = "Mode Confidentialité maximale activé : les nouveaux onglets sont maintenant Privés par défaut, l'enregistrement de l'historique est désactivé, et les suggestions apprises ont été effacées.";
 "search_suggestion_data_cleared" = "Données de suggestions de recherche effacées.";

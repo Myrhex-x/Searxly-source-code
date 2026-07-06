@@ -33,7 +33,8 @@ enum SearchAutocompleteService {
         // a privacy leak incompatible with Searxly's local-only design.
         for instance in instances {
             let base = instance.url.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            if let results = await fetchFromSearXNG(baseURL: base, query: trimmed), !results.isEmpty {
+            if let results = await fetchFromSearXNG(baseURL: base, query: trimmed, localeCode: localeCode),
+               !results.isEmpty {
                 return sanitize(results, original: trimmed)
             }
         }
@@ -43,7 +44,7 @@ enum SearchAutocompleteService {
 
     // MARK: - SearXNG instance
 
-    private static func fetchFromSearXNG(baseURL: String, query: String) async -> [String]? {
+    private static func fetchFromSearXNG(baseURL: String, query: String, localeCode: String) async -> [String]? {
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(baseURL)/autocompleter?q=\(encoded)") else {
             return nil
@@ -52,6 +53,12 @@ enum SearchAutocompleteService {
         var request = URLRequest(url: url)
         request.timeoutInterval = 0.8
         request.setValue("Searxly/1.0 (macOS)", forHTTPHeaderField: "User-Agent")
+        // The autocompleter has no `language` param; with `search.default_lang: auto` the
+        // instance derives the language from Accept-Language, so completions follow the
+        // same choice as search results.
+        if !localeCode.isEmpty {
+            request.setValue("\(localeCode), en;q=0.5", forHTTPHeaderField: "Accept-Language")
+        }
         // Intentionally omit X-Requested-With so SearXNG returns browser-style JSON:
         // ["query", ["suggestion1", "suggestion2", ...]]
 
@@ -61,6 +68,7 @@ enum SearchAutocompleteService {
         }
 
         do {
+            try PrivacyGate.assertSearchEgressAllowed(to: url)
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 return nil

@@ -29,14 +29,16 @@ struct RevealRecoveryPhraseSheet: View {
         .frame(width: 380)
         .frame(minHeight: 440, maxHeight: 640)
         .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
+
+        // This sheet exists to display the seed phrase — keep its whole window out of any screen capture.
+        .screenCaptureProtected()
     }
 
     private var header: some View {
         HStack(spacing: 10) {
             SearxlyWalletBadge(size: 30, cornerRadius: 8)
             Text("Recovery Phrase")
-                .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
             Spacer()
             WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { onClose() }
         }
@@ -65,9 +67,9 @@ struct RevealRecoveryPhraseSheet: View {
                         Text("Confirm with \(WalletBiometric.label)")
                             .font(.system(size: 13, weight: .semibold))
                     }
-                    .foregroundStyle(.black)
+                    .foregroundStyle(WalletTheme.onInk)
                     .frame(maxWidth: 240).padding(.vertical, 11)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                    .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
                 Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
@@ -77,7 +79,7 @@ struct RevealRecoveryPhraseSheet: View {
 
             HStack(spacing: 12) {
                 ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
+                    Circle().fill(i < pin.count ? WalletTheme.ink : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                 }
             }
             if pinError {
@@ -107,7 +109,7 @@ struct RevealRecoveryPhraseSheet: View {
                                 .frame(width: 20, alignment: .trailing)
                             Text(word)
                                 .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(WalletTheme.textPrimary)
                             Spacer(minLength: 0)
                         }
                         .padding(.horizontal, 10).padding(.vertical, 8)
@@ -124,7 +126,7 @@ struct RevealRecoveryPhraseSheet: View {
                             Text("Tap to reveal").font(.system(size: 12, weight: .semibold))
                             Text("Make sure no one is watching").font(.system(size: 10)).foregroundStyle(WalletTheme.textTertiary)
                         }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(WalletTheme.textPrimary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     .buttonStyle(.plain)
@@ -137,9 +139,9 @@ struct RevealRecoveryPhraseSheet: View {
 
             Button { onClose() } label: {
                 Text("Done")
-                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(.black)
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(WalletTheme.onInk)
                     .frame(maxWidth: .infinity).padding(.vertical, 12)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 11))
+                    .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 11))
             }
             .buttonStyle(.plain)
         }

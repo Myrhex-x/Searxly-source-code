@@ -1,6 +1,6 @@
 # Security Policy
 
-**Searxly** is a privacy-respecting native macOS browser powered by a bundled native local SearXNG instance (no Docker), with an included self-custody Base L2 wallet. This document describes the current security model, known limitations, and how to report vulnerabilities. (The VPN/WireGuard and ad-block implementations are kept in a private working copy and are not part of this public source.)
+**Searxly** is a privacy-respecting native macOS browser powered by a bundled native local SearXNG instance (no Docker), with an included self-custody Base L2 wallet. This document describes the current security model, known limitations, and how to report vulnerabilities. (The VPN and ad-block implementations are kept in a private working copy and are not part of this public source.)
 
 ## Supported Versions
 
@@ -25,9 +25,9 @@ Please include as much detail as possible (steps to reproduce, affected code pat
   - Local secrets/data use Keychain + CryptoKit (AES-GCM) at rest.
   - WebKit content processes run with scoped, individually documented temporary exceptions (see the rationale comments in the entitlements file).
 
-### VPN / Packet Tunnel Provider
-- **Status**: Real system-wide WireGuard VPN requires a **paid Apple Developer Program** membership and a provisioning profile that includes the `packet-tunnel-provider` capability. The relevant entitlement (`com.apple.developer.networking.networkextension`) is left commented out in `Searxly/Searxly.entitlements` so the project builds on free/personal Apple ID teams.
-- **Not in this public source**: The WireGuard adapter, tunnel provider, configuration handling, and VPN UI are **omitted** from this repository (see the README "What's omitted" section). They remain in the maintainer's private working copy.
+### VPN
+- **Status**: The VPN feature uses the built-in macOS system VPN APIs (`NetworkExtension` / `NEVPNManager`) — no packet-tunnel extension target is required.
+- **Not in this public source**: The VPN configuration handling and VPN UI are **omitted** from this repository (see the README "What's omitted" section). They remain in the maintainer's private working copy.
 
 ### Wallet (self-custody)
 - The Base L2 wallet is fully self-custodial: the BIP-39 seed and any imported private keys never leave the device.

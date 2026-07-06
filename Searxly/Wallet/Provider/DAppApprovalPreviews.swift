@@ -151,6 +151,14 @@ struct TxPreview {
         return String(dataHex.dropFirst(2).prefix(8)).lowercased() == "095ea7b3"
     }
 
+    /// approve(spender, amount): the spender being granted the allowance — who could move the tokens.
+    /// nil when the calldata isn't an approval (or is malformed/truncated).
+    var approvalSpender: String? {
+        guard isApproval, let dataHex, dataHex.count >= 2 + 8 + 64 else { return nil }
+        let word = dataHex.dropFirst(10).prefix(64)   // first ABI word after the selector
+        return "0x" + String(word.suffix(40)).lowercased()
+    }
+
     var isUnlimitedApproval: Bool {
         guard isApproval, let dataHex else { return false }
         let amount = String(dataHex.suffix(64)).lowercased()   // approve(spender, amount): last word, all-f = unlimited

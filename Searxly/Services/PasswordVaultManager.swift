@@ -48,7 +48,7 @@ final class PasswordVaultManager {
                 autoLockMinutes = clamped
                 return
             }
-            Persistence.savePasswordVaultAutoLockMinutes(clamped)
+            PasswordVaultStore.saveAutoLockMinutes(clamped)
             restartAutoLockTimer()
         }
     }
@@ -70,29 +70,29 @@ final class PasswordVaultManager {
 
         VaultLockManager.shared.reloadFromPersistence()
 
-        entries = Persistence.loadPasswordVaultEntries()
+        entries = PasswordVaultStore.loadEntries()
             .sorted { lhs, rhs in
                 if lhs.domain != rhs.domain { return lhs.domain.localizedCaseInsensitiveCompare(rhs.domain) == .orderedAscending }
                 return lhs.username.localizedCaseInsensitiveCompare(rhs.username) == .orderedAscending
             }
         savedLoginCount = entries.count
 
-        let behavior = Persistence.loadPasswordVaultBehaviorPreferences()
+        let behavior = PasswordVaultStore.loadBehaviorPreferences()
         autofillEnabled = behavior.autofillEnabled
         offerToSaveEnabled = behavior.offerToSaveEnabled
         suggestPasswordsEnabled = behavior.suggestPasswordsEnabled
         copyGeneratedToClipboard = behavior.copyGeneratedToClipboard
-        autoLockMinutes = Persistence.loadPasswordVaultAutoLockMinutes()
+        autoLockMinutes = PasswordVaultStore.loadAutoLockMinutes()
     }
 
     private func persistEntries() {
-        Persistence.savePasswordVaultEntries(entries)
+        PasswordVaultStore.saveEntries(entries)
         savedLoginCount = entries.count
     }
 
     private func persistBehaviorPreferences() {
         guard !isLoadingPreferences else { return }
-        Persistence.savePasswordVaultBehaviorPreferences(
+        PasswordVaultStore.saveBehaviorPreferences(
             autofillEnabled: autofillEnabled,
             offerToSaveEnabled: offerToSaveEnabled,
             suggestPasswordsEnabled: suggestPasswordsEnabled,
@@ -118,6 +118,11 @@ final class PasswordVaultManager {
         }
 
         if success {
+            // Second factor: when a security key is required for the vault, biometric / passphrase
+            // success alone isn't enough — also require a tap on an enrolled key before opening.
+            guard await SecurityKeyManager.shared.assertIfRequiredForVault() else {
+                return false
+            }
             isVaultUnlocked = true
             recordVaultActivity()
             restartAutoLockTimer()
@@ -194,6 +199,10 @@ final class PasswordVaultManager {
                 value = host
             }
         }
+        // Strip anything after the host if a "host/path" or "host:port" slipped in — otherwise a
+        // malformed stored domain would widen (or break) autofill matching.
+        if let slash = value.firstIndex(of: "/") { value = String(value[..<slash]) }
+        if let colon = value.firstIndex(of: ":") { value = String(value[..<colon]) }
         if value.hasPrefix("www.") {
             value = String(value.dropFirst(4))
         }
@@ -212,10 +221,17 @@ final class PasswordVaultManager {
 
     func entries(forDomain domain: String) -> [PasswordVaultEntry] {
         let normalized = Self.normalizeDomain(domain)
+        guard !normalized.isEmpty else { return [] }
         return entries.filter { entry in
-            // Exact match, or the stored domain is a registrable parent of the current host
-            // e.g. saved "github.com" should match "login.github.com"
-            entry.domain == normalized || normalized.hasSuffix(".\(entry.domain)")
+            let stored = entry.domain
+            guard !stored.isEmpty else { return false }
+            // Exact host match…
+            if stored == normalized { return true }
+            // …or the stored domain is a registrable parent of the current host (saved "github.com"
+            // matches "login.github.com"). Gated on the stored value containing a dot so a malformed or
+            // over-broad entry like "com" can never be offered for every site under that TLD.
+            guard stored.contains(".") else { return false }
+            return normalized.hasSuffix(".\(stored)")
         }
     }
 
@@ -223,8 +239,18 @@ final class PasswordVaultManager {
     func addEntry(domain: String, username: String, password: String, notes: String? = nil) -> PasswordVaultEntry? {
         let normalizedDomain = Self.normalizeDomain(domain)
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedDomain.isEmpty, !trimmedUsername.isEmpty, !trimmedPassword.isEmpty else { return nil }
+        // NEVER trim the password: a leading/trailing space can be part of a real password, and
+        // silently stripping it would save a password that no longer works. Only reject an empty one.
+        guard !normalizedDomain.isEmpty, !trimmedUsername.isEmpty, !password.isEmpty else { return nil }
+
+        // De-dupe: re-saving the same site + username updates the existing login (and its stored
+        // password) instead of creating a second entry that would leave an orphan Keychain item and
+        // split one account across two rows. Matches the CSV importer's dedupe behavior.
+        if let existing = entries.first(where: { $0.domain == normalizedDomain && $0.username == trimmedUsername }) {
+            guard updateEntry(id: existing.id, domain: normalizedDomain, username: trimmedUsername,
+                              password: password, notes: notes) else { return nil }
+            return entries.first { $0.id == existing.id }
+        }
 
         let entry = PasswordVaultEntry(
             domain: normalizedDomain,
@@ -232,7 +258,7 @@ final class PasswordVaultManager {
             notes: notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         )
 
-        guard PasswordVaultSecureStore.savePassword(trimmedPassword, for: entry.id) else { return nil }
+        guard PasswordVaultSecureStore.savePassword(password, for: entry.id) else { return nil }
 
         entries.append(entry)
         entries.sort { lhs, rhs in
@@ -255,14 +281,17 @@ final class PasswordVaultManager {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
 
         let normalizedDomain = Self.normalizeDomain(domain)
-        guard !normalizedDomain.isEmpty, !username.isEmpty else { return false }
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedDomain.isEmpty, !trimmedUsername.isEmpty else { return false }
 
+        // Password stored verbatim (never trimmed — see addEntry). A nil/empty password means
+        // "keep the existing one" (the editor pre-fills it, so a blank field is a no-op, not a wipe).
         if let password, !password.isEmpty {
             guard PasswordVaultSecureStore.savePassword(password, for: id) else { return false }
         }
 
         entries[index].domain = normalizedDomain
-        entries[index].username = username
+        entries[index].username = trimmedUsername
         entries[index].notes = notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
 
         entries.sort { lhs, rhs in
@@ -307,23 +336,37 @@ final class PasswordVaultManager {
     }
 
     static func generateSecurePassword(length: Int = 20) -> String {
-        let chars = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*")
-        guard !chars.isEmpty, length > 0 else { return "" }
+        let lower   = Array("abcdefghijklmnopqrstuvwxyz")
+        let upper   = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        let digits  = Array("0123456789")
+        let symbols = Array("!@#$%^&*")
+        let all = lower + upper + digits + symbols
+        guard length > 0 else { return "" }
 
-        // Rejection-sampling eliminates modulo bias (256 % 70 = 46 → indices 0-45 would be
-        // slightly over-represented without this). Accept only bytes in [0, acceptCeiling).
-        let acceptCeiling = UInt8((256 / chars.count) * chars.count)
-        var password = ""
-        password.reserveCapacity(length)
-
-        while password.count < length {
-            var randomByte: UInt8 = 0
-            guard SecRandomCopyBytes(kSecRandomDefault, 1, &randomByte) == errSecSuccess else { continue }
-            if randomByte >= acceptCeiling { continue }
-            password.append(chars[Int(randomByte) % chars.count])
+        /// One uniformly-random member of `set`, rejection-sampled so no character is biased
+        /// (256 % 70 ≠ 0 → naïve modulo would over-represent the low indices).
+        func pick(_ set: [Character]) -> Character {
+            let ceiling = UInt8((256 / set.count) * set.count)
+            while true {
+                var byte: UInt8 = 0
+                guard SecRandomCopyBytes(kSecRandomDefault, 1, &byte) == errSecSuccess else { continue }
+                if byte < ceiling { return set[Int(byte) % set.count] }
+            }
         }
 
-        return password
+        var chars: [Character] = []
+        // Guarantee at least one of each class (up to what length allows) so the result satisfies
+        // sites that require mixed classes and never lands in a "weak" bucket by chance.
+        for set in [lower, upper, digits, symbols].prefix(max(1, length)) {
+            chars.append(pick(set))
+        }
+        while chars.count < length { chars.append(pick(all)) }
+
+        // Fisher–Yates so the guaranteed class characters aren't pinned to the first four positions.
+        // SystemRandomNumberGenerator is arc4random-backed (CSPRNG) on Apple platforms.
+        var rng = SystemRandomNumberGenerator()
+        chars.shuffle(using: &rng)
+        return String(chars)
     }
 
     func copyPasswordToClipboard(for entryID: UUID) -> Bool {
@@ -335,6 +378,38 @@ final class PasswordVaultManager {
 
     func copyGeneratedPasswordToClipboard(_ password: String) {
         VaultClipboardManager.shared.copySensitive(password)
+    }
+
+    // MARK: - Export
+
+    enum ExportError: Error { case locked, empty }
+
+    /// Builds a plaintext CSV of every saved login, using the Chrome/Safari column order
+    /// (`name,url,username,password,note`) so it re-imports into any browser or password manager —
+    /// including Searxly's own importer. Requires the vault to be UNLOCKED (reads each secret from the
+    /// Keychain); refuses otherwise so the lock can't be bypassed. The caller writes it to a
+    /// user-chosen file and is responsible for warning that the file is UNENCRYPTED plaintext.
+    func exportCSV() throws -> String {
+        guard isVaultUnlocked else { throw ExportError.locked }
+        recordVaultActivity()
+
+        func esc(_ field: String) -> String {
+            // RFC-4180: quote fields containing comma, quote, or newline; double interior quotes.
+            if field.contains(",") || field.contains("\"") || field.contains("\n") || field.contains("\r") {
+                return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+            }
+            return field
+        }
+
+        var rows: [String] = ["name,url,username,password,note"]
+        for entry in entries {
+            guard let password = PasswordVaultSecureStore.loadPassword(for: entry.id) else { continue }
+            let url = entry.domain.isEmpty ? "" : "https://\(entry.domain)"
+            let cols = [entry.domain, url, entry.username, password, entry.notes ?? ""].map(esc)
+            rows.append(cols.joined(separator: ","))
+        }
+        guard rows.count > 1 else { throw ExportError.empty }
+        return rows.joined(separator: "\n") + "\n"
     }
 }
 
@@ -352,7 +427,7 @@ final class VaultLockManager {
     }
 
     func reloadFromPersistence() {
-        let config = Persistence.loadPasswordVaultLockConfig()
+        let config = PasswordVaultStore.loadLockConfig()
         useCustomPassphrase = config.useCustom
             && config.salt != nil
             && config.verifier != nil
@@ -366,14 +441,14 @@ final class VaultLockManager {
             return false
         }
 
-        Persistence.savePasswordVaultLockConfig(useCustom: true, salt: salt, verifier: verifier)
+        PasswordVaultStore.saveLockConfig(useCustom: true, salt: salt, verifier: verifier)
         useCustomPassphrase = true
         PasswordVaultManager.shared.lockVault()
         return true
     }
 
     func verifyPassphrase(_ passphrase: String) -> Bool {
-        let config = Persistence.loadPasswordVaultLockConfig()
+        let config = PasswordVaultStore.loadLockConfig()
         guard let salt = config.salt, let verifier = config.verifier else { return false }
         return VaultPassphraseCrypto.verify(passphrase: passphrase, salt: salt, verifier: verifier)
     }
@@ -392,7 +467,7 @@ final class VaultLockManager {
     }
 
     func clearAllVaultLockData() {
-        Persistence.savePasswordVaultLockConfig(useCustom: false, salt: nil, verifier: nil)
+        PasswordVaultStore.saveLockConfig(useCustom: false, salt: nil, verifier: nil)
         useCustomPassphrase = false
         PasswordVaultManager.shared.lockVault()
         Log.security.notice("Passwords: cleared vault lock configuration")

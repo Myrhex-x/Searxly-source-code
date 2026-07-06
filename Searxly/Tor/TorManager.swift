@@ -26,6 +26,20 @@ final class TorManager {
         case error(String)
     }
 
+    /// Whether onion routing is turned on. Off by default — the user opts in (Settings, onboarding, or
+    /// the "Enable Tor?" prompt the first time they open a .onion). Disabling stops any running Tor.
+    var isEnabled: Bool = UserDefaults.standard.bool(forKey: "Tor.Enabled") {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            UserDefaults.standard.set(isEnabled, forKey: "Tor.Enabled")
+            if !isEnabled {
+                Task { await stop() }
+                // Let open onion tabs react — they can no longer reach their hidden service.
+                NotificationCenter.default.post(name: .torDisabled, object: nil)
+            }
+        }
+    }
+
     private(set) var status: Status = .stopped
     private(set) var isBusy = false
     private(set) var lastError: String?

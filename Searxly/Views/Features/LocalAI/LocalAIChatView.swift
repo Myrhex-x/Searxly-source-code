@@ -52,6 +52,67 @@ struct LocalAIChatView: View {
                 browserState.showingWebContent = true
                 browserState.openResultsInTabs(urls: [url])
             },
+            // MARK: Extended cloud-agent tools (Searxly AI 70B). All read from live BrowserState / services.
+            searchHistory: { query in
+                let needle = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !needle.isEmpty else { return [] }
+                return browserState.history
+                    .filter { $0.title.lowercased().contains(needle) || $0.url.lowercased().contains(needle) }
+                    .sorted { $0.date > $1.date }
+                    .prefix(8)
+                    .map { $0 }
+            },
+            searchBookmarks: { query in
+                let needle = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !needle.isEmpty else { return [] }
+                return browserState.bookmarks
+                    .filter {
+                        $0.title.lowercased().contains(needle)
+                            || $0.url.lowercased().contains(needle)
+                            || ($0.note ?? "").lowercased().contains(needle)
+                    }
+                    .sorted { $0.dateAdded > $1.dateAdded }
+                    .prefix(8)
+                    .map { $0 }
+            },
+            searchByCategory: { query, category in
+                do {
+                    let (r, _) = try await SearXNGService.shared.searchWithFallback(
+                        query: query,
+                        categories: category,
+                        instances: browserState.searxInstances,
+                        language: Localization.searchLanguageCode
+                    )
+                    return r
+                } catch {
+                    Log.app.error("Category search tool failed: \(error)")
+                    return []
+                }
+            },
+            openURLsInTabs: { urls in
+                browserState.clearNativeSearch()
+                browserState.showingWebContent = true
+                browserState.openResultsInTabs(urls: urls)
+            },
+            lookupEntity: { entity in
+                await KnowledgePanelService.resolve(
+                    query: entity,
+                    imageInstanceURL: browserState.currentSearxInstance.url
+                )
+            },
+            privacyStatusProvider: {
+                AIPrivacyStatusSnapshot(
+                    torEnabled: TorManager.shared.isEnabled,
+                    torRunning: TorManager.shared.isRunning,
+                    vpnConnected: SystemVPNManager.shared.isConnected,
+                    vpnHasActivePass: ManagedVPNService.shared.hasActivePass,
+                    currentPageHost: browserState.webCurrentURL?.host,
+                    onionOfferHost: browserState.activeOnionLocationOffer?.pageHost,
+                    onionOfferURL: browserState.activeOnionLocationOffer?.onionURL.absoluteString,
+                    searxInstanceName: browserState.currentSearxInstance.name,
+                    searxIsPrivate: !SearXNGInstance.isPublicInstance(url: browserState.currentSearxInstance.url)
+                )
+            },
             lastSearchQuery: browserState.lastSearchQuery,
             // RAG — live data from BrowserState
             retrieveRAG: { query in

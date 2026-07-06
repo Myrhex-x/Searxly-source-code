@@ -31,6 +31,15 @@ final class SearchThumbnailLoader: ObservableObject {
 
     private var loadTask: Task<Void, Never>?
 
+    /// Frees decoded-image memory under memory pressure. Pass `includingDisk` (on .critical) to also
+    /// drop the on-disk URL cache. Images simply reload from network/cache when next shown.
+    static func purgeCaches(includingDisk: Bool = false) {
+        memoryCache.removeAllObjects()
+        if includingDisk {
+            urlSession.configuration.urlCache?.removeAllCachedResponses()
+        }
+    }
+
     func load(candidates: [URL], referer: String?) {
         loadTask?.cancel()
         image = nil
@@ -66,7 +75,12 @@ final class SearchThumbnailLoader: ObservableObject {
                 }
 
                 do {
-                    let (data, response) = try await Self.urlSession.data(for: request)
+                    // Anonymous fetch (a search-result image URL) — rides Tor in Maximum Privacy,
+                    // fail-closed otherwise. The Tor lane's session is ephemeral (no disk cache),
+                    // so Maximum leaves no thumbnail traces; the direct lane keeps the caching session.
+                    guard let lane = await TorLane.current() else { continue }
+                    let session = lane.viaTor ? lane.session : Self.urlSession
+                    let (data, response) = try await session.data(for: request)
                     if Task.isCancelled { return }
                     guard let http = response as? HTTPURLResponse,
                           (200...299).contains(http.statusCode),

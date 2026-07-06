@@ -1,0 +1,10 @@
+# ── Searxly search instance ──────────────────────────────────────────────
+# Append this block to the EXISTING Caddyfile on the gateway box, then reload Caddy.
+# It adds one new subdomain and proxies it to the localhost-only SearXNG container.
+# It does NOT touch any existing block, and Caddy validates before applying, so it
+# cannot break the gateway. Make sure search.searxly.app DNS points at this server first.
+
+search.searxly.app {
+	reverse_proxy 127.0.0.1:8080
+	encode zstd gzip
+}

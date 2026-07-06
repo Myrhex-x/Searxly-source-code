@@ -420,6 +420,31 @@ extension LocalAIChatSheet {
             }
         }
 
+        // Searxly AI cloud is metered by tier (free 10 / pass 100 / holder 250 / both 400 per UTC day).
+        // On-device backends (Apple / Ollama) are never limited. NOTE: this is the client-side UX gate;
+        // authoritative enforcement belongs on the gateway (SIWE-verified $SEARXLY balance + server count).
+        if manager.preferences.searxlyAIEnabled && manager.preferences.useSearxlyAI {
+            // Searxly AI requires a connected wallet (free — no payment; this is what stops free-tier farming).
+            if !SearxlyAIAccess.shared.isWalletVerified {
+                messages.append(ChatMessage(role: .user, text: text))
+                inputText = ""
+                currentFollowUpSuggestions = []
+                messages.append(ChatMessage(role: .assistant, text: SearxlyAIAccess.shared.walletRequiredMessage))
+                syncCurrentConversation()
+                return
+            }
+            SearxlyAIAccess.shared.refreshDailyWindow()
+            if !SearxlyAIAccess.shared.canSendPromptToday {
+                messages.append(ChatMessage(role: .user, text: text))
+                inputText = ""
+                currentFollowUpSuggestions = []
+                messages.append(ChatMessage(role: .assistant, text: SearxlyAIAccess.shared.limitReachedMessage))
+                syncCurrentConversation()
+                return
+            }
+            SearxlyAIAccess.shared.recordPromptUse()
+        }
+
         messages.append(ChatMessage(role: .user, text: text))
         inputText = ""
         currentFollowUpSuggestions = [] // hide old suggestions when user replies
@@ -622,6 +647,10 @@ extension LocalAIChatSheet {
 
                 let reply: String
                 do {
+                    // Native FoundationModels tools (@Generable / Tool) require macOS 26+. On older macOS
+                    // we skip straight to plain generation (the marker-based TOOL_REQUEST path below still
+                    // enables web_search / open_website via the confirmation card).
+                    if #available(macOS 26.0, *) {
                     // Build the current (exactly two) tool set when the user has opted into AI-proposed actions.
                     // We now delegate entirely to the new per-tool files under LocalAI/AgenticTools/.
                     // Each tool file owns its native Tool/Generable, description (with "when NOT to use" guidance),
@@ -681,6 +710,10 @@ extension LocalAIChatSheet {
                                 }
                             }
                         )
+                        // Honor the per-tool on/off switches (Available Tools popup / Searxly AI settings)
+                        // so a tool turned off is off on the on-device path too. An empty result falls back
+                        // to plain (no-tools) generation in the ConversationEngine.
+                        .filter { manager.isToolEnabled($0.name) }
                     } else {
                         currentTools = nil
                     }
@@ -691,6 +724,12 @@ extension LocalAIChatSheet {
                     LocalIntelligenceManager.shared.logAction(.chatTurn, summary: "Calling native generate with tools", detail: "promptLen=\(effectivePrompt.count), systemLen=\(systemPrompt.count), tools=\(currentTools?.count ?? 0)", usedModel: true)
                     reply = try await conversationEngine.generate(prompt: effectivePrompt, instructions: systemPrompt, tools: currentTools)
                     LocalIntelligenceManager.shared.logAction(.chatTurn, summary: "Native generate returned", detail: "replyLen=\(reply.count)", usedModel: true)
+                    } else {
+                        // macOS < 26: no native FoundationModels tools. Plain (no-tools) generation; the
+                        // marker-based TOOL_REQUEST detection below still routes web_search / open_website
+                        // through the confirmation path.
+                        reply = try await conversationEngine.generate(prompt: effectivePrompt, instructions: systemPrompt)
+                    }
                 } catch {
                     let errDesc = error.localizedDescription
                     LocalIntelligenceManager.shared.logAction(.error, summary: "Native tools generate failed", detail: "\(error)", usedModel: true)

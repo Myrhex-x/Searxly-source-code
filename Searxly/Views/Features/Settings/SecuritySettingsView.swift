@@ -108,6 +108,10 @@ struct SecuritySettingsView: View {
                 )
             }
 
+            // Hardware security key (FIDO2 / YubiKey) as a second factor. Self-gates to Developer Mode
+            // until the webcredentials:searxly.app associated domain + AASA file are deployed.
+            SecurityKeySettingsSection()
+
             SettingsSection(
                 title: "Backup & restore",
                 footer: "Saves bookmarks, history, instances, and optionally your encryption key into one encrypted file."
@@ -166,10 +170,10 @@ struct SecuritySettingsView: View {
 
             if let partial = result.partialError {
                 message = partial
-            } else if PrivacyManager.shared.exportSecureMacRecoveryCodeToClipboard() {
+            } else if PrivacyManager.shared.copyEncryptionRecoveryCodeToClipboard() {
                 message += " " + Localization.string(
                     "secure_mac_recovery_copied",
-                    defaultValue: "Your recovery code was copied to the clipboard — store it somewhere safe."
+                    defaultValue: "Your recovery code was copied — paste it somewhere safe now; the clipboard clears itself after 45 seconds."
                 )
             }
 

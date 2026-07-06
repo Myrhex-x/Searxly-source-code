@@ -26,14 +26,27 @@ struct FaviconView: View {
         return url.host?.lowercased().replacingOccurrences(of: "www.", with: "")
     }
 
-    /// Strict privacy favicon strategy (no third parties):
-    /// Try several common direct favicon locations on the target host only (in order).
-    /// On any failure AsyncImage phase triggers tryNextFaviconSource which advances
-    /// through the list until success or exhaustion (then monogram).
-    /// No third-party favicon services (no s2.googleusercontent, no external CDNs).
-    /// This eliminates any network request that could leak the domains the user is visiting.
+    /// Whether remote favicon requests are permitted right now. Requires the caller to opt in
+    /// (`loadRemote`, already false for private tabs) AND the app to be outside Maximum Privacy.
+    ///
+    /// In Maximum Privacy we never issue a favicon request — favicon loads go through SwiftUI
+    /// `AsyncImage` (URLSession under the hood), which is NOT routed through Tor and is NOT covered by
+    /// the PrivacyGate kill switch, so a request would egress the visited domain from the user's REAL IP
+    /// (and, on the fallback, tell a third party which domain we looked up). Maximum mode therefore shows
+    /// the monogram instead — "find it locally or don't render it".
+    private var allowsRemoteFavicons: Bool {
+        loadRemote && PrivacyManager.shared.appPrivacyMode != .maximum
+    }
+
+    /// Favicon source strategy:
+    ///  1. Direct requests to the target host itself (/favicon.ico, apple-touch-icon, …) — no third party.
+    ///  2. A DuckDuckGo icon-service fallback (`icons.duckduckgo.com`), used ONLY when the direct attempts
+    ///     fail. This IS a third-party request, so — like every remote favicon request — it is suppressed
+    ///     entirely in Maximum Privacy (guarded by `allowsRemoteFavicons`).
+    /// On any failure the AsyncImage phase triggers `tryNextFaviconSource`, which advances through the
+    /// list until success or exhaustion (then the monogram).
     private var faviconURLs: [URL] {
-        guard let host else { return [] }
+        guard allowsRemoteFavicons, let host else { return [] }
         let h = host.replacingOccurrences(of: "www.", with: "")
 
         // Never make favicon requests for .onion hosts: they only resolve over Tor (a plain request
@@ -43,17 +56,21 @@ struct FaviconView: View {
         var urls: [URL] = []
 
         // 1. Direct, privacy-preserving attempts on the target host itself (no third party). Covers
-        //    the common case where a site serves /favicon.ico at the root.
+        //    the common case where a site serves an icon at a standard root path. Kept short (2 paths)
+        //    so we fall through to the reliable resolver quickly — most news sites 301 their
+        //    /favicon.ico and only resolve via <link rel=icon>, which the resolver handles.
         let primaryScheme = pageURLHasHTTPScheme ? "http" : "https"
-        for path in ["/favicon.ico", "/apple-touch-icon.png", "/favicon.png", "/favicon.svg"] {
+        for path in ["/favicon.ico", "/apple-touch-icon.png"] {
             if let u = URL(string: "\(primaryScheme)://\(h)\(path)") { urls.append(u) }
         }
 
-        // 2. Resolver fallback (only reached when the direct attempts fail). Many sites declare their
+        // 2. Third-party resolver fallback (only reached when the direct attempts fail, and never in
+        //    Maximum Privacy — `allowsRemoteFavicons` gates the whole method). Many sites declare their
         //    favicon via <link rel="icon"> at a non-standard path (e.g. torproject.org serves no
         //    /favicon.ico) — the direct attempts can't see that without fetching the page. DuckDuckGo's
-        //    icon service resolves it. It is privacy-respecting (run by DDG, stated no tracking) and is
-        //    only used for non-private contexts (loadRemote is already false for private tabs).
+        //    icon service resolves it (run by DDG, stated no tracking), and is used only for non-private
+        //    contexts (loadRemote is already false for private tabs). NOTE: this DOES disclose the looked-up
+        //    domain to DDG; it is deliberately skipped entirely in Maximum Privacy.
         if let resolver = URL(string: "https://icons.duckduckgo.com/ip3/\(h).ico") {
             urls.append(resolver)
         }
@@ -80,7 +97,7 @@ struct FaviconView: View {
         ZStack {
             if !hasValidPageURL {
                 placeholderIcon(systemName: "globe")
-            } else if loadRemote && !loadFailed, let faviconURL = currentFaviconURL ?? faviconURLs.first {
+            } else if allowsRemoteFavicons && !loadFailed, let faviconURL = currentFaviconURL ?? faviconURLs.first {
                 AsyncImage(url: faviconURL, transaction: Transaction(animation: .easeInOut(duration: 0.2))) { phase in
                     switch phase {
                     case .success(let image):
@@ -133,23 +150,27 @@ struct FaviconView: View {
 
     private func tryNextFaviconSource() {
         let all = faviconURLs
+        guard !all.isEmpty else { loadFailed = true; return }
 
-        if let current = currentFaviconURL,
-           let index = all.firstIndex(of: current),
-           index + 1 < all.count {
-            // Try the next one
-            currentFaviconURL = all[index + 1]
+        // Treat a nil current as "we were showing the first URL" (index 0). Previously, a nil current —
+        // which is the state during the very first attempt — fell through to `loadFailed = true`, so a
+        // failing first source (most news sites 301 their /favicon.ico) gave up instantly and never
+        // reached the working resolver. Advancing from index 0 fixes that.
+        let currentIndex = currentFaviconURL.flatMap { all.firstIndex(of: $0) } ?? 0
+        let next = currentIndex + 1
+        if next < all.count {
+            currentFaviconURL = all[next]
             loadFailed = false
         } else {
-            // No more sources to try
             loadFailed = true
-            currentFaviconURL = nil
         }
     }
 
     private func resetFaviconState() {
         loadFailed = false
-        currentFaviconURL = nil
+        // Seed with the first candidate so the fallback chain and the AsyncImage identity are correct
+        // from the first render (nil left the advance logic unable to find "current" in the list).
+        currentFaviconURL = faviconURLs.first
     }
 
     private var monogram: some View {

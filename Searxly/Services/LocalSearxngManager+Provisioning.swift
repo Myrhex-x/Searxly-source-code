@@ -13,7 +13,12 @@ extension LocalSearxngManager {
 
     func generateSecureSecret() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) != errSecSuccess {
+            // Practically never happens, but we must never emit an all-zero secret_key. Fall back to the
+            // platform CSPRNG (SystemRandomNumberGenerator is cryptographically secure on Apple platforms).
+            var rng = SystemRandomNumberGenerator()
+            for i in bytes.indices { bytes[i] = UInt8.random(in: 0...255, using: &rng) }
+        }
         return bytes.map { String(format: "%02x", $0) }.joined()
     }
 

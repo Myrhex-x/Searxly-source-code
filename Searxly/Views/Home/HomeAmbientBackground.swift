@@ -19,28 +19,44 @@ struct HomeAmbientBackground: View {
                 .ignoresSafeArea()
 
             if glassEnabled {
-                RadialGradient(
-                    colors: [
-                        AdaptiveChrome.fill(colorScheme, dark: 0.06, light: 0.04),
-                        .clear
-                    ],
-                    center: .center,
-                    startRadius: 60,
-                    endRadius: 520
-                )
-                .allowsHitTesting(false)
+                if colorScheme == .dark {
+                    RadialGradient(
+                        colors: [
+                            AdaptiveChrome.fill(colorScheme, dark: 0.06),
+                            .clear
+                        ],
+                        center: .center,
+                        startRadius: 60,
+                        endRadius: 520
+                    )
+                    .allowsHitTesting(false)
 
-                RadialGradient(
-                    colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.09 : 0.14),
-                        Color.white.opacity(colorScheme == .dark ? 0.035 : 0.05),
-                        .clear
-                    ],
-                    center: UnitPoint(x: 0.5, y: 0.30),
-                    startRadius: 24,
-                    endRadius: 400
-                )
-                .allowsHitTesting(false)
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.09),
+                            Color.white.opacity(0.035),
+                            .clear
+                        ],
+                        center: UnitPoint(x: 0.5, y: 0.30),
+                        startRadius: 24,
+                        endRadius: 400
+                    )
+                    .allowsHitTesting(false)
+                } else {
+                    // Light: the paper canvas sits just under pure white, so a strong white pool
+                    // reads as soft sunlight on the hero (white-on-white at low opacity is invisible).
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.85),
+                            Color.white.opacity(0.3),
+                            .clear
+                        ],
+                        center: UnitPoint(x: 0.5, y: 0.30),
+                        startRadius: 24,
+                        endRadius: 430
+                    )
+                    .allowsHitTesting(false)
+                }
             }
 
             if homeStarsEnabled {
@@ -51,7 +67,7 @@ struct HomeAmbientBackground: View {
                 RadialGradient(
                     colors: [
                         .clear,
-                        Color.black.opacity(colorScheme == .dark ? 0.22 : 0.06)
+                        Color.black.opacity(colorScheme == .dark ? 0.22 : 0.075)
                     ],
                     center: .center,
                     startRadius: 280,

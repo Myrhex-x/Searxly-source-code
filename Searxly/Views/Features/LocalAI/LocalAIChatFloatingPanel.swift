@@ -12,6 +12,8 @@
 import SwiftUI
 
 struct LocalAIChatFloatingPanel<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     @Binding var isPresented: Bool
     let glassEnabled: Bool
     let content: Content
@@ -48,7 +50,10 @@ struct LocalAIChatFloatingPanel<Content: View>: View {
                     .clipShape(RoundedRectangle(cornerRadius: 18))
                     .overlay(
                         RoundedRectangle(cornerRadius: 18)
-                            .strokeBorder(Color.white.opacity(glassEnabled ? 0.08 : 0.05), lineWidth: 0.8)
+                            .strokeBorder(
+                                AdaptiveChrome.border(colorScheme, dark: glassEnabled ? 0.08 : 0.05),
+                                lineWidth: 0.8
+                            )
                     )
                     .shadow(color: .black.opacity(glassEnabled ? 0.22 : 0.14), radius: 28, x: 0, y: 12)
                     .offset(

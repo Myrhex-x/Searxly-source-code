@@ -8,11 +8,25 @@
 import Foundation
 
 enum WalletConfig {
+
+    /// Default for the "show wallet" surface toggle when the user has never set it: installs that
+    /// already configured a wallet keep seeing it; fresh installs start with the wallet hidden
+    /// (the wallet is an opt-in feature — Settings → Wallet turns it on).
+    static var surfaceEnabledDefault: Bool {
+        UserDefaults.standard.bool(forKey: Keys.walletConfigured)
+    }
+
     // MARK: - $SEARXLY token (Base mainnet)
     static let searxlyTokenAddress   = "0x0fdc79b868bc4a6295cd94397f61890f68c38ba3"
     static let searxlyTokenSymbol    = "SEARXLY"
     static let searxlyTokenName      = "Searxly"
     static let searxlyTokenDecimals  = 18
+
+    // MARK: - $SEARXLY holder perks
+    /// Minimum USD value of $SEARXLY a wallet must hold to unlock holder perks: the "$SEARXLY HOLDER"
+    /// badge, half-price Managed VPN, and the reduced `holderSwapFeeBps` swap fee. Evaluated live from
+    /// balance × price — see `WalletManager.isSearxlyHolder` / `fetchSearxlyHoldingsUSD()`.
+    static let searxlyHolderMinUSD: Double = 15
 
     // MARK: - Base L2 network
     // `nonisolated` so these plain constants can be used as default-argument values and inside
@@ -53,14 +67,56 @@ enum WalletConfig {
     /// the 0x settlement contract and routed to `swapFeeRecipient` — there is NO extra transaction and
     /// no fee-handling in our signing code. Charged on SWAPS ONLY, never on plain sends/transfers, and
     /// waived entirely for any swap involving SEARXLY (see WalletSwap.quote). Disclosed in the swap UI.
-    static let swapFeeBps: Int       = 65
-    /// Treasury address that receives the swap fee. EIP-55 checksummed; verified before shipping.
-    /// Same address collects on every supported EVM chain. Change here to rotate the treasury.
-    static let swapFeeRecipient      = "0x491Af9aA3C6Fae935D20FfeE254eA16822392976"
+    // `nonisolated` so they can be used as default-argument values in the nonisolated networking code
+    // (WalletSwap.quote / fetchQuote), same as `baseChainID` above — they're immutable Int constants.
+    nonisolated static let swapFeeBps: Int       = 65
+    /// Reduced swap fee (30 = 0.30%) for $SEARXLY holders — wallets holding at least
+    /// `searxlyHolderMinUSD` of $SEARXLY. Applied client-side via the same on-chain 0x `swapFeeBps`
+    /// param as the standard fee; swaps involving SEARXLY stay free regardless. See
+    /// `WalletManager.isSearxlyHolder`.
+    nonisolated static let holderSwapFeeBps: Int = 30
+    /// Treasury that receives ALL Searxly revenue — swap fees, AI passes, and VPN passes all route here
+    /// (`SearxlyAIConfig.treasury` and `ManagedVPNConfig.treasury` both read this constant), on every
+    /// supported EVM chain. EIP-55 checksummed. Change here to rotate the treasury.
+    ///
+    /// ⚠️ AI-pass and VPN payments are ALSO verified SERVER-SIDE (the AI gateway and the VPN control
+    /// plane each check the USDC payment landed at the treasury). Those services hold their own copy of
+    /// this address — they MUST be updated to match, or users will pay the new address but be denied the
+    /// pass/VPN. The 0x swap fee is client-specified (redirects immediately); native v4 swaps take no fee.
+    static let swapFeeRecipient      = "0x2aFC245264E51B50994F2579e903eCc466395aF0"
     /// On-ramp widget (no card data ever touches Searxly; the provider's own UI handles it).
     static func onrampURL(address: String) -> String {
         "https://buy.onramper.com/?mode=buy&onlyCryptos=eth_base,usdc_base&wallets=eth_base:\(address),usdc_base:\(address)&themeName=dark"
     }
+
+    // MARK: - Native Uniswap v4 (SEARXLY swaps — no aggregator, no API key)
+    //
+    // $SEARXLY's only liquidity is a Doppler v4 pool on Base, so swapping it natively means driving
+    // Uniswap v4 directly. All addresses + the pool composition were verified ON-CHAIN (the pool's
+    // Initialize event) and a swap was simulated against the deployed router before shipping — see
+    // UniswapV4.swift. Used only for ETH/WETH↔SEARXLY; every other pair still routes through 0x.
+    //
+    /// The v4-capable UniversalRouter actually used to trade this pool on Base. NOTE: this is *not*
+    /// the address on the Uniswap docs "deployments" page (0x6ff5…9b43) — that older router reverts on
+    /// this pool. Confirmed by decoding live swaps + simulating our own calldata against it.
+    nonisolated static let universalRouterV4 = "0xfdf682f51fe81aa4898f0ae2163d8a55c127fbc7"
+    /// Uniswap v4 Quoter (read-only pricing via eth_call — accounts for the pool's dynamic + hook fee).
+    nonisolated static let v4QuoterAddress   = "0x0d5e0f971ed27fbff6c2837bf31316121532048d"
+    /// Permit2 (canonical, same address on every chain). The UniversalRouter pulls ERC-20s via Permit2.
+    nonisolated static let permit2Address    = "0x000000000022d473030f116ddee9f6b43ac78ba3"
+    /// Wrapped Ether on Base (the pool is WETH-paired, so native-ETH swaps wrap/unwrap around it).
+    nonisolated static let wethAddress       = "0x4200000000000000000000000000000000000006"
+
+    /// SEARXLY/WETH v4 PoolKey (currency0 = SEARXLY, currency1 = WETH). Read from the pool's
+    /// Initialize event: dynamic-fee flag (0x800000), tickSpacing 200, Doppler hook.
+    nonisolated static let searxlyPoolFee         = 0x800000          // LPFeeLibrary.DYNAMIC_FEE_FLAG
+    nonisolated static let searxlyPoolTickSpacing = 200
+    nonisolated static let searxlyPoolHooks       = "0xbdf938149ac6a781f94faa0ed45e6a0e984c6544"
+
+    /// Slippage tolerance applied to the Quoter's output for `amountOutMinimum`, in basis points.
+    /// Generous (2%) because the pool is thin and charges a dynamic + hook fee that can move between
+    /// quote and execution.
+    nonisolated static let v4SlippageBps          = 200
 
     // MARK: - Basenames / ENS registries
     /// Base L2 Basename L2 resolver (reverse) — resolved via RPC, always on.
@@ -80,6 +136,7 @@ enum WalletConfig {
     // MARK: - UserDefaults keys
     enum Keys {
         static let walletConfigured  = "Wallet.isConfigured"
+        static let surfaceEnabled    = "Wallet.surfaceEnabled" // wallet UI entry points visible (opt-in feature)
         static let pinSalt           = "Wallet.pinSalt"
         static let pinHash           = "Wallet.pinHash"
         static let usesPassphrase    = "Wallet.usesPassphrase"   // secret is an alphanumeric passphrase, not a 6-digit PIN

@@ -4,6 +4,8 @@
 //
 
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct PasswordsSettingsView: View {
     var onOpenVault: () -> Void = {}
@@ -13,6 +15,10 @@ struct PasswordsSettingsView: View {
 
     @State private var passphraseSheetMode: VaultPassphraseSetupSheet.Mode?
     @State private var showingPassphraseSheet = false
+
+    @State private var showingExportConfirm = false
+    @State private var exportMessage: String?
+    @State private var showingExportResult = false
 
     var body: some View {
         SettingsPane {
@@ -43,6 +49,27 @@ struct PasswordsSettingsView: View {
                 Text("Open the vault to add, edit, or remove saved credentials.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            SettingsSection(
+                title: "Import & export",
+                footer: "Import a CSV exported from Chrome, Safari, Firefox, Bitwarden, or 1Password. Export writes a plaintext CSV of every saved login — useful for backups or moving away, but store it carefully and delete it when done."
+            ) {
+                SettingsProminentAction(
+                    title: "Import Passwords from CSV",
+                    systemImage: "square.and.arrow.down",
+                    tint: .secondary,
+                    action: { NotificationCenter.default.post(name: .importDataRequested, object: nil) }
+                )
+
+                SettingsDivider()
+
+                SettingsProminentAction(
+                    title: "Export Passwords to CSV…",
+                    systemImage: "square.and.arrow.up",
+                    tint: .secondary,
+                    action: { startExport() }
+                )
             }
 
             SettingsSection(
@@ -174,6 +201,21 @@ struct PasswordsSettingsView: View {
         .onAppear {
             vault.reloadFromPersistence()
         }
+        .confirmationDialog(
+            "Export passwords as plaintext?",
+            isPresented: $showingExportConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Choose Location & Export…") { Task { await performExport() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The exported CSV is NOT encrypted — anyone who opens the file can read every saved password. Save it somewhere safe and delete it once you're done.")
+        }
+        .alert("Export passwords", isPresented: $showingExportResult) {
+            Button("OK") {}
+        } message: {
+            Text(exportMessage ?? "")
+        }
         .sheet(isPresented: $showingPassphraseSheet) {
             if let mode = passphraseSheetMode {
                 VaultPassphraseSetupSheet(
@@ -191,6 +233,56 @@ struct PasswordsSettingsView: View {
     private func presentPassphraseSheet(_ mode: VaultPassphraseSetupSheet.Mode) {
         passphraseSheetMode = mode
         showingPassphraseSheet = true
+    }
+
+    // MARK: - Export
+
+    private func startExport() {
+        guard vault.savedLoginCount > 0 else {
+            exportMessage = "There are no saved logins to export yet."
+            showingExportResult = true
+            return
+        }
+        showingExportConfirm = true
+    }
+
+    private func performExport() async {
+        // Unlock first — export reads every secret, so it must pass the same gate as viewing one.
+        if !vault.isVaultUnlocked {
+            guard await vault.unlockVault() else {
+                exportMessage = "The vault needs to be unlocked to export. Try again and authenticate."
+                showingExportResult = true
+                return
+            }
+        }
+
+        let csv: String
+        do {
+            csv = try vault.exportCSV()
+        } catch {
+            exportMessage = "Couldn't build the export. Make sure the vault is unlocked and has saved logins."
+            showingExportResult = true
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = "Export Passwords"
+        panel.message = "Save an unencrypted CSV of your saved logins."
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "searxly-passwords.csv"
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try csv.write(to: url, atomically: true, encoding: .utf8)
+            // Owner-only so another local account can't read the plaintext export from a shared folder.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            exportMessage = "Exported \(vault.savedLoginCount) login\(vault.savedLoginCount == 1 ? "" : "s") to \(url.lastPathComponent). Remember: it's plaintext — store it safely and delete it when done."
+        } catch {
+            exportMessage = "Couldn't write the file: \(error.localizedDescription)"
+        }
+        showingExportResult = true
     }
 
     private var savedLoginCountLabel: String {

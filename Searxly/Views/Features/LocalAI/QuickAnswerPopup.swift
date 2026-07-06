@@ -85,7 +85,7 @@ private struct QuickAnswerCard: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous).fill(WalletTheme.canvasRaised)
             }
         }
-        .glassEffect(glassEnabled ? .regular : .clear,
+        .searxlyGlass(glassEnabled ? .regular : .clear,
                      in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -212,6 +212,22 @@ private struct QuickAnswerCard: View {
 
         let engine = ConversationEngine()
         let isCloud = manager.preferences.searxlyAIEnabled && manager.preferences.useSearxlyAI
+
+        // Meter Searxly AI cloud usage. A whole-page summary ships the full page, so it costs more.
+        if isCloud {
+            if !SearxlyAIAccess.shared.isWalletVerified {
+                isStreaming = false
+                answer = SearxlyAIAccess.shared.walletRequiredMessage
+                return
+            }
+            SearxlyAIAccess.shared.refreshDailyWindow()
+            if !SearxlyAIAccess.shared.canSendPromptToday {
+                isStreaming = false
+                answer = SearxlyAIAccess.shared.limitReachedMessage
+                return
+            }
+            SearxlyAIAccess.shared.recordPromptUse(count: request.action == .summarizePage ? 3 : 1)
+        }
 
         // ALL quick-answer actions run through the hardened, injection-resistant guard (no tools,
         // nonce-delimited untrusted-data framing) — including selection Explain/Summarize, since a

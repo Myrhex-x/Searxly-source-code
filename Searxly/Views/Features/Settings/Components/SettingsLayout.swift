@@ -19,33 +19,61 @@ import SwiftUI
 // MARK: - Theme tokens
 
 enum SettingsTheme {
-    /// Page background.
-    static let canvas         = Color(red: 0.039, green: 0.039, blue: 0.047)
-    /// Sidebar / header chrome — a hair lighter than the canvas.
-    static let canvasRaised   = Color(red: 0.071, green: 0.071, blue: 0.082)
+    /// Page background. Near-black in dark, paper-white (matching AdaptiveChrome.canvasLight) in light.
+    static let canvas = AdaptiveChrome.dynamic(
+        light: Color(red: 0.973, green: 0.973, blue: 0.98),
+        dark: Color(red: 0.039, green: 0.039, blue: 0.047)
+    )
+    /// Sidebar / header chrome — a hair off the canvas.
+    static let canvasRaised = AdaptiveChrome.dynamic(
+        light: .white,
+        dark: Color(red: 0.071, green: 0.071, blue: 0.082)
+    )
 
-    /// Card surfaces (translucent white over the canvas so they read at any depth).
-    static let card           = Color.white.opacity(0.038)
-    static let cardStrong      = Color.white.opacity(0.072)
+    /// Card surfaces. Dark: translucent white lift over the canvas. Light: opaque white cards
+    /// on the paper canvas (a gray-on-gray translucent fill reads muddy in light).
+    static let card       = AdaptiveChrome.dynamic(light: .white, dark: Color.white.opacity(0.038))
+    static let cardStrong = AdaptiveChrome.dynamic(light: Color.black.opacity(0.055), dark: Color.white.opacity(0.072))
+
+    /// Interactive fills (chips, action rows, icon wells, inset panels).
+    static let fillSubtle = AdaptiveChrome.dynamic(light: Color.black.opacity(0.04), dark: Color.white.opacity(0.05))
+    static let fillStrong = AdaptiveChrome.dynamic(light: Color.black.opacity(0.07), dark: Color.white.opacity(0.10))
+    static let fillFaint  = AdaptiveChrome.dynamic(light: Color.black.opacity(0.022), dark: Color.white.opacity(0.025))
 
     /// Hairline strokes.
-    static let hairline        = Color.white.opacity(0.07)
-    static let hairlineStrong  = Color.white.opacity(0.13)
+    static let hairline       = AdaptiveChrome.dynamic(light: Color.black.opacity(0.085), dark: Color.white.opacity(0.07))
+    static let hairlineStrong = AdaptiveChrome.dynamic(light: Color.black.opacity(0.17), dark: Color.white.opacity(0.13))
 
     /// Text ramp.
-    static let textPrimary     = Color.white
-    static let textSecondary   = Color(white: 0.62)
-    static let textTertiary    = Color(white: 0.40)
+    static let textPrimary   = AdaptiveChrome.dynamic(light: Color(white: 0.09), dark: .white)
+    static let textSecondary = AdaptiveChrome.dynamic(light: Color(white: 0.33), dark: Color(white: 0.62))
+    static let textTertiary  = AdaptiveChrome.dynamic(light: Color(white: 0.52), dark: Color(white: 0.40))
 
-    /// Status accents (status only — never decorative).
-    static let green           = SERPDesign.accentGreen
-    static let danger          = Color(red: 1.0, green: 0.45, blue: 0.45)
-    static let warning         = Color(red: 0.98, green: 0.66, blue: 0.32)
+    /// Status accents (status only — never decorative). Light variants are deepened for contrast on white.
+    static let green   = SERPDesign.accentGreen
+    static let danger  = AdaptiveChrome.dynamic(
+        light: Color(red: 0.78, green: 0.22, blue: 0.22),
+        dark: Color(red: 1.0, green: 0.45, blue: 0.45)
+    )
+    static let warning = AdaptiveChrome.dynamic(
+        light: Color(red: 0.72, green: 0.44, blue: 0.08),
+        dark: Color(red: 0.98, green: 0.66, blue: 0.32)
+    )
 
-    /// Normalizes a caller-supplied tint. `.secondary` is treated as a neutral (white) accent so
+    /// Solid "ink" action (Done button etc.) — white-on-black in dark, black-on-white in light.
+    static let inkFill = AdaptiveChrome.dynamic(light: Color(white: 0.12), dark: .white)
+    static let onInk   = AdaptiveChrome.dynamic(light: .white, dark: .black)
+
+    /// Monochrome toggle parts — "ink" track when on (white in dark, near-black in light).
+    static let toggleOnTrack  = AdaptiveChrome.dynamic(light: Color(white: 0.15), dark: .white)
+    static let toggleOffTrack = AdaptiveChrome.dynamic(light: Color.black.opacity(0.12), dark: Color.white.opacity(0.12))
+    static let toggleKnobOn   = AdaptiveChrome.dynamic(light: .white, dark: Color.black.opacity(0.88))
+    static let toggleKnobOff  = AdaptiveChrome.dynamic(light: .white, dark: Color.white.opacity(0.85))
+
+    /// Normalizes a caller-supplied tint. `.secondary` is treated as a neutral (ink) accent so
     /// informational callouts stay monochrome instead of picking up a system gray.
     static func resolve(_ tint: Color) -> Color {
-        tint == .secondary ? .white : tint
+        tint == .secondary ? textPrimary : tint
     }
 }
 
@@ -64,13 +92,16 @@ struct PremiumToggleStyle: ToggleStyle {
     private func track(_ configuration: Configuration) -> some View {
         ZStack(alignment: configuration.isOn ? .trailing : .leading) {
             Capsule()
-                .fill(configuration.isOn ? Color.white : Color.white.opacity(0.12))
+                .fill(configuration.isOn ? SettingsTheme.toggleOnTrack : SettingsTheme.toggleOffTrack)
                 .overlay(
-                    Capsule().strokeBorder(Color.white.opacity(configuration.isOn ? 0 : 0.16), lineWidth: 1)
+                    Capsule().strokeBorder(
+                        configuration.isOn ? Color.clear : SettingsTheme.hairlineStrong,
+                        lineWidth: 1
+                    )
                 )
                 .frame(width: 40, height: 24)
             Circle()
-                .fill(configuration.isOn ? Color.black.opacity(0.88) : Color.white.opacity(0.85))
+                .fill(configuration.isOn ? SettingsTheme.toggleKnobOn : SettingsTheme.toggleKnobOff)
                 .frame(width: 18, height: 18)
                 .padding(.horizontal, 3)
                 .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
@@ -145,11 +176,12 @@ struct SettingsSection<Content: View>: View {
             .padding(.horizontal, 15)
             .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(SettingsTheme.card, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .strokeBorder(SettingsTheme.hairline, lineWidth: 1)
-            )
+            // The shared floating-panel chrome (sidebar / knowledge card family), tuned for a stack
+            // of cards: raised surface for contrast against the near-black settings canvas, and
+            // quieter shadows so twenty floating sections don't shout. Sheen + rim light included.
+            .searxlyFloatingPanel(cornerRadius: 16,
+                                  surface: SettingsTheme.canvasRaised,
+                                  elevation: 0.5)
 
             if let footer {
                 Text(footer)
@@ -180,7 +212,7 @@ struct SettingsToggleRow: View {
     var description: String? = nil
     @Binding var isOn: Bool
     var badge: String? = nil
-    var badgeTint: Color = .white      // "On" reads monochrome, matching the white toggle
+    var badgeTint: Color = SettingsTheme.textPrimary   // "On" reads monochrome, matching the ink toggle
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -220,7 +252,7 @@ struct SettingsPickerRow<Selection: Hashable, Content: View>: View {
                 .foregroundStyle(SettingsTheme.textPrimary)
 
             content
-                .tint(.white)
+                .tint(SettingsTheme.textPrimary)
 
             if let description {
                 Text(description)
@@ -319,7 +351,7 @@ struct SettingsProminentAction: View {
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.07))
+                        .fill(SettingsTheme.fillSubtle)
                         .frame(width: 30, height: 30)
                     Image(systemName: systemImage)
                         .font(.system(size: 14, weight: .semibold))
@@ -341,7 +373,7 @@ struct SettingsProminentAction: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(hover ? SettingsTheme.cardStrong : Color.white.opacity(0.05))
+                    .fill(hover ? SettingsTheme.cardStrong : SettingsTheme.fillSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
@@ -363,7 +395,7 @@ struct SettingsInsetPanel<Content: View>: View {
         content
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(SettingsTheme.fillFaint, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(SettingsTheme.hairline, lineWidth: 1)
@@ -400,7 +432,7 @@ struct SettingsActionChip: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
             .background(
-                Color.white.opacity(hover && !disabled ? 0.10 : 0.05),
+                hover && !disabled ? SettingsTheme.fillStrong : SettingsTheme.fillSubtle,
                 in: RoundedRectangle(cornerRadius: 9, style: .continuous)
             )
             .overlay(

@@ -28,7 +28,7 @@ struct RightToolbarControls: View {
     @Binding var showingKeyboardShortcuts: Bool
 
     // New actions for extracted features (passed from parent to avoid global notifications)
-    var onToggleReaderMode: (() -> Void)? = nil
+    var onSummarizePage: (() -> Void)? = nil
     var onShowFind: (() -> Void)? = nil
     var onOpenLocalAIChat: (() -> Void)? = nil
 
@@ -55,6 +55,13 @@ struct RightToolbarControls: View {
     var onGoBack: (() -> Void)? = nil
     var onGoForward: (() -> Void)? = nil
 
+    // App-level destinations consolidated into the ☰ menu (supplied by the header from BrowserState).
+    var onOpenExtensions: (() -> Void)? = nil
+    var onOpenWallet: (() -> Void)? = nil
+    var onOpenSettings: (() -> Void)? = nil
+    var onClearBrowsingData: (() -> Void)? = nil
+    var onImportData: (() -> Void)? = nil
+
     private var showsNavigationControls: Bool {
         showingWebContent || canGoBack || canGoForward
     }
@@ -67,7 +74,8 @@ struct RightToolbarControls: View {
                         systemName: "chevron.backward",
                         isEnabled: canGoBack,
                         shortcutKey: "[",
-                        shortcutModifiers: .command
+                        shortcutModifiers: .command,
+                        help: "Back (⌘[)"
                     ) {
                         if let onGoBack {
                             onGoBack()
@@ -80,7 +88,8 @@ struct RightToolbarControls: View {
                         systemName: "chevron.forward",
                         isEnabled: canGoForward,
                         shortcutKey: "]",
-                        shortcutModifiers: .command
+                        shortcutModifiers: .command,
+                        help: "Forward (⌘])"
                     ) {
                         if let onGoForward {
                             onGoForward()
@@ -94,7 +103,8 @@ struct RightToolbarControls: View {
                             systemName: "arrow.clockwise",
                             isEnabled: true,
                             shortcutKey: "r",
-                            shortcutModifiers: .command
+                            shortcutModifiers: .command,
+                            help: "Reload (⌘R)"
                         ) {
                             activeWebView.reload()
                         }
@@ -123,40 +133,20 @@ struct RightToolbarControls: View {
                                 BookmarkURLMatcher.remove(url: urlStr, from: &updated)
                                 let item = BookmarkItem(url: urlStr, title: title)
                                 updated.insert(item, at: 0)
-                                if updated.count > 200 { updated.removeLast(updated.count - 200) }
+                                if updated.count > BookmarkLimits.maxCount { updated.removeLast(updated.count - BookmarkLimits.maxCount) }
                             }
                             bookmarks = updated
                             Persistence.saveBookmarks(updated)
                         }
-                    }
-
-                    // Reader Mode (strips ads, clutter, etc.)
-                    FlatIconButton(
-                        systemName: "doc.text",
-                        isEnabled: true
-                    ) {
-                        onToggleReaderMode?()
-                    }
-
-                    // Find in Page
-                    FlatIconButton(
-                        systemName: "magnifyingglass",
-                        isEnabled: true,
-                        shortcutKey: "f",
-                        shortcutModifiers: .command
-                    ) {
-                        onShowFind?()
                     }
                     }
                 }
                 .padding(.trailing, 6)
             }
 
-            BookmarksHistoryToolbarControl(showingBookmarks: $showingBookmarks)
-
-            // Passwords control (compact glass capsule icon + rich popover + locked state indicator).
-            // Always visible because this is a core privacy feature. Compact icon form keeps the
-            // header row stable on narrow windows or when App Lock adds its extra button.
+            // Passwords pill — a glass capsule like the VPN / Tor pills, set apart from the flat
+            // icons. Stays in the header (core privacy feature); goes green when the current site
+            // has a saved login.
             PasswordsBrowserControl(
                 glassEnabled: glassEnabled,
                 toolbarMaterial: toolbarMaterial,
@@ -167,36 +157,35 @@ struct RightToolbarControls: View {
                 onSaveLoginFromPage: onSaveLoginFromPage,
                 onFillLogin: onFillLogin
             )
+            .padding(.leading, 6)
 
-            // Downloads
-            FlatIconButton(systemName: "arrow.down.circle", isEnabled: true) {
-                showingDownloads = true
-            }
-
-            // Keyboard shortcuts help
-            FlatIconButton(systemName: "questionmark.circle", isEnabled: true) {
-                showingKeyboardShortcuts = true
-            }
-            .keyboardShortcut("?", modifiers: .command)
-
-            // Local AI Chat button in header
-            let ai = LocalIntelligenceManager.shared
-            if ai.preferences.masterEnabled && ai.preferences.chatEnabled {
-                FlatIconButton(systemName: "sparkles", isEnabled: true) {
-                    onOpenLocalAIChat?()
-                }
-                .help("Local AI Chat (⌘⌥A)")
-                .keyboardShortcut("a", modifiers: [.command, .option])
-            }
-
-            // Manual App Lock button — placed last so it appears at the very right,
-            // right next to the Local AI button when both are enabled.
-            if AppLockManager.shared.isAppLockEnabled {
-                FlatIconButton(systemName: "lock.fill", isEnabled: true) {
-                    AppLockManager.shared.lock()
-                }
-                .help("Lock Searxly now (⌘⌥L)")
-            }
+            // ☰ menu — everything else (Reader, Find, Bookmarks & History, Downloads, Extensions,
+            // AI, Wallet, Clear data, Import, Shortcuts, Settings) lives here to keep the header clean.
+            BrowserMenuControl(
+                glassEnabled: glassEnabled,
+                toolbarMaterial: toolbarMaterial,
+                showingWebContent: showingWebContent,
+                showingBookmarks: $showingBookmarks,
+                showingDownloads: $showingDownloads,
+                showingKeyboardShortcuts: $showingKeyboardShortcuts,
+                // Reader reuses the ⌘⇧R menu-command route (ContentView owns the reader state);
+                // Translate talks to the shared on-device translator with this header's webview.
+                onReaderMode: { NotificationCenter.default.post(name: .readerModeRequested, object: nil) },
+                onTranslatePage: { PageTranslator.shared.toggleTranslation(for: activeWebView) },
+                isPageTranslated: PageTranslator.shared.isTranslated(activeWebView),
+                onSummarizePage: onSummarizePage,
+                onShowFind: onShowFind,
+                onOpenLocalAIChat: onOpenLocalAIChat,
+                onOpenExtensions: onOpenExtensions,
+                onOpenWallet: onOpenWallet,
+                onOpenSettings: onOpenSettings,
+                onClearBrowsingData: onClearBrowsingData,
+                onImportData: onImportData
+            )
+            .padding(.leading, 2)
+            // Keep the ☰ off the window's right edge so its popover arrow sits on the flat top edge of
+            // the panel, well clear of the rounded corner (corner collision is what made the "bubble").
+            .padding(.trailing, 34)
         }
     }
 }
@@ -229,7 +218,7 @@ private struct FlatIconButton: View {
         .padding(5)
         .background(
             isHovering && isEnabled
-                ? Color.white.opacity(0.065)
+                ? AdaptiveChrome.dynamic(light: Color.black.opacity(0.05), dark: Color.white.opacity(0.065))
                 : Color.clear,
             in: RoundedRectangle(cornerRadius: 6, style: .continuous)
         )
@@ -244,6 +233,8 @@ private struct FlatIconButton: View {
         .if(help != nil) { view in
             view.help(help!)
         }
+        // Icon-only button — give VoiceOver a spoken label (the tooltip text, or the SF Symbol name as a fallback).
+        .accessibilityLabel(Text(help ?? systemName))
     }
 }
 
@@ -261,6 +252,8 @@ extension View {
 
 // MARK: - PasswordsBrowserControl
 struct PasswordsBrowserControl: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let glassEnabled: Bool
     let toolbarMaterial: Material
 
@@ -273,7 +266,6 @@ struct PasswordsBrowserControl: View {
     var onFillLogin: ((String, String, String) -> Void)? = nil
 
     @State private var showingPopover = false
-    @State private var isHovering = false
 
     private var vault = PasswordVaultManager.shared
     private var domainLogins: [PasswordVaultEntry] {
@@ -290,40 +282,41 @@ struct PasswordsBrowserControl: View {
     }
 
     var body: some View {
+        // Glass capsule pill matching the VPN / Tor pills: icon + label + status dot. The dot and
+        // border go green when the current site has a saved login — the same active-state language
+        // those pills use when they're on. Independent of lock state: the entry's existence is the cue.
+        let hasRegisteredLogin = !domainLogins.isEmpty
+        let statusTint = hasRegisteredLogin ? SERPDesign.accentGreen : Color(white: 0.5)
+
         Button {
             showingPopover = true
         } label: {
-            ZStack(alignment: .topTrailing) {
-                let hasReadyLogins = vault.isVaultUnlocked && !domainLogins.isEmpty
+            HStack(spacing: 6) {
                 Image(systemName: "key.fill")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(hasReadyLogins ? Color.accentColor : Color.primary)
-                    .frame(width: 26, height: 26)
-                    .animation(.easeInOut(duration: 0.2), value: hasReadyLogins)
-
-                if !domainLogins.isEmpty {
-                    Circle()
-                        .fill(vault.isVaultUnlocked ? Color.accentColor : Color.primary.opacity(0.55))
-                        .frame(width: 6, height: 6)
-                        .offset(x: 4, y: -2)
-                        .animation(.easeInOut(duration: 0.2), value: vault.isVaultUnlocked)
-                }
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Passwords")
+                    .font(.system(size: 12, weight: .semibold))
+                    .tracking(0.3)
+                Circle()
+                    .fill(statusTint)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: hasRegisteredLogin ? statusTint.opacity(0.7) : .clear, radius: 3)
+                    .animation(.easeInOut(duration: 0.25), value: hasRegisteredLogin)
             }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(toolbarMaterial, in: Capsule())
+            .searxlyGlass(glassEnabled ? .interactive : .clear, in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(
+                    hasRegisteredLogin ? statusTint.opacity(0.5) : AdaptiveChrome.border(colorScheme, dark: 0.12),
+                    lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
-        .padding(5)
-        .background(
-            isHovering
-                ? Color.white.opacity(0.065)
-                : Color.clear,
-            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-        )
-        .animation(.easeOut(duration: 0.12), value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
-        }
         .help(passwordsHelp)
-        .popover(isPresented: $showingPopover, arrowEdge: .trailing) {
+        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
             PasswordsPopoverContent(
                 currentWebDomain: currentWebDomain,
                 domainLogins: domainLogins,
@@ -376,85 +369,63 @@ private struct PasswordsPopoverContent: View {
                 unlockedView
             }
         }
+        .padding(16)
         .frame(width: 320)
+        .background(PasswordsPanelTheme.canvas)
         .animation(.spring(response: 0.26, dampingFraction: 0.84), value: vault.isVaultUnlocked)
         .animation(.spring(response: 0.26, dampingFraction: 0.84), value: isAddingNew)
+        // Passwords panel — exclude from screenshots / screen recording while open (it can reveal stored passwords).
+        .screenCaptureProtected()
     }
 
     // MARK: - Locked
 
     private var lockedView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            popoverHeader(
+        VStack(alignment: .leading, spacing: 13) {
+            panelHeader(
                 icon: "lock.fill",
-                iconTint: Color.primary.opacity(0.55),
-                iconBackground: Color.primary.opacity(0.07),
                 title: "Passwords",
-                subtitle: "Vault is locked"
-            )
+                subtitle: "Vault is locked",
+                subtitleTint: Color(white: 0.5)
+            ) {
+                statusDot(Color(white: 0.5), glow: false)
+            }
 
-            Divider().padding(.horizontal, 12)
-
-            VStack(spacing: 10) {
+            VStack(spacing: 11) {
                 if vault.useCustomVaultPassphrase {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Vault password")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 7) {
+                        sectionLabel("VAULT PASSWORD")
                         SecureField("Enter vault password", text: $passphraseInput)
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12.5))
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 9)
+                            .background { cardBackground(cornerRadius: 10) }
                             .onSubmit { Task { await unlockWithPassphrase() } }
+                        if unlockError { errorLine("Incorrect password. Try again.") }
                     }
 
-                    if unlockError {
-                        Text("Incorrect password. Try again.")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-
-                    Button {
+                    primaryButton(
+                        title: isUnlocking ? "Unlocking…" : "Unlock",
+                        busy: isUnlocking,
+                        enabled: !passphraseInput.isEmpty
+                    ) {
                         Task { await unlockWithPassphrase() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if isUnlocking { ProgressView().controlSize(.small) }
-                            Text(isUnlocking ? "Unlocking…" : "Unlock")
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(passphraseInput.isEmpty || isUnlocking)
-
                 } else {
-                    Button {
+                    primaryButton(
+                        title: isUnlocking ? "Authenticating…" : "Unlock",
+                        systemImage: "touchid",
+                        busy: isUnlocking
+                    ) {
                         Task { await unlockWithBiometrics() }
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isUnlocking {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Image(systemName: "touchid")
-                                    .font(.system(size: 17))
-                            }
-                            Text(isUnlocking ? "Authenticating…" : "Unlock")
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isUnlocking)
-
-                    if unlockError {
-                        Text("Authentication failed. Try again.")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
+                    if unlockError { errorLine("Authentication failed. Try again.") }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(14)
+            .background { cardBackground(cornerRadius: 14) }
 
-            Divider().padding(.horizontal, 12)
             openVaultRow
         }
     }
@@ -462,66 +433,39 @@ private struct PasswordsPopoverContent: View {
     // MARK: - Unlocked
 
     private var unlockedView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(Color.green.opacity(0.12))
-                        .frame(width: 36, height: 36)
-                    Image(systemName: "key.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.green.opacity(0.9))
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Passwords")
-                        .font(.headline)
-                    if let domain = currentWebDomain {
-                        Text(domain)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    } else {
-                        let n = vault.savedLoginCount
-                        Text("\(n) saved login\(n == 1 ? "" : "s")")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
+        VStack(alignment: .leading, spacing: 13) {
+            panelHeader(
+                icon: "key.fill",
+                iconTint: PasswordsPanelTheme.green,
+                title: "Passwords",
+                subtitle: currentWebDomain ?? {
+                    let n = vault.savedLoginCount
+                    return "\(n) saved login\(n == 1 ? "" : "s")"
+                }(),
+                subtitleTint: PasswordsPanelTheme.subtitle
+            ) {
                 Button { vault.lockVault() } label: {
-                    Image(systemName: "lock")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28)
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.primary.opacity(0.85))
+                        .frame(width: 30, height: 30)
+                        .background { cardBackground(cornerRadius: 8) }
                 }
                 .buttonStyle(.plain)
                 .help("Lock vault")
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
 
             if !domainLogins.isEmpty {
-                Divider().padding(.horizontal, 12)
-                Text("Saved for this site")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                    .padding(.bottom, 2)
-
-                VStack(spacing: 0) {
-                    ForEach(domainLogins) { entry in
-                        loginRow(entry)
-                        if entry.id != domainLogins.last?.id {
-                            Divider().padding(.leading, 14)
+                VStack(alignment: .leading, spacing: 7) {
+                    sectionLabel("SAVED FOR THIS SITE")
+                    VStack(spacing: 0) {
+                        ForEach(domainLogins) { entry in
+                            loginRow(entry)
+                            if entry.id != domainLogins.last?.id { rowDivider }
                         }
                     }
+                    .background { cardBackground(cornerRadius: 12) }
                 }
-                .background(Color.primary.opacity(0.03))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
             }
 
             let showGenerate = hasPasswordFieldOnPage && vault.suggestPasswordsEnabled && onGeneratePasswordForPage != nil
@@ -529,31 +473,28 @@ private struct PasswordsPopoverContent: View {
             let showNewEntry = currentWebDomain != nil
 
             if showGenerate || showSave || showNewEntry {
-                Divider().padding(.horizontal, 12)
-                VStack(spacing: 1) {
+                VStack(spacing: 0) {
                     if showGenerate {
                         actionRow(icon: "wand.and.stars", label: "Generate & fill password") {
                             onGeneratePasswordForPage?(); onClose()
                         }
                     }
                     if showSave {
+                        if showGenerate { rowDivider }
                         actionRow(icon: "square.and.arrow.down", label: "Save current login") {
                             onSaveLoginFromPage?(); onClose()
                         }
                     }
                     if showNewEntry, let domain = currentWebDomain {
+                        if showGenerate || showSave { rowDivider }
                         actionRow(icon: "plus.circle", label: "New login for \(domain)") {
-                            newUsername = ""
-                            newPassword = Self.makePassword()
-                            showNewPassword = false
-                            isAddingNew = true
+                            startAddingNew()
                         }
                     }
                 }
-                .padding(.vertical, 4)
+                .background { cardBackground(cornerRadius: 12) }
             }
 
-            Divider().padding(.horizontal, 12)
             openVaultRow
         }
     }
@@ -561,59 +502,55 @@ private struct PasswordsPopoverContent: View {
     // MARK: - Add Login
 
     private var addLoginView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 9) {
                 Button { isAddingNew = false } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(.primary)
+                        .frame(width: 30, height: 30)
+                        .background { cardBackground(cornerRadius: 8) }
                 }
                 .buttonStyle(.plain)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("New Login")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("New Login").font(.system(size: 14, weight: .bold))
                     if let domain = currentWebDomain {
                         Text(domain)
-                            .font(.caption)
+                            .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 }
                 Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
-
-            Divider().padding(.horizontal, 12)
 
             VStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Username or email")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 7) {
+                    sectionLabel("USERNAME OR EMAIL")
                     TextField("username@example.com", text: $newUsername)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12.5))
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 9)
+                        .background { cardBackground(cornerRadius: 10) }
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 7) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("Password")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                        sectionLabel("PASSWORD")
                         Spacer()
                         Button {
                             newPassword = Self.makePassword()
                         } label: {
                             HStack(spacing: 3) {
                                 Image(systemName: "arrow.triangle.2.circlepath")
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.system(size: 10, weight: .semibold))
                                 Text("Generate")
-                                    .font(.caption.weight(.medium))
+                                    .font(.system(size: 10.5, weight: .semibold))
                             }
+                            .foregroundStyle(Color.primary.opacity(0.9))
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(Color.accentColor)
                     }
                     HStack(spacing: 6) {
                         Group {
@@ -623,56 +560,153 @@ private struct PasswordsPopoverContent: View {
                                 SecureField("password", text: $newPassword)
                             }
                         }
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12.5, design: .monospaced))
 
                         Button {
                             showNewPassword.toggle()
                         } label: {
                             Image(systemName: showNewPassword ? "eye.slash" : "eye")
-                                .font(.system(size: 13))
+                                .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                     }
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 9)
+                    .background { cardBackground(cornerRadius: 10) }
                 }
 
                 HStack(spacing: 8) {
-                    Button("Cancel") { isAddingNew = false }
-                        .buttonStyle(.bordered)
-                    Spacer()
-                    Button("Save Login") { saveNewLogin() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(newUsername.trimmingCharacters(in: .whitespaces).isEmpty || newPassword.isEmpty)
+                    secondaryButton(title: "Cancel") { isAddingNew = false }
+                    primaryButton(
+                        title: "Save Login",
+                        enabled: !newUsername.trimmingCharacters(in: .whitespaces).isEmpty && !newPassword.isEmpty
+                    ) {
+                        saveNewLogin()
+                    }
                 }
+                .padding(.top, 2)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
         }
     }
 
-    // MARK: - Shared subviews
+    // MARK: - Shared subviews (dark-glass styling matches the VPN / Tor panels)
 
     @ViewBuilder
-    private func popoverHeader(icon: String, iconTint: Color, iconBackground: Color, title: String, subtitle: String) -> some View {
-        HStack(spacing: 10) {
+    private func panelHeader<Trailing: View>(
+        icon: String,
+        iconTint: Color = .primary,
+        title: String,
+        subtitle: String,
+        subtitleTint: Color,
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(spacing: 9) {
             ZStack {
-                Circle()
-                    .fill(iconBackground)
-                    .frame(width: 36, height: 36)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(PasswordsPanelTheme.fillSubtle)
+                    .frame(width: 30, height: 30)
                 Image(systemName: icon)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(iconTint)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 14, weight: .bold))
+                Text(subtitle)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(subtitleTint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer()
+            trailing()
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
+    }
+
+    private func statusDot(_ tint: Color, glow: Bool) -> some View {
+        Circle()
+            .fill(tint)
+            .frame(width: 8, height: 8)
+            .shadow(color: glow ? tint.opacity(0.7) : .clear, radius: 4)
+    }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .tracking(1.1)
+            .foregroundStyle(.tertiary)
+    }
+
+    private func errorLine(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10.5))
+            .foregroundStyle(PasswordsPanelTheme.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func cardBackground(cornerRadius: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(PasswordsPanelTheme.card)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(PasswordsPanelTheme.hairline, lineWidth: 1)
+            )
+    }
+
+    private var rowDivider: some View {
+        Divider().overlay(PasswordsPanelTheme.hairline).padding(.leading, 12)
+    }
+
+    private func primaryButton(
+        title: String,
+        systemImage: String? = nil,
+        busy: Bool = false,
+        enabled: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if busy {
+                    ProgressView().controlSize(.small).tint(PasswordsPanelTheme.onInk)
+                } else if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 15, weight: .semibold))
+                }
+                Text(title).font(.system(size: 12.5, weight: .semibold))
+            }
+            .foregroundStyle(PasswordsPanelTheme.onInk)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 9)
+            .background(PasswordsPanelTheme.ink, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled || busy)
+        .opacity(enabled ? 1 : 0.45)
+    }
+
+    private func secondaryButton(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(PasswordsPanelTheme.fillSubtle, in: Capsule())
+                .overlay(Capsule().strokeBorder(PasswordsPanelTheme.hairlineStrong, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func iconButton(_ name: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(Text(help))
     }
 
     @ViewBuilder
@@ -684,7 +718,8 @@ private struct PasswordsPopoverContent: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                     Text(entry.username)
-                        .font(.callout)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
                 }
                 HStack(spacing: 5) {
@@ -693,48 +728,40 @@ private struct PasswordsPopoverContent: View {
                         .foregroundStyle(.secondary)
                     if let pwd = revealedPasswords[entry.id] {
                         Text(pwd)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     } else {
                         Text("••••••••••")
-                            .font(.caption)
+                            .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                             .tracking(2)
                     }
                 }
             }
             Spacer()
-            HStack(spacing: 8) {
-                Button { toggleReveal(entry) } label: {
-                    Image(systemName: revealedEntryIDs.contains(entry.id) ? "eye.slash" : "eye")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help(revealedEntryIDs.contains(entry.id) ? "Hide password" : "Show password")
+            HStack(spacing: 6) {
+                iconButton(
+                    revealedEntryIDs.contains(entry.id) ? "eye.slash" : "eye",
+                    help: revealedEntryIDs.contains(entry.id) ? "Hide password" : "Show password"
+                ) { toggleReveal(entry) }
 
-                Button { copyPassword(entry) } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Copy password")
+                iconButton("doc.on.doc", help: "Copy password") { copyPassword(entry) }
 
                 Button { fill(entry) } label: {
                     Text("Autofill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(PasswordsPanelTheme.fillSubtle, in: Capsule())
+                        .overlay(Capsule().strokeBorder(PasswordsPanelTheme.hairlineStrong, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .help("Autofill on this page")
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 
@@ -745,17 +772,18 @@ private struct PasswordsPopoverContent: View {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .medium))
                     .frame(width: 20)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.primary.opacity(0.9))
                 Text(label)
-                    .font(.callout)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
                 Spacer()
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color.primary)
     }
 
     private var openVaultRow: some View {
@@ -766,20 +794,28 @@ private struct PasswordsPopoverContent: View {
             HStack(spacing: 8) {
                 Image(systemName: "key.fill")
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.primary.opacity(0.9))
                 Text("Open Vault")
-                    .font(.callout)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.primary)
                 Spacer()
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color.primary)
+        .background { cardBackground(cornerRadius: 12) }
+    }
+
+    private func startAddingNew() {
+        newUsername = ""
+        newPassword = Self.makePassword()
+        showNewPassword = false
+        isAddingNew = true
     }
 
     // MARK: - Logic
@@ -839,4 +875,28 @@ private struct PasswordsPopoverContent: View {
         let chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*"
         return String((0..<length).compactMap { _ in chars.randomElement() })
     }
+}
+
+// MARK: - Passwords panel theme
+// Mirrors SearxlyVPNTheme / TorPillTheme so the Passwords popover reads as the same glass
+// surface as the VPN and Tor panels: solid canvas, faint cards + hairlines, green only
+// for live/unlocked status (per the monochrome brand). Adaptive: near-black in dark, white in light.
+private enum PasswordsPanelTheme {
+    static let canvas = AdaptiveChrome.dynamic(
+        light: .white,
+        dark: Color(red: 0.043, green: 0.043, blue: 0.051)
+    )
+    static let card           = AdaptiveChrome.dynamic(light: Color.black.opacity(0.035), dark: Color.white.opacity(0.05))
+    static let hairline       = AdaptiveChrome.dynamic(light: Color.black.opacity(0.085), dark: Color.white.opacity(0.09))
+    static let hairlineStrong = AdaptiveChrome.dynamic(light: Color.black.opacity(0.16), dark: Color.white.opacity(0.14))
+    static let fillSubtle     = AdaptiveChrome.dynamic(light: Color.black.opacity(0.05), dark: Color.white.opacity(0.08))
+    static let subtitle       = AdaptiveChrome.dynamic(light: Color(white: 0.42), dark: Color(white: 0.6))
+    /// Solid "ink" primary button — white-on-black in dark, black-on-white in light.
+    static let ink   = AdaptiveChrome.dynamic(light: Color(white: 0.12), dark: .white)
+    static let onInk = AdaptiveChrome.dynamic(light: .white, dark: .black)
+    static let green = SERPDesign.accentGreen
+    static let red = AdaptiveChrome.dynamic(
+        light: Color(red: 0.78, green: 0.22, blue: 0.22),
+        dark: Color(red: 1.0, green: 0.45, blue: 0.45)
+    )
 }

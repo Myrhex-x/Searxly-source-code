@@ -1,0 +1,11 @@
+# Automatic HTTPS for the Searxly search instance. Change the hostname to yours and make sure
+# its DNS A/AAAA record points at this server before bringing the stack up.
+search.searxly.app {
+	reverse_proxy searxng:8080
+	encode zstd gzip
+
+	# Don't keep query logs at the proxy (privacy).
+	log {
+		output discard
+	}
+}

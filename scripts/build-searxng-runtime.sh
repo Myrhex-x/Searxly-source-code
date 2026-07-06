@@ -101,6 +101,15 @@ log "Installing SearXNG itself"
 SEARXNG_VERSION="$("$PY" -c 'import searx.version as v; print(v.VERSION_STRING)' 2>/dev/null || echo unknown)"
 echo "  SearXNG version: $SEARXNG_VERSION"
 
+# ── 3b. Scrub build-machine traces ────────────────────────────────────────────
+# pip writes launcher scripts (bin/httpx, bin/pip, …) whose shebang embeds the ABSOLUTE build
+# path — leaking the developer's username into the shipped app. The app only ever runs
+# `python3.12 -m searx.webapp`, so every launcher script is dead weight. Same for pip's
+# direct_url.json (records the local checkout path). Keep only the interpreter itself.
+log "Scrubbing build paths (pip launcher scripts + direct_url.json)"
+find "$RUNTIME/bin" -mindepth 1 ! -name "python" ! -name "python3" ! -name "python3.12" -delete
+find "$RUNTIME/lib" -name "direct_url.json" -path "*dist-info*" -delete
+
 # ── 4. Self-test: serve JSON as a plain subprocess ────────────────────────────
 if [[ "${SEARXLY_RUNTIME_SKIP_TEST:-0}" != "1" ]]; then
   log "Self-test: serving SearXNG JSON"

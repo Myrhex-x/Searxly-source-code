@@ -62,7 +62,7 @@ struct WalletAccountsSheet: View {
         .frame(width: 380)
         .frame(minHeight: 420, maxHeight: 600)
         .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
+
         .alert("Rename account", isPresented: renamingBinding) {
             TextField("Name", text: $renameText)
             Button("Save") {
@@ -85,7 +85,7 @@ struct WalletAccountsSheet: View {
         HStack(spacing: 10) {
             SearxlyWalletBadge(size: 30, cornerRadius: 8)
             Text(headerTitle)
-                .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
             Spacer()
             WalletGlassIconButton(systemName: "xmark", help: "Close", size: 28) { onClose() }
         }
@@ -151,7 +151,7 @@ struct WalletAccountsSheet: View {
                         if isSite {
                             Image(systemName: "globe").font(.system(size: 10)).foregroundStyle(WalletTheme.textTertiary)
                         }
-                        Text(account.label).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                        Text(account.label).font(.system(size: 13, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                         if account.kind == .imported { kindBadge("IMPORTED") }
                         if account.kind == .watchOnly { kindBadge("WATCH-ONLY") }
                         if account.kind == .hardware { kindBadge("LEDGER") }
@@ -169,14 +169,14 @@ struct WalletAccountsSheet: View {
                     .buttonStyle(.plain)
                 }
                 if isActive {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 16)).foregroundStyle(.white)
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 16)).foregroundStyle(WalletTheme.textPrimary)
                 }
             }
             .padding(12)
             .walletGlass(radius: 12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isActive ? Color.white.opacity(0.35) : .clear, lineWidth: 1)
+                    .strokeBorder(isActive ? WalletTheme.textPrimary.opacity(0.35) : .clear, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -197,7 +197,7 @@ struct WalletAccountsSheet: View {
     private var addAccountView: some View {
         VStack(spacing: 16) {
             VStack(spacing: 6) {
-                Text("Add a new account").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                Text("Add a new account").font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 Text("Creates another address from your existing recovery phrase — no new backup needed. Confirm it's you.")
                     .font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary).multilineTextAlignment(.center)
             }
@@ -209,8 +209,8 @@ struct WalletAccountsSheet: View {
                         Image(systemName: WalletBiometric.symbol).font(.system(size: 14))
                         Text("Confirm with \(WalletBiometric.label)").font(.system(size: 13, weight: .semibold))
                     }
-                    .foregroundStyle(.black).frame(maxWidth: 240).padding(.vertical, 11)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                    .foregroundStyle(WalletTheme.onInk).frame(maxWidth: 240).padding(.vertical, 11)
+                    .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
                 Text("or enter your PIN").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
@@ -220,7 +220,7 @@ struct WalletAccountsSheet: View {
 
             HStack(spacing: 12) {
                 ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
+                    Circle().fill(i < pin.count ? WalletTheme.ink : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                 }
             }
             if pinError {
@@ -268,7 +268,7 @@ struct WalletAccountsSheet: View {
     private var importKeyView: some View {
         VStack(spacing: 14) {
             VStack(spacing: 6) {
-                Text("Import a private key").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                Text("Import a private key").font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 Text("Paste a 64-character private key. It's stored encrypted with your PIN, like your phrase. This account isn't covered by your recovery phrase — keep the key safe.")
                     .font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary).multilineTextAlignment(.center)
             }
@@ -284,7 +284,7 @@ struct WalletAccountsSheet: View {
             Text("Enter your PIN to confirm").font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
             HStack(spacing: 12) {
                 ForEach(0..<WalletConfig.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? Color.white : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
+                    Circle().fill(i < pin.count ? WalletTheme.ink : WalletTheme.surfaceStrong).frame(width: 11, height: 11)
                 }
             }
             if let importError {
@@ -312,7 +312,7 @@ struct WalletAccountsSheet: View {
     private var watchAddressView: some View {
         VStack(spacing: 14) {
             VStack(spacing: 6) {
-                Text("Watch an address").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                Text("Watch an address").font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 Text("Track any wallet's balance and activity. You can view it but never sign or send — there's no key.")
                     .font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary).multilineTextAlignment(.center)
             }
@@ -351,7 +351,7 @@ struct WalletAccountsSheet: View {
             }
             .padding(.top, 10)
             VStack(spacing: 8) {
-                Text("Connect a Ledger").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                Text("Connect a Ledger").font(.system(size: 16, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
                 Text("Searxly speaks the Ledger Ethereum protocol — address derivation, transaction and message signing, and the USB-HID framing are all built in and verified. Sign on the device, where your keys never touch this Mac.")
                     .font(.system(size: 12)).foregroundStyle(WalletTheme.textSecondary).multilineTextAlignment(.center)
             }

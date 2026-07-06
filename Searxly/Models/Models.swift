@@ -79,20 +79,71 @@ enum Space: String, CaseIterable, Codable, Hashable {
     }
 }
 
+// MARK: - Custom Tab Category (user-created sidebar groups)
+
+/// A user-created sidebar category for organizing normal web tabs, in addition to the built-in
+/// PINNED / TABS / UTILITIES / TOR groups. Users can create up to `BrowserState.maxCustomCategories`
+/// of these. A tab is assigned to a category via `BrowserTab.categoryID`; tabs with no (or an unknown)
+/// categoryID fall back into the default "TABS" group.
+struct TabCategory: Identifiable, Codable, Equatable, Hashable {
+    let id: UUID
+    var name: String
+    /// SF Symbol shown next to the category header. Defaults to a plain folder.
+    var systemImage: String
+
+    init(id: UUID = UUID(), name: String, systemImage: String = "folder") {
+        self.id = id
+        self.name = name
+        self.systemImage = systemImage
+    }
+}
+
 // MARK: - Tab Kind (special non-web tabs + future Governance tab)
 // .passwords is the on-device encrypted password vault (in-app special tab).
+// .bookmarks (Bookmarks & History) and .downloads are full-page Searxly pages too. All non-web kinds
+// are "utility" tabs: grouped under the sidebar "Utilities" category and excluded from hibernation /
+// auto-cleanup / navigation by the existing `kind == .web` guards throughout the app.
 // (powerHub and holdersCommunity removed — crypto holder / power hub / community features fully excised for general-use focus.)
 enum TabKind: String, CaseIterable, Codable, Hashable {
     case web
     case passwords
+    case bookmarks
+    case downloads
+    case extensions
     // case governance   // Planned for future — do not implement yet.
-}
 
-// The scaffolding (kind checks, content switch in ContentView, sidebar icon special-case, non-hibernation
-// guards) is intentionally designed to support it with minimal extra work. (passwords is the only remaining special non-web tab).
+    /// Every non-web kind is an internal full-page Searxly utility page.
+    var isUtility: Bool { self != .web }
+
+    /// Sidebar / tab title for utility pages.
+    var utilityTitle: String {
+        switch self {
+        case .web:       return "New Tab"
+        case .passwords: return "Passwords"
+        case .bookmarks: return "Bookmarks & History"
+        case .downloads: return "Downloads"
+        case .extensions: return "Extensions"
+        }
+    }
+
+    /// SF Symbol shown as the tab/sidebar icon for utility pages.
+    var utilityIcon: String {
+        switch self {
+        case .web:       return "globe"
+        case .passwords: return "key.fill"
+        case .bookmarks: return "bookmark.fill"
+        case .downloads: return "arrow.down.circle.fill"
+        case .extensions: return "puzzlepiece.extension.fill"
+        }
+    }
+}
 
 // MARK: - Browser Tab (Phase 6)
 
+/// @Observable so per-tab UI (sidebar title, mute/pin/hibernation indicators, favicon) updates with
+/// fine-grained precision when a single property changes — no more re-diffing the whole `tabs` array via
+/// remove/insert "refresh" hacks, and live page titles now reach the sidebar reliably.
+@Observable
 final class BrowserTab: Identifiable {
     let id = UUID()
     var title: String = "New Tab"
@@ -111,8 +162,15 @@ final class BrowserTab: Identifiable {
     /// hibernation and auto-cleanup.
     var kind: TabKind = .web
 
-    /// When true the tab is "pinned" — shown with a visual indicator and protected from accidental close.
+    /// When true the tab is "pinned" — shown under the PINNED section with a pin indicator. Pinned tabs
+    /// can still be closed (via the hover ✕ or the right-click "Close Tab"); pinning is an organization
+    /// affordance, not a delete lock.
     var isPinned: Bool = false
+
+    /// Optional custom sidebar category this tab belongs to (see TabCategory). nil = the default "TABS"
+    /// group. Only meaningful for normal web tabs: pinned tabs always render under PINNED, onion tabs
+    /// under TOR, and utility tabs under UTILITIES regardless of this value.
+    var categoryID: UUID? = nil
 
     /// When true all <video>/<audio> elements on the page are muted. Applied immediately and re-applied on each navigation.
     var isMuted: Bool = false
@@ -140,27 +198,45 @@ final class BrowserTab: Identifiable {
     /// Native SERP / home entries that WKWebView history does not cover.
     let navigationHistory = TabNavigationHistory()
 
-    init(initialURL: URL? = nil, privacyMode: TabPrivacyMode = .standard, space: Space = .personal, kind: TabKind = .web) {
+    /// - Parameter hibernated: When true, a `.web` tab is created as a lazy *stub* — no WKWebView is
+    ///   allocated and no page load is started. `currentURL`/`title` are still seeded so the sidebar can
+    ///   render it. The tab transparently loads its page the first time it is selected (the existing
+    ///   onChange → didSelectTab → wakeUp path). Used by session restore so cold start spins up exactly
+    ///   one WebContent process (the foreground tab) instead of one per restored tab.
+    init(initialURL: URL? = nil, privacyMode: TabPrivacyMode = .standard, space: Space = .personal, kind: TabKind = .web, hibernated: Bool = false) {
         self.privacyMode = privacyMode
         self.space = space
         self.kind = kind
 
-        if kind == .web {
+        // A hibernated stub deliberately allocates no WKWebView. It is woken (webView created + URL
+        // loaded) by wakeUp() when the tab is first selected. Only meaningful for .web tabs.
+        let startHibernated = hibernated && kind == .web
+
+        if kind == .web && !startHibernated {
             self.webView = WebViewFactory.makeWebView(mode: privacyMode)
         }
 
         if let url = initialURL, kind == .web {
-            // Small delay before load for restored / pre-created tabs so that when the
-            // representable + container eventually attach, the page has a better chance of
-            // seeing a real size on first paint. The container's attach-time multi-pass
-            // stabilization + the early fixer script will also fire.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
-                self?.webView?.load(URLRequest(url: url))
-            }
             currentURL = url
             title = url.host ?? "New Tab"
-        } else if kind == .passwords {
-            title = "Passwords"
+
+            if startHibernated {
+                // Lazy/deferred: nothing is created or loaded now; wakeUp() does it on first selection.
+                isHibernated = true
+            } else {
+                // Small delay before load for restored / pre-created tabs so that when the
+                // representable + container eventually attach, the page has a better chance of
+                // seeing a real size on first paint. The container's attach-time multi-pass
+                // stabilization + the early fixer script will also fire.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+                    self?.webView?.load(URLRequest(url: url))
+                }
+            }
+        } else if startHibernated {
+            // Blank web tab restored lazily (no URL): keep it a stub until selected.
+            isHibernated = true
+        } else if kind.isUtility {
+            title = kind.utilityTitle
         }
     }
 
@@ -183,7 +259,10 @@ final class BrowserTab: Identifiable {
     /// the tab can be restored later without losing the user's place.
     /// No-op for non-web tabs (special tabs like passwords vault or power hub do not participate in hibernation).
     func hibernate() {
-        guard kind == .web else { return }
+        // Onion (Tor) tabs are never hibernated: dropping the webView would tear down the live Tor
+        // session/circuit and leave the tab unable to reload (.onion needs the proxied webView), and
+        // onion tabs are ephemeral by design — there's nothing to restore them to.
+        guard kind == .web, privacyMode != .onion else { return }
         guard !isHibernated, let wv = webView else { return }
         isHibernated = true
 
@@ -293,18 +372,21 @@ struct TabSnapshot: Codable, Equatable {
     let space: Space
     let kind: TabKind
     var isPinned: Bool
+    /// Custom sidebar category assignment (see TabCategory). nil = default "TABS" group.
+    var categoryID: UUID?
 
-    init(url: String, privacyMode: TabPrivacyMode, space: Space = .personal, kind: TabKind = .web, isPinned: Bool = false) {
+    init(url: String, privacyMode: TabPrivacyMode, space: Space = .personal, kind: TabKind = .web, isPinned: Bool = false, categoryID: UUID? = nil) {
         self.url = url
         self.privacyMode = privacyMode
         self.space = space
         self.kind = kind
         self.isPinned = isPinned
+        self.categoryID = categoryID
     }
 
-    // Custom decoding so old AppData.json files (without kind/space/isPinned) still load correctly.
+    // Custom decoding so old AppData.json files (without kind/space/isPinned/categoryID) still load correctly.
     private enum CodingKeys: String, CodingKey {
-        case url, privacyMode, space, kind, isPinned
+        case url, privacyMode, space, kind, isPinned, categoryID
     }
 
     init(from decoder: Decoder) throws {
@@ -314,6 +396,7 @@ struct TabSnapshot: Codable, Equatable {
         space = try container.decodeIfPresent(Space.self, forKey: .space) ?? .personal
         kind = try container.decodeIfPresent(TabKind.self, forKey: .kind) ?? .web
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        categoryID = try container.decodeIfPresent(UUID.self, forKey: .categoryID)
     }
 }
 
@@ -414,6 +497,7 @@ struct PasswordVaultEntry: Codable, Identifiable, Equatable, Hashable {
 // MARK: - Simple Download Manager (Phase 9)
 
 @MainActor
+@Observable
 final class DownloadsManager {
     static let shared = DownloadsManager()
 
@@ -514,20 +598,23 @@ extension TabSnapshot {
         self.space = tab.space
         self.kind = tab.kind
         self.isPinned = tab.isPinned
+        self.categoryID = tab.categoryID
     }
 }
 
 extension BrowserTab {
     /// Creates a BrowserTab from a persisted snapshot.
     /// For non-web tabs (e.g. passwords vault) the webView is never allocated (see init).
-    convenience init(from snapshot: TabSnapshot) {
-        if snapshot.kind == .passwords {
+    /// - Parameter hibernated: When true, `.web` tabs are restored as lazy stubs (no WKWebView / no load
+    ///   until first selected). Utility tabs ignore this — they never own a WKWebView anyway.
+    convenience init(from snapshot: TabSnapshot, hibernated: Bool = false) {
+        if snapshot.kind.isUtility {
             self.init(
                 privacyMode: snapshot.privacyMode,
                 space: snapshot.space,
-                kind: .passwords
+                kind: snapshot.kind
             )
-            // title is set to "Passwords" inside the kind-aware init
+            // title is set by the kind-aware init
         } else {
             // Web tab (or unknown/removed future kind treated as web for safety).
             // (powerHub and holdersCommunity kinds were removed; old snapshots fall back here gracefully.)
@@ -536,9 +623,11 @@ extension BrowserTab {
                 initialURL: url,
                 privacyMode: snapshot.privacyMode,
                 space: snapshot.space,
-                kind: .web
+                kind: .web,
+                hibernated: hibernated
             )
         }
         self.isPinned = snapshot.isPinned
+        self.categoryID = snapshot.categoryID
     }
 }

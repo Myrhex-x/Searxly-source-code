@@ -51,6 +51,8 @@ struct BookmarksHistoryView: View {
 
     var onCloseFullPage: (() -> Void)? = nil
     var onRequestFullHistory: (() -> Void)? = nil
+    /// Opens the unified "Import Data" hub (bookmarks + passwords). Falls back to nothing if unset.
+    var onOpenImport: (() -> Void)? = nil
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -128,14 +130,27 @@ struct BookmarksHistoryView: View {
 
             Spacer(minLength: 12)
 
-            Button {
-                onCloseFullPage?()
-            } label: {
-                Label("Close", systemImage: "xmark")
+            // Group the trailing actions in their own HStack so they center-align with each other.
+            // (The parent header HStack is .top-aligned; left to the parent the two buttons would pin
+            // to the top and their differently-sized SF Symbols would render at different heights.)
+            HStack(spacing: 8) {
+                Button {
+                    onOpenImport?()
+                } label: {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    onCloseFullPage?()
+                } label: {
+                    Label("Close", systemImage: "xmark")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .keyboardShortcut(.cancelAction)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .keyboardShortcut(.cancelAction)
         }
     }
 
@@ -186,6 +201,10 @@ struct BookmarksHistoryView: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
+                headerActionButton(title: "Import", icon: "square.and.arrow.down") {
+                    onOpenImport?()
+                }
+
                 if onRequestFullHistory != nil {
                     headerActionButton(title: "Full Page", icon: "rectangle.expand.vertical") {
                         onRequestFullHistory?()
@@ -467,7 +486,7 @@ struct BookmarksHistoryView: View {
         return Group {
             if glassEnabled {
                 shape.fill(.regularMaterial)
-                    .glassEffect(.regular, in: shape)
+                    .searxlyGlass(.regular, in: shape)
             } else {
                 shape.fill(AdaptiveChrome.fill(colorScheme, dark: 0.03, light: 0.025))
             }

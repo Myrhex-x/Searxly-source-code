@@ -13,13 +13,8 @@ struct ToolsListSheet: View {
 
     private let manager = LocalIntelligenceManager.shared
 
-    private let tools: [(icon: String, name: String, description: String, example: String)] = [
-        ("magnifyingglass", "Web search", "Searches the web using only your private/local SearXNG instance(s). Nothing goes to public search engines. Results are synthesized into an answer that stays in the chat.", "e.g. “search the web for latest iPhone” or “who is Elon Musk?” or “browse and tell me about X”"),
-        ("globe", "Open website", "Safely finds the official (or best matching) site for any brand/service using your private SearXNG instance (or direct domain) and opens it in a new tab. Use only for explicit navigation.", "e.g. “open the official X site” or “open Apple website for me” or “go to tesla.com”")
-    ]
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Available Tools")
                     .font(.title3.weight(.semibold))
@@ -39,58 +34,88 @@ struct ToolsListSheet: View {
             .toggleStyle(.switch)
 
             if manager.toolsEnabled {
-                Text("**On**: The assistant receives the two work tools and can proactively call web_search for research questions (answer stays in chat) or open_website for explicit navigation. Tool use is model-driven but heavily constrained by the rules.")
+                Text("**On**: Searxly AI can call the tools you’ve enabled below — research, your own history & bookmarks, reading pages, and more. Tool use is model-driven but heavily constrained by the rules.")
                     .font(.caption)
                     .foregroundStyle(.green)
             } else {
-                Text("**Off**: No tool instructions are provided to the model. The AI will not proactively call web_search or open_website. Control is 100% via the chips and very clear imperative sentences (or this toggle).")
+                Text("**Off**: No tools are offered to the model. Control is via the chips and very clear imperative sentences (or this toggle).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Divider()
 
-            ForEach(tools, id: \.name) { tool in
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: tool.icon)
-                        .font(.title3)
-                        .frame(width: 28)
-                        .foregroundStyle(.blue)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tool.name)
-                            .font(.callout.weight(.semibold))
-                        Text(tool.description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(tool.example)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(AIToolCatalog.byTier, id: \.tier) { group in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(group.tier.rawValue.uppercased())
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                            ForEach(group.tools) { tool in
+                                toolRow(tool)
+                            }
+                        }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.trailing, 4)
             }
+            .frame(maxHeight: 340)
 
-            Text("All tool activity is logged in AI Activity for full transparency. Tools only ever use data and services you control.")
+            Text("Turn individual tools on or off in Settings — cloud tools under **Searxly AI**, Web search & Open website under **on-device AI**. All tool activity is logged in AI Activity, and tools only ever use data and services you control.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
-                .padding(.top, 8)
-
-            Divider()
-
-            Text(AIPromptLibrary.userFacingSummary)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
-
-            Spacer()
+                .padding(.top, 2)
         }
         .padding(20)
         .background(
             (glassEnabled ? .ultraThinMaterial : .regularMaterial),
             in: RoundedRectangle(cornerRadius: 14)
         )
-        .frame(minWidth: 440, minHeight: 400)
+        .frame(minWidth: 470, minHeight: 540)
+    }
+
+    @ViewBuilder
+    private func toolRow(_ tool: AIToolInfo) -> some View {
+        let active = manager.toolsEnabled && manager.isToolEnabled(tool.id)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: tool.icon)
+                .font(.title3)
+                .frame(width: 26)
+                .foregroundStyle(active ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(tool.name)
+                        .font(.callout.weight(.semibold))
+                    if !tool.availableOnDevice {
+                        Text("Cloud")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.secondary.opacity(0.12), in: Capsule())
+                    }
+                }
+                Text(tool.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(tool.example)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 8)
+
+            // Read-only status. The on/off switches live in Settings (cloud tools → Searxly AI tab;
+            // Web search & Open website → on-device AI tab).
+            Text(active ? "On" : "Off")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(active ? AnyShapeStyle(Color.green) : AnyShapeStyle(.tertiary))
+                .frame(minWidth: 26, alignment: .trailing)
+        }
+        .padding(.vertical, 2)
+        .opacity(manager.toolsEnabled ? 1 : 0.55)
     }
 }
 

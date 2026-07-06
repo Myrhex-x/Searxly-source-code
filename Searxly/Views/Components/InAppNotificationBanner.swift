@@ -44,7 +44,7 @@ struct InAppNotificationBanner: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.white.opacity(0.85))
             }
-            .glassEffect(glassEnabled ? .regular.interactive() : .clear, in: Circle())
+            .searxlyGlass(glassEnabled ? .interactive : .clear, in: Circle())
 
             // Content
             VStack(alignment: .leading, spacing: 3) {
@@ -80,7 +80,7 @@ struct InAppNotificationBanner: View {
                             .fill(Color.white.opacity(0.06))
                             .frame(width: 16, height: 16)
                     )
-                    .glassEffect(.clear, in: Circle())
+                    .searxlyGlass(.clear, in: Circle())
                     .help("Dismiss")
                 }
 
@@ -103,7 +103,7 @@ struct InAppNotificationBanner: View {
         .frame(width: 320, alignment: .leading)
         // Liquid glass card treatment — exactly in the spirit of the rest of Searxly.
         .background(effectiveMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .glassEffect(glassEnabled ? .regular.interactive() : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .searxlyGlass(glassEnabled ? .interactive : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.white.opacity(glassEnabled ? 0.09 : 0.06), lineWidth: 1)

@@ -22,6 +22,7 @@
 //
 
 import Foundation
+import os
 
 final class CloudIntelligenceProvider: IntelligenceProvider {
 
@@ -46,6 +47,50 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
             name: "Searxly AI (\(modelName))",
             supportsNativeTools: false   // server models use plain text generation; native tools are the Apple-only path
         )
+    }
+
+    // MARK: - PII redaction (Rampart)
+    //
+    // When the endpoint is remote (non-loopback) and the user hasn't turned it off, user-typed
+    // text is scrubbed of PII before it leaves the Mac and the reply is un-scrubbed on-device.
+    // Local / Ollama endpoints (loopback) are never touched — nothing leaves the device there.
+
+    /// True when `url` points off-device (anything but loopback) — the line the security
+    /// note above draws, and the gate for whether redaction applies. A missing host is
+    /// treated as not-remote (such a URL can't reach a real cloud endpoint anyway).
+    static func isRemoteEgress(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased(), !host.isEmpty else { return false }
+        return !(host == "localhost" || host == "127.0.0.1" || host == "::1")
+    }
+
+    private var isRemoteEgress: Bool { Self.isRemoteEgress(baseURL) }
+
+    /// A fresh per-turn redaction guard, or nil when redaction is off or the endpoint is local.
+    /// Logs the decision at `.notice` (persisted) so a redaction can be verified after the fact —
+    /// counts and host only, never the scrubbed values.
+    private func activeRedactionGuard() -> RampartGuard? {
+        guard isRemoteEgress else {
+            Log.privacy.notice("Rampart: \(self.baseURL.host ?? "endpoint", privacy: .public) is local — no redaction needed")
+            return nil
+        }
+        guard RampartRedactor.shared.isEnabled else {
+            Log.privacy.notice("Rampart: redaction is OFF in Settings — cloud send NOT scrubbed")
+            return nil
+        }
+        return RampartRedactor.shared.newSession()
+    }
+
+    /// Scrubs the outbound system prompt with the SAME guard session as the user message, so the
+    /// placeholder map stays consistent for `reveal`. The system prompt is NOT just static rules — it
+    /// carries user data (custom instructions, attached-file excerpts, RAG context), so it must be
+    /// redacted before egress too, not only the user message. Unchanged when there's no active guard.
+    private func scrubbedInstructions(_ instructions: String?, using guardSession: RampartGuard?) async -> String? {
+        guard let guardSession, let instructions, !instructions.isEmpty else { return instructions }
+        let scrubbed = await guardSession.protect(instructions)
+        if scrubbed.count > 0 {
+            Log.privacy.notice("Rampart: scrubbed \(scrubbed.count, privacy: .public) PII span(s) from the system prompt before cloud send [\(scrubbed.summary, privacy: .public)]")
+        }
+        return scrubbed.text
     }
 
     // MARK: - Request building
@@ -76,7 +121,17 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
             "max_tokens": maxOutputTokens
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        attachGatewayIdentity(to: &request)
         return request
+    }
+
+    /// Attaches the wallet-identity headers the Searxly AI gateway uses to resolve tier + enforce limits.
+    /// Only added for the gateway host — never for a user's own / local OpenAI-compatible endpoint.
+    private func attachGatewayIdentity(to request: inout URLRequest) {
+        guard baseURL.absoluteString.hasPrefix(SearxlyGateway.host) else { return }
+        for (key, value) in SearxlyAIIdentity.headers() {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
     }
 
     // MARK: - Error sanitization
@@ -109,8 +164,18 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
     // MARK: - One-shot generation
 
     func generate(prompt: String, instructions: String?) async throws -> String {
-        let request = try makeRequest(stream: false, prompt: prompt, instructions: instructions)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let guardSession = activeRedactionGuard()
+        let outbound: String
+        if let guardSession {
+            let scrubbed = await guardSession.protect(prompt)
+            Log.privacy.notice("Rampart: scrubbed \(scrubbed.count, privacy: .public) PII span(s) before cloud send [\(scrubbed.summary, privacy: .public)]")
+            outbound = scrubbed.text
+        } else {
+            outbound = prompt
+        }
+        let outboundInstructions = await scrubbedInstructions(instructions, using: guardSession)
+        let request = try makeRequest(stream: false, prompt: outbound, instructions: outboundInstructions)
+        let (data, response) = try await CertificatePinning.session.data(for: request)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -126,7 +191,8 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
                                  userMessage: "Searxly AI couldn’t complete that request. Please try again.",
                                  detail: err)
         }
-        return decoded.choices?.first?.message?.content ?? "(no response from Searxly AI)"
+        let content = decoded.choices?.first?.message?.content ?? "(no response from Searxly AI)"
+        return guardSession?.reveal(content) ?? content
     }
 
     // MARK: - Streaming generation (Server-Sent Events)
@@ -135,8 +201,19 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    let request = try makeRequest(stream: true, prompt: prompt, instructions: instructions)
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let guardSession = self.activeRedactionGuard()
+                    let outbound: String
+                    if let guardSession {
+                        let scrubbed = await guardSession.protect(prompt)
+                        Log.privacy.notice("Rampart: scrubbed \(scrubbed.count, privacy: .public) PII span(s) before cloud send (stream) [\(scrubbed.summary, privacy: .public)]")
+                        outbound = scrubbed.text
+                    } else {
+                        outbound = prompt
+                    }
+                    let outboundInstructions = await self.scrubbedInstructions(instructions, using: guardSession)
+                    let reveal = guardSession?.makeRevealTransform()
+                    let request = try makeRequest(stream: true, prompt: outbound, instructions: outboundInstructions)
+                    let (bytes, response) = try await CertificatePinning.session.bytes(for: request)
 
                     guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -158,7 +235,12 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
 
                         if let chunk = try? JSONDecoder().decode(OpenAIStreamChunk.self, from: data) {
                             if let content = chunk.choices?.first?.delta?.content, !content.isEmpty {
-                                continuation.yield(content)
+                                if let reveal {
+                                    let shown = reveal.push(content)   // restores placeholders, buffering partial tokens
+                                    if !shown.isEmpty { continuation.yield(shown) }
+                                } else {
+                                    continuation.yield(content)
+                                }
                             }
                             if chunk.choices?.first?.finishReason != nil { break }
                         } else if let errChunk = try? JSONDecoder().decode(OpenAIChatResponse.self, from: data),
@@ -171,6 +253,10 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
                         }
                     }
 
+                    if let reveal {
+                        let tail = reveal.finish()   // flush any held partial-placeholder tail
+                        if !tail.isEmpty { continuation.yield(tail) }
+                    }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -210,11 +296,24 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
              "function": ["name": t.name, "description": t.description, "parameters": t.parameters]]
         }
 
+        let guardSession = activeRedactionGuard()
+        let outboundUserPrompt: String
+        if let guardSession {
+            let scrubbed = await guardSession.protect(userPrompt)
+            Log.privacy.notice("Rampart: scrubbed \(scrubbed.count, privacy: .public) PII span(s) before cloud send (tools) [\(scrubbed.summary, privacy: .public)]")
+            outboundUserPrompt = scrubbed.text
+        } else {
+            outboundUserPrompt = userPrompt
+        }
+
         var messages: [[String: Any]] = []
         if let systemPrompt, !systemPrompt.isEmpty {
-            messages.append(["role": "system", "content": systemPrompt])
+            // Scrub the system prompt too — it carries user custom instructions, attached-file
+            // excerpts and RAG context, all of which must be redacted before egress.
+            let outboundSystem = await scrubbedInstructions(systemPrompt, using: guardSession) ?? systemPrompt
+            messages.append(["role": "system", "content": outboundSystem])
         }
-        messages.append(["role": "user", "content": userPrompt])
+        messages.append(["role": "user", "content": outboundUserPrompt])
 
         var collectedSources: [Citation] = []
         var toolsUsed: [String] = []
@@ -226,7 +325,7 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
                                               toolSpecs: toolSpecs,
                                               toolChoice: forceAnswer ? "none" : "auto")
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await CertificatePinning.session.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? -1
                 let serverMsg = String(data: data, encoding: .utf8) ?? "unknown error"
@@ -248,7 +347,8 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
             // No tool calls → this is the final answer.
             if calls.isEmpty || forceAnswer {
                 let text = message?.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return CloudToolResult(text: text.isEmpty ? "(no response from Searxly AI)" : text,
+                let revealed = guardSession?.reveal(text) ?? text
+                return CloudToolResult(text: revealed.isEmpty ? "(no response from Searxly AI)" : revealed,
                                        sources: collectedSources,
                                        toolsUsed: toolsUsed)
             }
@@ -264,7 +364,11 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
             // Execute each requested tool and append its result as a `tool` message.
             for tc in calls {
                 toolsUsed.append(tc.function.name)
-                let args = Self.decodeArguments(tc.function.arguments)
+                // The model only ever saw placeholders, so its tool arguments carry them too.
+                // Reveal them before running a LOCAL tool (the user's own SearXNG) so it searches
+                // real terms — that call doesn't egress, so no PII leaves the device here.
+                let revealedArgs = guardSession?.reveal(tc.function.arguments) ?? tc.function.arguments
+                let args = Self.decodeArguments(revealedArgs)
                 let resultText: String
                 if let tool = toolsByName[tc.function.name] {
                     let output = await tool.execute(args)
@@ -273,7 +377,9 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
                 } else {
                     resultText = "Error: unknown tool \"\(tc.function.name)\"."
                 }
-                messages.append(["role": "tool", "tool_call_id": tc.id, "content": resultText])
+                // Re-scrub the tool result before it goes back up to the cloud model.
+                let safeResult = guardSession != nil ? await guardSession!.protect(resultText).text : resultText
+                messages.append(["role": "tool", "tool_call_id": tc.id, "content": safeResult])
             }
         }
 
@@ -299,12 +405,17 @@ final class CloudIntelligenceProvider: IntelligenceProvider {
             "messages": messages,
             "stream": false,
             "temperature": 0.4,            // a little tighter for grounded, tool-driven answers
-            "max_tokens": maxOutputTokens,
-            "tools": toolSpecs
+            "max_tokens": maxOutputTokens
         ]
-        // Only send tool_choice when meaningful; "none" forces a final answer on the last round.
-        body["tool_choice"] = toolChoice
+        // Only advertise tools when there are any. If the user has switched every tool off (per-tool
+        // toggles) this degrades cleanly to a normal completion instead of sending an empty `tools: []`,
+        // which some OpenAI-compatible backends reject. "none" forces a final answer on the last round.
+        if !toolSpecs.isEmpty {
+            body["tools"] = toolSpecs
+            body["tool_choice"] = toolChoice
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        attachGatewayIdentity(to: &request)
         return request
     }
 

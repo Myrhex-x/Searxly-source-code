@@ -45,6 +45,7 @@ nonisolated enum WalletKeychain {
     private static let seBindingKeyTag = "com.myrhex.Searxly.wallet.se-binding".data(using: .utf8)!
     private static let contactsAccount = "wallet-contacts"
     private static let portfolioHistoryAccount = "wallet-portfolio-history"
+    private static let pinAttemptsAccount = "wallet-pin-attempts"
 
     private static let pbkdf2Rounds: UInt32 = 200_000
 
@@ -53,7 +54,8 @@ nonisolated enum WalletKeychain {
     @discardableResult
     static func saveSeed(_ words: [String], pin: String) -> Bool {
         guard let phraseData = words.joined(separator: " ").data(using: .utf8) else { return false }
-        let key = deriveKey(from: pin, salt: loadOrCreateSalt())
+        guard let salt = loadOrCreateSalt() else { return false }
+        let key = deriveKey(from: pin, salt: salt)
         guard let encrypted = try? encryptAES(phraseData, key: key) else { return false }
         // Wrap the PIN-encrypted blob to the Secure Enclave so the 6-digit PIN can't be brute-forced
         // OFFLINE from an extracted keychain copy. Falls back to an unbound store if SE is unavailable.
@@ -117,9 +119,29 @@ nonisolated enum WalletKeychain {
          connectedSitesAccount, addressAccount, activityAccount,
          accountsAccount, siteAccountsAccount, rotationAccountsAccount, importedKeysAccount,
          importedKeysBoundAccount, contactsAccount, portfolioHistoryAccount,
-         zeroExKeyAccount, basescanKeyAccount].forEach(deleteItem)
+         zeroExKeyAccount, basescanKeyAccount, pinAttemptsAccount].forEach(deleteItem)
         deleteSecureEnclaveKey()   // drop the device-binding key so nothing lingers after a delete
     }
+
+    // MARK: - PIN attempt state (failed-attempt counter + lockout deadline)
+
+    /// Kept in the Keychain, NOT UserDefaults: the online rate-limit must survive someone with
+    /// plain file access deleting the prefs plist to reset the counter and keep guessing PINs.
+    private struct PINAttemptState: Codable { var failed: Int; var until: Double? }
+
+    static func savePINAttemptState(failedAttempts: Int, lockedUntil: Date?) {
+        let state = PINAttemptState(failed: failedAttempts, until: lockedUntil?.timeIntervalSince1970)
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        _ = saveItem(data, account: pinAttemptsAccount)
+    }
+
+    static func loadPINAttemptState() -> (failedAttempts: Int, lockedUntil: Date?)? {
+        guard let data = loadItem(account: pinAttemptsAccount),
+              let state = try? JSONDecoder().decode(PINAttemptState.self, from: data) else { return nil }
+        return (state.failed, state.until.map { Date(timeIntervalSince1970: $0) })
+    }
+
+    static func deletePINAttemptState() { deleteItem(pinAttemptsAccount) }
 
     // MARK: - Address book (saved recipient contacts — who you pay is private)
 
@@ -168,7 +190,8 @@ nonisolated enum WalletKeychain {
     static func saveImportedKeys(_ keysByIndex: [Int: Data], pin: String) -> Bool {
         let map = keysByIndex.reduce(into: [String: String]()) { $0[String($1.key)] = $1.value.map { String(format: "%02x", $0) }.joined() }
         guard let json = try? JSONSerialization.data(withJSONObject: map) else { return false }
-        let key = deriveKey(from: pin, salt: loadOrCreateSalt())
+        guard let salt = loadOrCreateSalt() else { return false }
+        let key = deriveKey(from: pin, salt: salt)
         guard let encrypted = try? encryptAES(json, key: key) else { return false }
         return storeCiphertextBound(encrypted, unbound: importedKeysAccount, bound: importedKeysBoundAccount)
     }
@@ -272,7 +295,8 @@ nonisolated enum WalletKeychain {
     @discardableResult
     static func saveRecoverySeed(_ words: [String], recoveryCode: String) -> Bool {
         guard let phraseData = words.joined(separator: " ").data(using: .utf8) else { return false }
-        let key = deriveKey(from: recoveryCode.uppercased(), salt: loadOrCreateSalt())
+        guard let salt = loadOrCreateSalt() else { return false }
+        let key = deriveKey(from: recoveryCode.uppercased(), salt: salt)
         guard let encrypted = try? encryptAES(phraseData, key: key) else { return false }
         return saveItem(encrypted, account: recoverySeedAccount)
     }
@@ -356,13 +380,15 @@ nonisolated enum WalletKeychain {
         return Data(derived)
     }
 
-    /// Per-wallet random KDF salt. Created once and stored device-only.
-    private static func loadOrCreateSalt() -> Data {
+    /// Per-wallet random KDF salt. Created once and stored device-only. Returns nil when the CSPRNG
+    /// or the Keychain write fails — callers must abort rather than encrypt under an all-zero salt
+    /// (identical across wallets) or a salt that was never persisted (seed unreadable later).
+    private static func loadOrCreateSalt() -> Data? {
         if let existing = loadSalt() { return existing }
         var bytes = [UInt8](repeating: 0, count: 16)
-        _ = SecRandomCopyBytes(kSecRandomDefault, 16, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, 16, &bytes) == errSecSuccess else { return nil }
         let salt = Data(bytes)
-        _ = saveItem(salt, account: saltAccount)
+        guard saveItem(salt, account: saltAccount) else { return nil }
         return salt
     }
 

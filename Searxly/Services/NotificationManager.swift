@@ -67,9 +67,10 @@ final class NotificationManager {
         }
     }
 
-    /// Force an in-app notification regardless of current browser state.
-    /// Useful for developer testing from Settings (so you can trigger the UI from anywhere).
-    func showInAppForTest(title: String, body: String, source: String = "X", iconSystemName: String = "at.circle.fill") {
+    /// Force an in-app toast regardless of current browser state. Used for messages that must
+    /// be seen in context (e.g. one-time privacy disclosures) where a macOS notification —
+    /// possibly requiring a permission prompt — would be wrong.
+    func showInApp(title: String, body: String, source: String = "App", iconSystemName: String = "bell.badge.fill") {
         let notification = AppNotification(
             title: title,
             body: body,
@@ -77,6 +78,12 @@ final class NotificationManager {
             iconSystemName: iconSystemName
         )
         addInApp(notification)
+    }
+
+    /// Force an in-app notification regardless of current browser state.
+    /// Useful for developer testing from Settings (so you can trigger the UI from anywhere).
+    func showInAppForTest(title: String, body: String, source: String = "X", iconSystemName: String = "at.circle.fill") {
+        showInApp(title: title, body: body, source: source, iconSystemName: iconSystemName)
     }
 
     /// Dismiss a specific in-app notification (user tapped X, swiped, or tapped the card).

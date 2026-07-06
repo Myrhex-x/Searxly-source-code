@@ -61,9 +61,10 @@ struct HorizontalTabBar: View {
                 .keyboardShortcut("t", modifiers: .command)
                 .buttonStyle(.plain)
                 .background(toolbarMaterial, in: Circle())
-                .glassEffect(glassEnabled ? .regular.interactive() : .clear, in: Circle())
+                .searxlyGlass(glassEnabled ? .interactive : .clear, in: Circle())
                 .padding(.leading, 4)
                 .help("New Tab (⌘T)")
+                .accessibilityLabel(Text("New Tab"))
 
                 // Hidden button providing ⌘⇧T for private tabs (Rank 1)
                 Button(action: newPrivateTabAction) {

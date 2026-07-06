@@ -112,6 +112,7 @@ struct OnboardingFeatureSlide<Demo: View, Extra: View>: View {
                 .scaleEffect(1.08)
 
             demo()
+                .fixedSize(horizontal: false, vertical: true)   // hug content height — don't stretch to fill the column
                 .frame(maxWidth: 560)
                 .scaleEffect(revealed || reduceMotion ? 1 : 0.96)
                 .opacity(revealed || reduceMotion ? 1 : 0)
@@ -133,28 +134,76 @@ extension OnboardingFeatureSlide where Extra == EmptyView {
     }
 }
 
-/// Pills laid out in a row that wraps to a second line if needed.
+/// Pills that wrap to the next line based on the ACTUAL available width, so a longer pill never
+/// spills past the (narrow) text column or squashes its neighbours.
 private struct FlowPills: View {
     let pills: [OnboardingPill]
     let alignment: HorizontalAlignment
 
     var body: some View {
-        VStack(alignment: alignment, spacing: 8) {
-            // Up to 3 per row keeps it tidy across both layouts.
-            ForEach(Array(chunks.enumerated()), id: \.offset) { _, row in
-                HStack(spacing: 8) {
-                    ForEach(row) { pill in
-                        OnboardingFactPill(icon: pill.icon, text: pill.text)
-                    }
-                }
+        OnboardingFlowLayout(spacing: 8, lineSpacing: 8, alignment: alignment) {
+            ForEach(pills) { pill in
+                OnboardingFactPill(icon: pill.icon, text: pill.text)
             }
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .center)
     }
+}
 
-    private var chunks: [[OnboardingPill]] {
-        stride(from: 0, to: pills.count, by: 3).map {
-            Array(pills[$0..<min($0 + 3, pills.count)])
+/// A minimal wrapping flow layout: lays children left→right, wrapping to a new line when the next
+/// child would overflow the proposed width. Wraps by real measured width, so pills of any length
+/// stay inside their column.
+struct OnboardingFlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+    var alignment: HorizontalAlignment = .leading
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        let rows = rows(maxWidth: maxWidth, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.reduce(0) { $0 + $1.height } + CGFloat(max(0, rows.count - 1)) * lineSpacing
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = rows(maxWidth: bounds.width, subviews: subviews)
+        var y = bounds.minY
+        for row in rows {
+            var x: CGFloat
+            switch alignment {
+            case .center:   x = bounds.minX + (bounds.width - row.width) / 2
+            case .trailing: x = bounds.maxX - row.width
+            default:        x = bounds.minX
+            }
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + lineSpacing
         }
+    }
+
+    private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func rows(maxWidth: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if current.indices.isEmpty {
+                current = Row(indices: [index], width: size.width, height: size.height)
+            } else if current.width + spacing + size.width > maxWidth {
+                rows.append(current)
+                current = Row(indices: [index], width: size.width, height: size.height)
+            } else {
+                current.width += spacing + size.width
+                current.indices.append(index)
+                current.height = max(current.height, size.height)
+            }
+        }
+        if !current.indices.isEmpty { rows.append(current) }
+        return rows
     }
 }

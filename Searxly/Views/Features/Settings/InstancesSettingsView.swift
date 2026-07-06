@@ -81,7 +81,7 @@ struct InstancesSettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.white)
+                .tint(SettingsTheme.textPrimary)
                 .disabled(
                     newInstanceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                     newInstanceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -298,6 +298,15 @@ struct InstancesSettingsView: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
 
+            if SearchEngineHealthMonitor.shared.bundledRuntimeIsStale {
+                SettingsCallout(
+                    title: "Bundled search engines are \(SearchEngineHealthMonitor.shared.bundledRuntimeAgeDescription) old",
+                    message: "Search engines change their pages over time, and old bundled engines quietly return fewer results. Update Searxly to refresh them.",
+                    tint: .orange,
+                    systemImage: "exclamationmark.magnifyingglass"
+                )
+            }
+
             SettingsActionChipGrid {
                 SettingsActionChip(title: "Open folder", systemImage: "folder") {
                     manager.openProjectFolderInFinder()
@@ -371,7 +380,7 @@ struct InstancesSettingsView: View {
             Spacer(minLength: 8)
 
             if inst.id == currentInstanceID {
-                SettingsBadge(text: "In use", tint: .white)
+                SettingsBadge(text: "In use", tint: SettingsTheme.textPrimary)
             } else {
                 Button("Use") { currentInstanceID = inst.id }
                     .buttonStyle(.bordered)

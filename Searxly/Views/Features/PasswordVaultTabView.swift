@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct PasswordVaultTabView: View {
     let tab: BrowserTab
@@ -21,6 +22,11 @@ struct PasswordVaultTabView: View {
     @State private var entryToDelete: PasswordVaultEntry?
     @State private var statusMessage: String?
     @State private var health: [UUID: PasswordHealth.Report] = [:]   // offline password-health reports
+
+    // Inline password reveal: which entry is showing its plaintext, the value, and an auto-hide task.
+    @State private var revealedEntryID: UUID?
+    @State private var revealedPassword: String = ""
+    @State private var revealHideTask: Task<Void, Never>?
 
     private var vault = PasswordVaultManager.shared
 
@@ -155,6 +161,8 @@ struct PasswordVaultTabView: View {
         }
         .onAppear { refreshHealth() }
         .onChange(of: vault.entries) { _, _ in refreshHealth() }
+        // Locking the vault must not leave a revealed password sitting in @State memory / on screen.
+        .onChange(of: vault.isVaultUnlocked) { _, unlocked in if !unlocked { hideRevealedPassword() } }
     }
 
     /// Banner summarising how many saved passwords are reused, weak, or known-breached.
@@ -501,7 +509,7 @@ struct PasswordVaultTabView: View {
         return Group {
             if glassEnabled {
                 shape.fill(toolbarMaterial)
-                    .glassEffect(.regular, in: shape)
+                    .searxlyGlass(.regular, in: shape)
             } else {
                 shape.fill(AdaptiveChrome.fill(colorScheme, dark: 0.03, light: 0.025))
             }
@@ -542,46 +550,78 @@ struct PasswordVaultTabView: View {
     }
 
     private func entryRow(_ entry: PasswordVaultEntry) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(entry.username)
-                        .font(.body.weight(.medium))
-                    healthBadge(entry)
-                }
-                if let notes = entry.notes, !notes.isEmpty {
-                    Text(notes)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                if let lastUsed = entry.lastUsed {
-                    Text("Last used \(lastUsed.formatted(date: .abbreviated, time: .omitted))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            Spacer()
-
-            HStack(spacing: 4) {
-                actionButton("Fill", systemImage: "arrow.down.to.line") {
-                    fillEntry(entry)
-                }
-
-                actionButton("Copy", systemImage: "doc.on.doc") {
-                    if vault.copyPasswordToClipboard(for: entry.id) {
-                        flashStatus("Password copied — clears in 45s")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(entry.username)
+                            .font(.body.weight(.medium))
+                            .textSelection(.enabled)
+                        healthBadge(entry)
+                    }
+                    if let notes = entry.notes, !notes.isEmpty {
+                        Text(notes)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if let lastUsed = entry.lastUsed {
+                        Text("Last used \(lastUsed.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
                 }
 
-                actionButton("Edit", systemImage: "pencil") {
-                    editingEntry = entry
-                }
+                Spacer()
 
-                actionButton("Delete", systemImage: "trash", tint: .secondary) {
-                    entryToDelete = entry
+                HStack(spacing: 4) {
+                    actionButton("Fill this login", systemImage: "arrow.down.to.line") {
+                        fillEntry(entry)
+                    }
+
+                    actionButton("Copy username", systemImage: "person") {
+                        copyUsername(entry)
+                    }
+
+                    actionButton("Copy password", systemImage: "key") {
+                        if vault.copyPasswordToClipboard(for: entry.id) {
+                            flashStatus("Password copied — clears in 45s")
+                        }
+                    }
+
+                    actionButton(revealedEntryID == entry.id ? "Hide password" : "Reveal password",
+                                 systemImage: revealedEntryID == entry.id ? "eye.slash" : "eye") {
+                        toggleReveal(entry)
+                    }
+
+                    actionButton("Edit", systemImage: "pencil") {
+                        editingEntry = entry
+                    }
+
+                    actionButton("Delete", systemImage: "trash", tint: .secondary) {
+                        entryToDelete = entry
+                    }
                 }
+            }
+
+            if revealedEntryID == entry.id {
+                HStack(spacing: 8) {
+                    Text(revealedPassword.isEmpty ? "—" : revealedPassword)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Text("Hides automatically")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AdaptiveChrome.fill(colorScheme, dark: 0.05, light: 0.04),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .transition(.opacity)
             }
         }
         .padding(12)
@@ -627,6 +667,43 @@ struct PasswordVaultTabView: View {
         vault.markEntryUsed(id: entry.id)
         onFillLogin(entry.domain, entry.username, password)
         flashStatus("Filled \(entry.username)")
+    }
+
+    /// Copies the username. Not a secret, so it uses the normal pasteboard (no auto-clear), unlike
+    /// the password copy which routes through VaultClipboardManager.
+    private func copyUsername(_ entry: PasswordVaultEntry) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.username, forType: .string)
+        flashStatus("Username copied")
+    }
+
+    /// Toggles inline plaintext reveal for one entry. Reading the secret goes through the unlock-gated
+    /// `password(for:)`; the reveal auto-hides after 20s and whenever another entry is revealed.
+    private func toggleReveal(_ entry: PasswordVaultEntry) {
+        if revealedEntryID == entry.id { hideRevealedPassword(); return }
+        guard let password = vault.password(for: entry.id) else {
+            flashStatus("Could not read password")
+            return
+        }
+        withAnimation(.easeOut(duration: 0.15)) {
+            revealedEntryID = entry.id
+            revealedPassword = password
+        }
+        revealHideTask?.cancel()
+        revealHideTask = Task {
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { hideRevealedPassword() }
+        }
+    }
+
+    private func hideRevealedPassword() {
+        revealHideTask?.cancel()
+        revealHideTask = nil
+        withAnimation(.easeOut(duration: 0.15)) {
+            revealedEntryID = nil
+            revealedPassword = ""
+        }
     }
 
     private func flashStatus(_ message: String) {

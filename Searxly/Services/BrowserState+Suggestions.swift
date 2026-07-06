@@ -16,11 +16,34 @@ extension BrowserState {
     func dismissSuggestionsPanel() {
         suggestionsRefreshTask?.cancel()
         suggestionsRefreshTask = nil
+        suggestionBlurDismissTask?.cancel()
+        suggestionBlurDismissTask = nil
         suggestionsRequestGeneration &+= 1
         suggestionsPanelSuppressed = true
         suggestions = []
         suggestionsSelectedIndex = 0
         suggestionsIsLoading = false
+    }
+
+    /// Drives the suggestions panel off address-bar focus. On focus, refreshes (if there's a query). On
+    /// blur, dismisses after a short grace period — long enough for a click that landed on a suggestion
+    /// (and thereby blurred the field) to run its action before the panel closes. Cancelled if focus
+    /// returns or a selection/submit dismisses sooner.
+    func setAddressBarFocused(_ focused: Bool) {
+        addressBarFocused = focused
+        suggestionBlurDismissTask?.cancel()
+        suggestionBlurDismissTask = nil
+
+        if focused {
+            let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { scheduleSuggestionsRefresh(userInitiated: false) }
+        } else {
+            suggestionBlurDismissTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(200))
+                guard let self, !Task.isCancelled, !self.addressBarFocused else { return }
+                self.dismissSuggestionsPanel()
+            }
+        }
     }
 
     /// Schedules a debounced refresh (local sites + remote search autocomplete).
@@ -76,10 +99,14 @@ extension BrowserState {
         let generation = suggestionsRequestGeneration
         suggestionsIsLoading = true
 
+        // Speculative SERP prefetch: start the real search once the query settles, so Enter
+        // lands on results that are already loading (or loaded). Debounced internally.
+        SpeculativeSearchPrefetcher.shared.schedule(query: trimmed, instances: searxInstances)
+
         let remoteQueries = await SearchAutocompleteService.fetchSearchCompletions(
             query: trimmed,
             instances: searxInstances,
-            localeCode: Localization.currentLanguage.code
+            localeCode: Localization.searchLanguageCode
         )
 
         guard generation == suggestionsRequestGeneration,

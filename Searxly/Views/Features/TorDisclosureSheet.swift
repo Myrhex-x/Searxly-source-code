@@ -24,9 +24,9 @@ struct TorDisclosureSheet: View {
                         .font(.system(size: 21, weight: .semibold))
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Browsing over Tor")
+                    Text("Browse onion sites over Tor?")
                         .font(.system(size: 17, weight: .bold))
-                    Text("Before you open your first .onion site")
+                    Text("Onion sites need Tor, which is currently off")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -65,7 +65,7 @@ struct TorDisclosureSheet: View {
                 .keyboardShortcut(.cancelAction)
 
                 Button(action: onContinue) {
-                    Text("Continue")
+                    Text("Enable Tor")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color(nsColor: .windowBackgroundColor))
                         .frame(maxWidth: .infinity)

@@ -1,0 +1,23 @@
+[Unit]
+Description=Searxly SearXNG (native)
+After=network.target
+
+[Service]
+User=searxng
+Group=searxng
+WorkingDirectory=/opt/searxng/searxng-src
+Environment=SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+Environment=SEARXNG_BIND_ADDRESS=127.0.0.1
+Environment=SEARXNG_PORT=8080
+ExecStart=/opt/searxng/venv/bin/python -m searx.webapp
+Restart=on-failure
+RestartSec=3
+
+# Hardening — this is a content-fetching service on a sensitive box, so keep it boxed in.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

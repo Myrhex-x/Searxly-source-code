@@ -39,7 +39,10 @@ struct AppearanceSettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            SettingsSection(title: "Effects") {
+            SettingsSection(
+                title: "Effects",
+                footer: "Reduce liquid glass also switches the floating tab sidebar to the classic flat, edge-to-edge look."
+            ) {
                 SettingsToggleRow(
                     title: Localization.string("reduce_liquid_glass"),
                     description: Localization.string("reduce_liquid_glass_description"),
@@ -111,14 +114,14 @@ private struct AppearanceModeCard: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(
                         isSelected
-                            ? Color.white.opacity(0.12)
-                            : (isHovering ? Color.white.opacity(0.05) : Color.white.opacity(0.025))
+                            ? SettingsTheme.fillStrong
+                            : (isHovering ? SettingsTheme.fillSubtle : SettingsTheme.fillFaint)
                     )
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(
-                        isSelected ? Color.white.opacity(0.7) : Color.white.opacity(0.1),
+                        isSelected ? SettingsTheme.textPrimary.opacity(0.7) : SettingsTheme.hairline,
                         lineWidth: isSelected ? 1.5 : 1
                     )
             )

@@ -23,6 +23,7 @@ enum AgenticTools {
     #if canImport(FoundationModels)
     /// Build the current (exactly two) tools bound to the live private implementations
     /// provided by the caller (ContentView → BrowserState closures + SearXNGService).
+    @available(macOS 26.0, *)
     static func makeCurrent(
         webSearch: @escaping @Sendable (String) async -> String,
         openWebsite: @escaping @Sendable (String) async -> String,

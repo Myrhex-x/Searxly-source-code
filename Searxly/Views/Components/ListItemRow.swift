@@ -66,8 +66,8 @@ struct ListItemRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(rowBackground)
-        .glassEffect(
-            glassEnabled && isHovering ? .regular.interactive() : .clear,
+        .searxlyGlass(
+            glassEnabled && isHovering ? .interactive : .clear,
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
         .overlay(

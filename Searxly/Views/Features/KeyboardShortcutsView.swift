@@ -43,6 +43,7 @@ struct KeyboardShortcutsView: View {
                         row("⌃ ⇥",       "Next Tab")
                         row("⌃ ⇧ ⇥",    "Previous Tab")
                         row("⌘ 1 – 9",   "Jump to Tab by Position")
+                        row("⌘ S",       "Toggle Sidebar")
                         row("⌘ L",       "Focus Address Bar")
                         row("⌘ R",       "Reload Page")
                         row("⌘ .",       "Stop Loading")
@@ -53,6 +54,7 @@ struct KeyboardShortcutsView: View {
                     section("Page") {
                         row("⌘ F",        "Find in Page")
                         row("⌘ D",        "Bookmark This Page")
+                        row("⌘ P",        "Print Page")
                         row("⌘ +",        "Zoom In")
                         row("⌘ –",        "Zoom Out")
                         row("⌘ 0",        "Reset Zoom")

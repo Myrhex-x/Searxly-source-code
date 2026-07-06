@@ -1,0 +1,31 @@
+//
+//  ExtensionFeatures.swift
+//  Searxly
+//
+//  Feature flags for Lane A (real WebExtensions). Kept separate so the engine can be wired into the live
+//  browser while staying OFF for normal users until the curated gallery + permission UI ship.
+//
+
+import Foundation
+
+enum ExtensionFeatures {
+    private static let laneAKey = "extLaneAEnabled"
+
+    /// RELEASE KILL SWITCH for the whole Extensions program — Lane A (WebExtensions), Lane B
+    /// (userscripts), and every UI entry point (Settings pane, ☰ menu row, app-menu command,
+    /// marketplace tab, restored Extensions tabs). The program is still in development and must not
+    /// ship. While `false` the managers no-op, nothing is ever injected or attached, and the feature
+    /// is invisible in the UI. Flip to `true` when extensions are ready to release.
+    static let programEnabled = false
+
+    /// Master flag for Lane A (the real `WKWebExtension` engine). **Default OFF.**
+    ///
+    /// While off, the shared `WKWebExtensionController` is never created and is never attached to any
+    /// webview, so Lane A has zero effect on normal browsing. Toggled in Developer Mode during bring-up;
+    /// will be replaced by the curated-gallery install state once that ships. Lane B userscripts are
+    /// independent of this flag. Always false while `programEnabled` is off.
+    static var laneAEnabled: Bool {
+        get { programEnabled && UserDefaults.standard.bool(forKey: laneAKey) }
+        set { UserDefaults.standard.set(newValue, forKey: laneAKey) }
+    }
+}

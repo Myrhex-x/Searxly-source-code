@@ -39,7 +39,7 @@ struct DeleteWalletSheet: View {
             .padding(.top, 24)
 
             Text("Delete this wallet?")
-                .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
+                .font(.system(size: 18, weight: .bold)).foregroundStyle(WalletTheme.textPrimary)
 
             // What happens
             VStack(alignment: .leading, spacing: 10) {
@@ -55,9 +55,9 @@ struct DeleteWalletSheet: View {
             Button { backedUp.toggle() } label: {
                 HStack(spacing: 10) {
                     Image(systemName: backedUp ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 16)).foregroundStyle(backedUp ? .white : WalletTheme.textTertiary)
+                        .font(.system(size: 16)).foregroundStyle(backedUp ? WalletTheme.textPrimary : WalletTheme.textTertiary)
                     Text("I've written down my 12-word recovery phrase")
-                        .font(.system(size: 12)).foregroundStyle(.white)
+                        .font(.system(size: 12)).foregroundStyle(WalletTheme.textPrimary)
                         .multilineTextAlignment(.leading)
                     Spacer()
                 }
@@ -91,7 +91,7 @@ struct DeleteWalletSheet: View {
                 } label: {
                     Text(secondsLeft > 0 ? "Delete (\(secondsLeft))" : "Delete Wallet")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(canDelete ? .white : WalletTheme.textTertiary)
+                        .foregroundStyle(canDelete ? WalletTheme.textPrimary : WalletTheme.textTertiary)
                         .frame(maxWidth: .infinity).padding(.vertical, 10)
                         .background(canDelete ? Color(red: 0.85, green: 0.25, blue: 0.25) : WalletTheme.surfaceStrong,
                                     in: RoundedRectangle(cornerRadius: 10))
@@ -103,7 +103,7 @@ struct DeleteWalletSheet: View {
         }
         .frame(width: 380)
         .background(WalletTheme.canvas)
-        .preferredColorScheme(.dark)
+
         .onReceive(ticker) { _ in if secondsLeft > 0 { secondsLeft -= 1 } }
     }
 

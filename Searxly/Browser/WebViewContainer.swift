@@ -23,6 +23,57 @@ final class WebViewContainer: NSView {
 
     private var stabilizationWorkItem: DispatchWorkItem?
 
+    // MARK: - Link-hover status strip (Safari-style "where this link goes")
+    //
+    // Implemented as an AppKit subview *above* the WKWebView rather than a SwiftUI overlay: a
+    // WKWebView is a heavyweight NSView that composites above sibling SwiftUI content, so a SwiftUI
+    // overlay would be hidden behind it. This subview is added after the webView, so it draws on top.
+    // Driven directly from the linkHover message handler via showHoverURL(_:).
+
+    private lazy var hoverLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingMiddle
+        label.drawsBackground = true
+        label.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.95)
+        label.isBezeled = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.wantsLayer = true
+        label.layer?.cornerRadius = 5
+        label.layer?.borderWidth = 0.5
+        label.layer?.borderColor = NSColor.separatorColor.cgColor
+        label.layer?.masksToBounds = true
+        label.isHidden = true
+        return label
+    }()
+
+    /// Shows (or hides, when empty) the destination of the link under the cursor, pinned bottom-left
+    /// above the page. Called on the main thread from the linkHover script-message handler.
+    func showHoverURL(_ url: String) {
+        guard !url.isEmpty else {
+            hoverLabel.isHidden = true
+            return
+        }
+        if hoverLabel.superview == nil {
+            addSubview(hoverLabel)   // added after webView ⇒ z-ordered above it
+        }
+        hoverLabel.stringValue = "  \(url)  "
+        hoverLabel.isHidden = false
+        layoutHoverLabel()
+    }
+
+    private func layoutHoverLabel() {
+        guard !hoverLabel.isHidden else { return }
+        hoverLabel.sizeToFit()
+        let maxWidth = min(bounds.width - 16, 560)
+        let width = min(hoverLabel.frame.width, maxWidth)
+        let height = hoverLabel.frame.height + 6
+        // Origin is bottom-left (this NSView is not flipped), so y = 8 sits just above the bottom edge.
+        hoverLabel.frame = NSRect(x: 8, y: 8, width: max(width, 24), height: height)
+    }
+
     init(webView: WKWebView) {
         self.webView = webView
         super.init(frame: .zero)
@@ -64,6 +115,9 @@ final class WebViewContainer: NSView {
         // Critical for responsive sites, canvas measurements, media queries, and SPAs
         // that snapshot window dimensions early.
         scheduleStabilization()
+
+        // Keep the hover strip pinned bottom-left as the pane resizes.
+        layoutHoverLabel()
     }
 
     override func viewDidMoveToWindow() {
@@ -124,80 +178,77 @@ final class WebViewContainer: NSView {
     }
 
     private func performImmediateStabilization() {
-        // Defensive JS: dispatch real resize events + aggressive but safe reflow tricks.
-        // The combination of resize + temporary width perturbation + offset reads helps
-        // force many canvas / flex / absolutely positioned / measurement-heavy pages
-        // (speedtest gauges, hero buttons, dashboards) to re-measure and re-center.
+        // The common case (virtually every site) only needs to be told its viewport changed — a single
+        // `resize` event. The page's own responsive CSS/JS handles the rest. This runs on every layout()/
+        // setFrameSize (≈ continuously during a window/sidebar drag), so keeping it cheap matters.
         //
-        // We also forcefully set html/body to 100% width + auto horizontal margins with
-        // !important. This ensures that any inner "centered" container the site uses
-        // (max-width + margin: 0 auto for the GO button / hero / server selector) can
-        // actually center itself inside the full available content pane width instead
-        // of appearing left-biased or stuck to the left edge of the web area.
+        // Only a small set of quirky, JS-measured single-page UIs (speedtest gauges etc.) need the heavy
+        // width-forcing + sub-pixel reflow perturbation. Forcing html/body width:100% !important on every
+        // site is both expensive (forced synchronous reflow) and risky (it can fight legitimate layouts),
+        // so we gate it behind a host allow-list instead of paying it everywhere.
         //
-        // CRITICAL: YouTube's player does its own complex responsive measurement + shadow DOM
-        // layout on first paint / during navigation within the watch page. The width forcing +
-        // subpixel nudge here (even without the early user script) has been observed to collapse
-        // the ytd-player / html5-video-container computed height to 0 while the underlying
-        // media element still successfully decodes and plays the *audio* track. Result: sound
-        // with no visible video. We therefore skip the style mutations + nudge for YT hosts.
-                // (Safer quality help lives in the YT-specific protector style + sizing hints in
-                // WebViewRepresentable.enterYouTubeSafeMode / ytCleanup.)
-        let js = """
-        (function() {
-            try {
-                const win = window;
-                const docEl = document.documentElement;
-                const body = document.body;
-                const h = (location.hostname || '').toLowerCase();
-                const isYT = h.includes('youtube.com') || h.includes('youtu.be');
+        // YouTube is excluded from the heavy path entirely: the width forcing + nudge has been observed to
+        // collapse the player's computed height to 0 (audio plays, video invisible). YT gets only the
+        // lightweight resize ping. (Quality help lives in WebViewRepresentable.enterYouTubeSafeMode.)
+        let host = (webView.url?.host ?? "").lowercased()
+        let needsAggressiveLayout = Self.aggressiveLayoutHostFragments.contains { host.contains($0) }
 
-                if (!isYT) {
-                    // Force the root containing blocks to the full pane width with !important.
-                    // This is the key for sites whose main test UI lives in a centered block.
-                    // If the body or html ended up with a left-biased or constrained width from
-                    // early measurement or our previous max-width rule, 'margin: auto' does nothing
-                    // useful and the GO button / labels appear too far left with empty space on the right.
-                    docEl.style.setProperty('width', '100%', 'important');
-                    if (body) {
-                        body.style.setProperty('width', '100%', 'important');
-                        body.style.setProperty('margin-left', 'auto', 'important');
-                        body.style.setProperty('margin-right', 'auto', 'important');
-                    }
-
-                    // Nudge trick: temporarily change a dimension by a fraction of a pixel then restore.
-                    // This often kicks lazy/RAF-based centering and measurement code that missed the first resize.
-                    const origWidth = docEl.style.width;
-                    const measured = win.innerWidth || docEl.clientWidth || 0;
-                    if (measured > 0) {
-                        docEl.style.width = (measured + 0.5) + 'px';
-                        // force
-                        void docEl.offsetWidth;
-                        if (body) void body.offsetWidth;
-                        docEl.style.width = origWidth || '';
-                        void docEl.offsetWidth;
-                    }
-                }
-
-                // Primary: tell the page the viewport changed. (Safe and useful for YT too.)
-                win.dispatchEvent(new Event('resize'));
-
-                // Secondary: some pages react to visualViewport.
-                if (win.visualViewport) {
-                    try { win.dispatchEvent(new Event('resize')); } catch (_) {}
-                }
-
-                // Force style recalc / layout.
-                void docEl.offsetWidth;
-                if (body) void body.offsetWidth;
-
-                // One more resize after the forcing + nudge.
-                win.dispatchEvent(new Event('resize'));
-            } catch (_) {
-                // Never let layout JS break the page or the host.
-            }
-        })();
-        """
+        let js = needsAggressiveLayout ? Self.aggressiveStabilizeJS : Self.lightResizeJS
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
+
+    // MARK: - Stabilization JS payloads
+
+    /// Hosts whose layout genuinely needs the aggressive width-forcing + reflow perturbation. These are
+    /// JS-measured, centered single-page UIs that latch a bad layout rect on first paint inside our
+    /// sidebar-constrained pane. Keep this list short — everything else uses `lightResizeJS`.
+    static let aggressiveLayoutHostFragments: [String] = ["speedtest.net", "speedtest.com"]
+
+    /// The cheap default: just notify the page its viewport changed. No style mutation, no forced reflow.
+    private static let lightResizeJS = """
+    (function(){
+        try {
+            window.dispatchEvent(new Event('resize'));
+            if (window.visualViewport) { try { window.dispatchEvent(new Event('resize')); } catch (_) {} }
+        } catch (_) {}
+    })();
+    """
+
+    /// The heavy treatment, reserved for `aggressiveLayoutHostFragments`. Forces the root blocks to the
+    /// full pane width + auto margins and does a sub-pixel width perturbation to kick lazy/RAF-based
+    /// centering and measurement code that missed the first resize.
+    private static let aggressiveStabilizeJS = """
+    (function() {
+        try {
+            const win = window;
+            const docEl = document.documentElement;
+            const body = document.body;
+
+            docEl.style.setProperty('width', '100%', 'important');
+            if (body) {
+                body.style.setProperty('width', '100%', 'important');
+                body.style.setProperty('margin-left', 'auto', 'important');
+                body.style.setProperty('margin-right', 'auto', 'important');
+            }
+
+            const origWidth = docEl.style.width;
+            const measured = win.innerWidth || docEl.clientWidth || 0;
+            if (measured > 0) {
+                docEl.style.width = (measured + 0.5) + 'px';
+                void docEl.offsetWidth;
+                if (body) void body.offsetWidth;
+                docEl.style.width = origWidth || '';
+                void docEl.offsetWidth;
+            }
+
+            win.dispatchEvent(new Event('resize'));
+            if (win.visualViewport) { try { win.dispatchEvent(new Event('resize')); } catch (_) {} }
+            void docEl.offsetWidth;
+            if (body) void body.offsetWidth;
+            win.dispatchEvent(new Event('resize'));
+        } catch (_) {
+            // Never let layout JS break the page or the host.
+        }
+    })();
+    """
 }

@@ -20,6 +20,8 @@ struct SwapQuote {
     let gas: String?                // 0x-computed gas limit (hex) — accurate for the swap route
     let feeBps: Int                 // Searxly fee applied to this quote, in basis points (for disclosure)
     let needsAllowanceTo: String?   // spender to approve (nil for native ETH sells)
+    var isV4: Bool = false          // true → native Uniswap v4 route (SEARXLY), not a 0x route
+    var permit2Spender: String? = nil  // v4 sells: the UniversalRouter to authorize via Permit2; else nil
 
     /// The disclosed Searxly fee as a percentage string, e.g. "0.8%".
     var feePercentText: String {
@@ -30,6 +32,19 @@ struct SwapQuote {
     var buyAmountDisplay: String { formatBase(buyAmountRaw, decimals: buyToken.decimals) }
     var minBuyAmountDisplay: String { formatBase(minBuyAmountRaw, decimals: buyToken.decimals) }
 
+    /// Buy amount as a Double — for fiat + exchange-rate display only (never for signing).
+    var buyAmountDouble: Double {
+        var v = 0.0
+        for b in buyAmountRaw { v = v * 256 + Double(b) }
+        return v / pow(10.0, Double(buyToken.decimals))
+    }
+
+    /// How many buy-tokens 1 sell-token buys, at this quote (for the "1 X ≈ Y" pricing row).
+    var unitPrice: Double {
+        let sell = (sellAmount as NSDecimalNumber).doubleValue
+        return sell > 0 ? buyAmountDouble / sell : 0
+    }
+
     private func formatBase(_ bytes: [UInt8], decimals: Int) -> String {
         var v = 0.0
         for b in bytes { v = v * 256 + Double(b) }
@@ -38,6 +53,24 @@ struct SwapQuote {
         if amt < 0.0001 { return String(format: "%.8f", amt) }
         return String(format: "%.6f", amt)
     }
+}
+
+/// A user-visible stage of swap execution, reported as the wallet works through the legs
+/// (a swap can be up to three transactions: ERC-20 approval → Permit2 authorization → swap,
+/// each waiting to confirm on-chain). Drives the progress UI in WalletSwapView.
+enum SwapStage: Equatable {
+    case checking               // pre-flight: gas balance + allowance reads
+    case approving(String)      // signing + broadcasting the ERC-20 approval for a symbol
+    case authorizing            // Permit2 → UniversalRouter authorization (v4 sells only)
+    case confirmingApproval     // an approval is broadcast; waiting for it to mine
+    case submitting             // signing + broadcasting the swap itself
+}
+
+/// Stages of a single-transaction flow (send / revoke): fetching chain params (nonce, fees, gas
+/// estimate), then signing + broadcasting. Multi-leg swaps use `SwapStage` instead.
+enum SendStage: Equatable {
+    case preparing
+    case submitting
 }
 
 enum WalletSwap {
@@ -63,17 +96,34 @@ enum WalletSwap {
     /// once WITHOUT the Searxly fee — some thin-liquidity pairs (e.g. SEARXLY) only quote without the
     /// extra fee leg, so the user can still swap (Searxly just forgoes its fee on that trade).
     static func quote(sell: WalletToken, buy: WalletToken, sellAmount: Decimal, taker: String,
-                      chainId: Int = WalletConfig.baseChainID) async -> Result<SwapQuote, SwapError> {
+                      chainId: Int = WalletConfig.baseChainID,
+                      feeBps: Int = WalletConfig.swapFeeBps) async -> Result<SwapQuote, SwapError> {
+        // Native Uniswap v4 for ETH/WETH↔SEARXLY: no API key, no gateway, fully on-chain. The pool is a
+        // Doppler v4 pool, priced via the V4 Quoter and executed through the UniversalRouter (see
+        // UniswapV4). On any failure (e.g. a transient RPC miss) we fall through to the 0x path below,
+        // so SEARXLY stays swappable either way.
+        if WalletFeatures.swaps, chainId == WalletConfig.baseChainID, UniswapV4.supports(sell: sell, buy: buy),
+           let v4 = await UniswapV4.quoteAndBuild(sell: sell, buy: buy, sellAmount: sellAmount,
+                                                  taker: taker, rpc: WalletConfig.defaultRPCURLs.first ?? "") {
+            return .success(SwapQuote(
+                sellToken: sell, buyToken: buy, sellAmount: sellAmount,
+                buyAmountRaw: v4.amountOut, minBuyAmountRaw: v4.minAmountOut,
+                to: v4.to, data: v4.dataHex, value: v4.valueHex,
+                gas: "0x" + String(v4.gas, radix: 16), feeBps: 0, needsAllowanceTo: nil,
+                isV4: true,
+                permit2Spender: v4.permit2Token == nil ? nil : WalletConfig.universalRouterV4))
+        }
+
         // No Searxly fee on ANY swap that involves SEARXLY — buying it, selling it, anything. A
         // deliberate incentive to use the token (the swap UI then discloses a 0% fee).
         let waiveFee = isSearxly(sell) || isSearxly(buy)
 
         let primary = await fetchQuote(sell: sell, buy: buy, sellAmount: sellAmount,
-                                       taker: taker, chainId: chainId, applyFee: !waiveFee)
+                                       taker: taker, chainId: chainId, applyFee: !waiveFee, feeBps: feeBps)
         // If a fee'd quote can't be routed, retry once without the fee (helps thin-liquidity pairs).
         if !waiveFee, case .failure(.badResponse(let message)) = primary, isNoRoute(message) {
             let noFee = await fetchQuote(sell: sell, buy: buy, sellAmount: sellAmount,
-                                         taker: taker, chainId: chainId, applyFee: false)
+                                         taker: taker, chainId: chainId, applyFee: false, feeBps: feeBps)
             if case .success = noFee { return noFee }
         }
         return primary
@@ -93,7 +143,8 @@ enum WalletSwap {
     }
 
     private static func fetchQuote(sell: WalletToken, buy: WalletToken, sellAmount: Decimal, taker: String,
-                                   chainId: Int, applyFee: Bool) async -> Result<SwapQuote, SwapError> {
+                                   chainId: Int, applyFee: Bool,
+                                   feeBps: Int = WalletConfig.swapFeeBps) async -> Result<SwapQuote, SwapError> {
         guard WalletFeatures.swaps else { return .failure(.notConfigured) }
         // Prefer the user's own 0x key (talks to 0x directly). Otherwise route through the Searxly
         // gateway, which holds the key server-side — so swaps work with no per-user key.
@@ -115,7 +166,7 @@ enum WalletSwap {
             // so `buyAmount`/`minBuyAmount` come back already net of the fee.
             items += [
                 .init(name: "swapFeeRecipient", value: WalletConfig.swapFeeRecipient),
-                .init(name: "swapFeeBps", value: String(WalletConfig.swapFeeBps)),
+                .init(name: "swapFeeBps", value: String(feeBps)),
                 .init(name: "swapFeeToken", value: token0xAddress(buy)),
             ]
         }
@@ -133,6 +184,10 @@ enum WalletSwap {
         }
         req.timeoutInterval = 20
 
+        // Fail closed in Maximum Privacy when protection is down: a swap quote carries the taker
+        // address, so it must not leave from the user's real IP (Tor mode / VPN not yet up). Native
+        // egress kill switch, same as search. Inert outside Maximum.
+        guard PrivacyGate.egressAllowedFast else { return .failure(.badResponse("Network error")) }
         guard let (data, _) = try? await URLSession.shared.data(for: req),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .failure(.badResponse("Network error"))
@@ -166,7 +221,7 @@ enum WalletSwap {
             buyAmountRaw: WeiConverter.decimalStringToBytes(buyAmount),
             minBuyAmountRaw: WeiConverter.decimalStringToBytes(minBuy),
             to: to, data: callData, value: value, gas: gas,
-            feeBps: applyFee ? WalletConfig.swapFeeBps : 0, needsAllowanceTo: spender))
+            feeBps: applyFee ? feeBps : 0, needsAllowanceTo: spender))
     }
 
     /// 0x returns `value` as a decimal string; our tx builder wants hex.

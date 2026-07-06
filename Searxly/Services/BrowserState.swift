@@ -6,7 +6,7 @@
 //  Central @Observable owner for browser UI state, search, tabs, persistence coordination,
 //  and action methods. ContentView is now a thin layout/orchestration layer.
 //  Created as a new file (per guidance to prevent bugs in monolithic views).
-//  Follows patterns from LocalSearxngManager, PrivacyManager, WireGuardManager, etc.
+//  Follows patterns from LocalSearxngManager, PrivacyManager, SystemVPNManager, etc.
 //
 
 import Foundation
@@ -26,6 +26,29 @@ final class BrowserState {
     var lastEffectiveSearchQuery: String = ""
     var selectedImageForPreview: SearXNGResult? = nil
 
+    // MARK: - News SERP controls (news category only)
+    /// SearXNG `time_range` for the news tab: nil (any time), "day", "week", "month", or "year".
+    /// A server-side refetch — bing_news honours it; freshness-first sources return their latest set.
+    var newsTimeRange: String? = nil
+    /// Latest-first (by parsed publish time) vs. Top (relevance). A pure view-layer sort over the
+    /// same results, so toggling is instant and doesn't refetch or lose scroll position.
+    var newsSortByRecency: Bool = false
+    /// When the on-screen news results were last fetched — drives the "Updated Xm ago" affordance.
+    var newsLastRefreshed: Date? = nil
+
+    /// Fresh news fetched in parallel during an "All" search, used to inject a Google-style "Top
+    /// stories" module into the general results. Empty unless the current All query has recent news.
+    var allTabNewsResults: [SearXNGResult] = []
+    /// The in-flight parallel news fetch for the All tab (cancelled when the query/category changes).
+    var allTabNewsTask: Task<Void, Never>? = nil
+
+    /// Live auto-refresh (news + Latest only): stories found by background polling that are newer than
+    /// what's on screen, held here until the user taps the "N new stories" pill to merge them in — we
+    /// never yank content out from under a reader.
+    var pendingNewsStories: [SearXNGResult] = []
+    /// The recurring background poll task; runs only while the news tab is in Latest mode.
+    var newsAutoRefreshTask: Task<Void, Never>? = nil
+
     // Pagination (infinite scroll for images/videos + optional web load-more)
     var searchPageNo: Int = 1
     var isLoadingMoreResults: Bool = false
@@ -44,6 +67,10 @@ final class BrowserState {
     var knowledgePanelState: KnowledgePanelDisplayState = .hidden
     var knowledgePanelEnabled: Bool = Persistence.knowledgePanelEnabled()
     var knowledgePanelTask: Task<Void, Never>?
+    /// Result of the in-flight panel resolution, which runs in parallel with the search fetch and may
+    /// finish before it. Held here until both the resolution and the search settle, then committed to
+    /// `knowledgePanelState` (gated on the search actually returning results). See SearchCoordinator.
+    var knowledgePanelResolved: (query: String, content: KnowledgePanelContent?)?
 
     // Transient highlight for AI citations (or future "jump to result" actions).
     // The SearchResultCard observes this (via passed isHighlighted) to give a temporary emphasis
@@ -90,11 +117,11 @@ final class BrowserState {
         }
         return tab.navigationHistory.canGoForward
     }
-    var isReaderMode = false
     var showingFindBar = false
     var findSearchTerm = ""
 
-    // Reader sheet content (populated by extraction from toolbar or WebView callback)
+    // Reader mode (distraction-free view of the current page's extracted article).
+    var isReaderMode = false
     var readerTitle: String = ""
     var readerHTML: String = ""
     var showingReaderSheet: Bool = false
@@ -130,6 +157,14 @@ final class BrowserState {
     var history: [HistoryItem] = []
     var bookmarks: [BookmarkItem] = []
 
+    /// User-created sidebar categories for organizing tabs (see TabCategory). Capped at
+    /// `maxCustomCategories`. Persisted in AppData; per-tab membership lives on BrowserTab.categoryID.
+    var customTabCategories: [TabCategory] = []
+
+    /// Maximum number of custom sidebar categories a user can create (on top of the built-in
+    /// PINNED / TABS / UTILITIES / TOR groups).
+    nonisolated static let maxCustomCategories = 3
+
     // MARK: - Address bar suggestions (local sites + remote search autocomplete)
     var suggestions: [AddressSuggestion] = []
     var suggestionsSelectedIndex: Int = 0
@@ -140,6 +175,13 @@ final class BrowserState {
     var suggestionsRefreshTask: Task<Void, Never>?
     var suggestionsRequestGeneration: UInt = 0
     var hasHealedCrossedHistoryTitles = false
+
+    /// Whether the address bar currently has keyboard focus. Mirrors ContentView's @FocusState so the
+    /// suggestions panel's lifecycle (incl. the blur grace period that lets a suggestion click land) can
+    /// live in this @Observable model rather than being torn down the instant focus is lost.
+    var addressBarFocused = false
+    /// Pending "dismiss suggestions shortly after blur" work, cancelled if focus returns.
+    var suggestionBlurDismissTask: Task<Void, Never>?
 
     /// Whether the suggestions dropdown should render (respects user dismiss + loading state).
     var shouldShowSuggestionsPanel: Bool {
@@ -157,9 +199,19 @@ final class BrowserState {
     var showingDownloads = false
     var showingKeyboardShortcuts = false
     var showingClearData = false
+    /// Destructive confirmation for the Panic Wipe menu command (⌘⌥⇧⌫). The actual wipe
+    /// runs in performPanicWipe() once the user confirms.
+    var showingPanicWipeConfirm = false
     var showingSettings = false   // also set from sidebar / badges
     var settingsInitialCategory: SettingsCategory = .appearance
     var showingWallet = false
+
+    /// Spotlight-style command palette (⌘K): fuzzy quick-jump across open tabs, bookmarks, history,
+    /// plus quick actions. Presented as a centered floating overlay in ContentView.
+    var showingCommandPalette = false
+
+    /// "Import data from other browsers" hub sheet (bookmarks HTML / passwords CSV).
+    var showingImportData = false
 
     /// When true, the main content area shows a full-page history manager (all entries, delete, filter, etc.)
     /// instead of web content, search results, or home.
@@ -273,6 +325,66 @@ final class BrowserState {
             name: .searxlyAskAISelection,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppPrivacyModeChanged),
+            name: PrivacyManager.appPrivacyModeChangedNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMaxProtectionChanged),
+            name: PrivacyManager.maxProtectionChangedNotification,
+            object: nil
+        )
+    }
+
+    /// App privacy mode changed (e.g. into/out of Maximum Privacy). Per-mode webview configuration —
+    /// Tor SOCKS routing and the Strict fingerprint cluster — is decided at creation in WebViewFactory,
+    /// so existing tabs must be rebuilt to pick it up. Reuse the sanctioned hibernate→wakeUp recreate
+    /// path: tear every web tab down, then wake the visible one (background tabs wake on next selection
+    /// via TabCoordinator). The kill switch already guards navigations in the meantime.
+    /// The last app-privacy mode we reacted to — lets us detect the TRANSITION *into* Maximum (which
+    /// closes all tabs) versus any other mode change (rebuild only). Seeded to the current mode so a
+    /// launch already-in-Maximum doesn't nuke a restored session.
+    private var lastReactedPrivacyMode: AppPrivacyMode = PrivacyManager.shared.appPrivacyMode
+
+    @objc func handleAppPrivacyModeChanged() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let mode = PrivacyManager.shared.appPrivacyMode
+            let enteringMaximum = (mode == .maximum && self.lastReactedPrivacyMode != .maximum)
+            self.lastReactedPrivacyMode = mode
+
+            if enteringMaximum {
+                // Entering Maximum Privacy starts from a clean slate: close every current tab and open
+                // one fresh tab. Reloading old tabs isn't enough — the strict fingerprint farbling +
+                // WebRTC IP-leak block only apply to tabs created AFTER the mode engages, and this also
+                // drops whatever you were viewing under your real IP out of the session.
+                self.closeAllTabs()
+            } else {
+                // Any other change (leaving Maximum, normal↔encrypted): rebuild open web tabs so the
+                // strict hardening is added/removed correctly, without discarding them.
+                for tab in self.tabs where tab.kind == .web {
+                    tab.hibernate()
+                }
+                self.selectedTab?.wakeUp()
+            }
+        }
+    }
+
+    /// The protection network (Tor vs VPN) inside Maximum Privacy changed.
+    /// Web routing config (per-tab SOCKS for Tor mode vs none for VPN) is baked at WebView creation,
+    /// so rebuild tabs so the correct proxy / hardening applies. No-op if not currently in Maximum.
+    @objc func handleMaxProtectionChanged() {
+        guard PrivacyManager.shared.appPrivacyMode == .maximum else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            for tab in self.tabs where tab.kind == .web {
+                tab.hibernate()
+            }
+            self.selectedTab?.wakeUp()
+        }
     }
 
     @objc func handleAskAISelectionNote(_ note: Notification) {
@@ -288,6 +400,7 @@ final class BrowserState {
     /// Routes a page-menu request: "Ask" opens the full chat; "Explain"/"Summarize"/"Summarize page"
     /// use the lightweight Siri-style quick-answer popup instead.
     func handleAskAISelection(text: String, actionRaw: String, title: String = "", url: String = "") {
+        guard AIFeatures.programEnabled else { return }
         let action = AIChatSeed.Action(rawValue: actionRaw) ?? .ask
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -341,9 +454,16 @@ final class BrowserState {
 // Passwords vault special tab notification (preserved non-crypto feature).
 extension Notification.Name {
     static let showPasswordsVaultTabRequested = Notification.Name("Searxly.ShowPasswordsVaultTabRequested")
+    /// Opens the full-page Extensions marketplace (TabKind.extensions).
+    static let showExtensionsTabRequested = Notification.Name("Searxly.ShowExtensionsTabRequested")
     /// Posted by the navigation delegate when a normal page advertises an `Onion-Location` mirror.
     /// userInfo: ["onion": <onion URL string>, "host": <page host>].
     static let onionLocationDetected = Notification.Name("Searxly.OnionLocationDetected")
+    /// Posted when an onion tab fails to load — the onion host is then suppressed from future offers.
+    /// userInfo: ["host": <onion host>].
+    static let onionUnreachable = Notification.Name("Searxly.OnionUnreachable")
+    /// Posted when Tor is switched off — open onion tabs reload to a "Tor is off" page.
+    static let torDisabled = Notification.Name("Searxly.TorDisabled")
 }
 
 /// A detected `.onion` mirror offer for the page currently shown in a normal tab.

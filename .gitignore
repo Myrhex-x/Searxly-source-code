@@ -78,7 +78,7 @@ scripts/regenerate_celebrity_faces.py
 scripts/add_celebrity_face.sh
 
 # Third-party NSFW domain blocklist — kept private (attribution/redistribution)
-Searxly/ContentSafety/
+SearxlyShared/ContentSafety/
 
 # ── Secrets & signing material (never commit) ──────────────────────────────────
 # The Searxly gateway app token is supplied per-build via the SEARXLY_GATEWAY_APP_TOKEN
@@ -99,3 +99,6 @@ gateway/
 # Local editor tooling + Xcode caches (not part of the source)
 .claude/
 27.0-27A5194q/
+
+# ── iOS port of the private ad-block engine (same policy as Searxly/AdBlocker/) ──
+SearxlyiOS/Shields/AdBlock/

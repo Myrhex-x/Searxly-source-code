@@ -48,8 +48,21 @@ final class PrivacyManager {
     /// Whether local data (AppData.json) should be encrypted at rest using CryptoKit + Keychain.
     private(set) var dataEncryptionEnabled: Bool = false
 
-    /// Base64 recovery code from the most recent first-time encryption enable (same session).
-    private(set) var lastEncryptionRecoveryCode: String?
+    /// App-wide privacy posture (Normal / Encrypted / Maximum). Maximum engages the fail-closed kill
+    /// switch (PrivacyGate) and the Strict fingerprint cluster injected by WebViewFactory. Both of
+    /// those read this value at runtime, so toggling the mode is what turns them on/off.
+    private(set) var appPrivacyMode: AppPrivacyMode = .normal
+
+    /// Which network Maximum Privacy enforces (Searxly VPN or Tor). Only meaningful in .maximum.
+    private(set) var maxProtection: MaxProtection = .tor
+
+    /// Posted (main thread) whenever appPrivacyMode changes, so open tabs can refresh their webviews
+    /// and pick up per-mode script/UA injection. Observed by BrowserState / TabCoordinator.
+    static let appPrivacyModeChangedNotification = Notification.Name("Searxly.AppPrivacyModeChanged")
+
+    /// Posted when the Maximum-Privacy protection network choice (VPN ↔ Tor) changes, so PrivacyGate
+    /// can bring the newly chosen network up and re-route the local SearXNG's upstream traffic.
+    static let maxProtectionChangedNotification = Notification.Name("Searxly.MaxProtectionChanged")
 
     private init() {
         // Ensure any old UserDefaults value has been moved into the JSON.
@@ -60,6 +73,8 @@ final class PrivacyManager {
         let persistedData = Persistence.load()
         historyEnabled = persistedData.historyEnabled
         defaultNewTabsToPrivate = persistedData.defaultNewTabsToPrivate
+        appPrivacyMode = persistedData.appPrivacyMode
+        maxProtection = persistedData.maxProtection
 
         // Load encryption preference (stored in a small metadata key for now).
         dataEncryptionEnabled = EncryptedDataStore.isEncryptionEnabled()
@@ -130,6 +145,56 @@ final class PrivacyManager {
         Persistence.setDefaultNewTabsToPrivate(enabled)
     }
 
+    // MARK: - App Privacy Mode (Normal / Encrypted / Maximum ladder)
+
+    /// Sets the app-wide privacy mode and applies the corresponding posture.
+    ///
+    /// Ladder (each rung is a superset of the one below):
+    ///   - `.normal`    → no extra hardening (the always-on Tier-1 in WebViewFactory still applies).
+    ///   - `.encrypted` → local at-rest lockdown via `enableSecureMacPreset()`.
+    ///   - `.maximum`   → encrypted lockdown PLUS strict web privacy (`enableStrictPrivacyMode()`).
+    ///                    The fail-closed kill switch (PrivacyGate) and the Strict fingerprint cluster
+    ///                    (WebViewFactory) read `appPrivacyMode` at runtime, so they engage automatically.
+    ///
+    /// Note: moving DOWN a rung never auto-disables at-rest encryption or App Lock — undoing those is
+    /// potentially destructive (decrypting data) and is left to the explicit encryption controls. A
+    /// lower mode only disengages the web-layer protections (kill switch + farbling), which are keyed
+    /// off this value at read time. Posts `appPrivacyModeChangedNotification` so tabs refresh.
+    func setAppPrivacyMode(_ mode: AppPrivacyMode) {
+        guard mode != appPrivacyMode else { return }
+        switch mode {
+        case .normal:
+            break
+        case .encrypted:
+            enableSecureMacPreset()
+        case .maximum:
+            enableSecureMacPreset()
+            enableStrictPrivacyMode()
+        }
+        markAppPrivacyMode(mode)
+    }
+
+    /// Records the persistent mode and engages the kill switch / fingerprint farbling / header pill
+    /// WITHOUT applying the ladder presets — for callers (e.g. onboarding) that already applied their
+    /// own hardening (possibly with different options, like App Lock off). Posts the change notification
+    /// so open tabs rebuild and PrivacyGate updates.
+    func markAppPrivacyMode(_ mode: AppPrivacyMode) {
+        guard mode != appPrivacyMode else { return }
+        appPrivacyMode = mode
+        Persistence.setAppPrivacyMode(mode)
+        NotificationCenter.default.post(name: Self.appPrivacyModeChangedNotification, object: nil)
+        Log.privacy.info("PrivacyManager: appPrivacyMode set to \(mode.rawValue, privacy: .public)")
+    }
+
+    /// Sets which network Maximum Privacy enforces (Searxly VPN or Tor) and persists it.
+    func setMaxProtection(_ protection: MaxProtection) {
+        guard protection != maxProtection else { return }
+        maxProtection = protection
+        Persistence.setMaxProtection(protection)
+        NotificationCenter.default.post(name: Self.maxProtectionChangedNotification, object: nil)
+        Log.privacy.info("PrivacyManager: maxProtection set to \(protection.rawValue, privacy: .public)")
+    }
+
     /// Helper used by "New Tab" command: returns the mode the user wants for regular new tabs.
     static func preferredNewTabMode() -> TabPrivacyMode {
         return shared.defaultNewTabsToPrivate ? .privateEphemeral : .standard
@@ -151,9 +216,6 @@ final class PrivacyManager {
 
     private func _performSetDataEncryptionEnabled(_ enabled: Bool) {
         let previousState = dataEncryptionEnabled
-        if !enabled {
-            lastEncryptionRecoveryCode = nil
-        }
         dataEncryptionEnabled = enabled
         EncryptedDataStore.setEncryptionEnabled(enabled)
 
@@ -167,13 +229,10 @@ final class PrivacyManager {
                     // Revert the flag to avoid leaving the user in a broken state
                     dataEncryptionEnabled = false
                     EncryptedDataStore.setEncryptionEnabled(false)
-                    lastEncryptionRecoveryCode = nil
                     return
                 }
-                lastEncryptionRecoveryCode = newKey.base64EncodedString()
                 Log.security.notice("PrivacyManager: generated and stored new encryption key for first-time encryption")
             } else {
-                lastEncryptionRecoveryCode = KeychainManager.exportKeyAsRecoveryCode()
                 Log.security.info("PrivacyManager: using existing encryption key")
             }
 
@@ -273,12 +332,13 @@ final class PrivacyManager {
         return result
     }
 
-    /// Copies the recovery code to the pasteboard after a successful Secure Mac preset.
+    /// Copies the encryption recovery code to the pasteboard. Routed through the vault's
+    /// clipboard manager so the code is marked concealed (skipped by clipboard history /
+    /// Universal Clipboard) and auto-clears after its 45-second window.
     @discardableResult
-    func exportSecureMacRecoveryCodeToClipboard() -> Bool {
+    func copyEncryptionRecoveryCodeToClipboard() -> Bool {
         guard let code = exportEncryptionRecoveryCode() else { return false }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
+        VaultClipboardManager.shared.copySensitive(code)
         return true
     }
 
@@ -318,11 +378,9 @@ final class PrivacyManager {
     }
 
     /// Returns a base64 recovery code for the current encryption key (if one exists).
-    /// This is for Phase 2 key recovery support.
+    /// Read from the Keychain on demand every time — we deliberately keep no long-lived
+    /// String copy of key material in the heap.
     func exportEncryptionRecoveryCode() -> String? {
-        if let lastEncryptionRecoveryCode {
-            return lastEncryptionRecoveryCode
-        }
         return KeychainManager.exportKeyAsRecoveryCode()
     }
 
@@ -379,6 +437,8 @@ final class PrivacyManager {
 
         do {
             try content.write(to: url, atomically: true, encoding: .utf8)
+            // Owner-only permissions — this file is the decryption key for all local data.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             return url
         } catch {
             Log.privacy.error("PrivacyManager: failed to save recovery code file: \(error.localizedDescription, privacy: .public)")
@@ -391,11 +451,17 @@ final class PrivacyManager {
     /// Nuclear option. Wipes as much local sensitive data as possible in one action.
     /// Intended for "someone is looking over my shoulder / I need to nuke everything right now" situations.
     ///
-    /// - Clears history, bookmarks
-    /// - Clears VPN profiles (which may contain private WireGuard keys from user configs)
+    /// - Clears history, bookmarks, and the persisted tab session (open tabs)
+    /// - Clears VPN profiles (which may contain private keys from user configs)
+    /// - Clears the password vault and vault lock data
     /// - Clears all standard web data (cookies, storage, caches)
+    /// - Rotates (or deletes) the at-rest encryption key so previously copied encrypted data
+    ///   can no longer be decrypted with what remains in this Mac's Keychain
     /// - If requested, also stops the local native SearXNG process
     /// - Also disables Local AI and clears any transient AI context / synthesis (Phase 0+)
+    ///
+    /// Deliberately NOT wiped: the wallet seed. Destroying it could permanently lose funds;
+    /// it has its own PIN/keychain protection and its own explicit delete flow in wallet settings.
     ///
     /// This is deliberately loud and destructive.
     func panicWipe(stopLocalSearxng: Bool = true, completion: (() -> Void)? = nil) {
@@ -406,8 +472,16 @@ final class PrivacyManager {
         clearHistory()
         clearBookmarks()
 
-        // Clear VPN profiles too (they may contain private WireGuard keys from the user's own server configs).
-        WireGuardManager.shared.clearAllVPNData()
+        // Search-query suggestions live in their own store (UserDefaults, separate from browsing
+        // history) — clear them too so a wipe genuinely leaves no search terms behind.
+        SearchQueryHistoryStore.shared.clearAll()
+
+        // Clear stored VPN profiles too (legacy user-supplied configs may contain private keys).
+        Persistence.clearVPNProfiles()
+
+        // Persisted tab session — otherwise session restore resurrects every open URL on next launch.
+        // (The in-memory tabs are reset by BrowserState.performPanicWipe, which drives this wipe.)
+        Persistence.clearTabSession()
 
         // Password vault: delete every secret from the dedicated Keychain service + clear metadata.
         // This is a core privacy expectation — "nuke everything" must include saved logins/credentials.
@@ -419,6 +493,26 @@ final class PrivacyManager {
 
         // (Privacy Power Hub + Holders Community + Wallet state clears removed — those entire systems deleted for general-use focus.
         // Passwords vault, history, bookmarks, VPN, web data, and LocalAI clears remain.)
+
+        // Encryption key: rotate (or delete) so any previously copied/exfiltrated encrypted
+        // AppData can no longer be decrypted with the key left in this Mac's Keychain.
+        if dataEncryptionEnabled {
+            // Read the (already wiped) data under the OLD key before replacing it.
+            let remaining = Persistence.load()
+            let newKey = DataEncryptor.generateKey()
+            if KeychainManager.saveKey(newKey) {
+                Persistence.save(remaining)
+                Log.privacy.notice("PrivacyManager: at-rest encryption key rotated as part of panic wipe")
+            } else {
+                Log.security.error("PrivacyManager: panic wipe could not rotate the encryption key; keeping the old key so data stays writable")
+            }
+        } else {
+            // Encryption off: normal policy retains the key so old backups stay recoverable.
+            // Panic wipe is the explicit "leave nothing behind" action — delete it.
+            if KeychainManager.deleteKey() {
+                Log.privacy.notice("PrivacyManager: retained encryption key deleted as part of panic wipe")
+            }
+        }
 
         clearStandardWebData {
             if stopLocalSearxng {
@@ -550,9 +644,12 @@ final class PrivacyManager {
         Persistence.clearHistory()
         Persistence.clearBookmarks()
 
+        // Search-query suggestions have their own store (UserDefaults) — clear them for a real reset.
+        SearchQueryHistoryStore.shared.clearAll()
+
         // Also clear VPN profiles (incl. private keys in user-provided configs).
         // This keeps "Clear all local data" / reset consistent with privacy goals.
-        WireGuardManager.shared.clearAllVPNData()
+        Persistence.clearVPNProfiles()
 
         // (Privacy Power Hub + Holders Community + Wallet state clears removed with those systems.
         // Only core data + VPN + vault + web data remain for this lighter reset path.)
@@ -566,12 +663,20 @@ final class PrivacyManager {
 
     // MARK: - Convenience for Settings UI strings
 
+    // These two are shown in Settings and MUST track the actual protection state: with at-rest
+    // encryption on, AppData (history/bookmarks/tabs) is AES-GCM encrypted, so claiming "plaintext"
+    // would be false. The file also lives in the app's sandboxed container (TCC-protected), not a
+    // world-visible Application Support path — the old copy got both wrong.
     var historyStorageWarning: String {
-        "Browsing history (full URLs + titles + dates) is stored in plaintext in ~/Library/Application Support/Searxly/AppData.json. Any app running as your user can read this file. It is not encrypted. The only real protections are FileVault (if enabled) and the fact that the file is only readable by your account."
+        dataEncryptionEnabled
+            ? "History (URLs, titles, dates) is stored in Searxly's private app container and encrypted at rest with your local key. Cookies and site data from Standard tabs are managed by macOS WebKit and aren't covered by Searxly's encryption."
+            : "History (URLs, titles, dates) is stored unencrypted in Searxly's private app container. FileVault and macOS file permissions are the only protections — turn on \"Encrypt local data at rest\" below, or keep history off, if that's a concern."
     }
 
     var strongerDataWarning: String {
-        "Most local data lives unencrypted on disk (history, bookmarks, suggestions, and cookies/storage from Standard tabs). Private tabs are the main exception — they leave almost nothing behind. Use \"Clear Browsing Data…\" regularly or keep history disabled for better privacy."
+        dataEncryptionEnabled
+            ? "Your history, bookmarks, and tab state are encrypted at rest on this Mac. Cookies and site storage from Standard tabs are managed by macOS and stay unencrypted — Private tabs leave almost nothing behind. \"Clear Browsing Data…\" removes both."
+            : "Local data (history, bookmarks, suggestions, and cookies/site storage from Standard tabs) is stored unencrypted on this Mac. Private tabs are the main exception — they leave almost nothing behind. Turn on encryption below, clear data regularly, or keep history off."
     }
 
     /// Strong warning shown when user considers enabling encryption.

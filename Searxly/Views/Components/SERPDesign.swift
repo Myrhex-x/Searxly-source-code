@@ -10,6 +10,13 @@ import SwiftUI
 enum SERPDesign {
     static let accentGreen = Color(red: 0.133, green: 0.773, blue: 0.369)
     static let linkBlue = Color(red: 0.533, green: 0.808, blue: 1.0)
+
+    /// Broadcast "live" red — the news-urgency accent (LIVE / BREAKING / sub-hour timestamps). Scoped to
+    /// news; green stays the meaning color for wallet/price. Brighter in dark for pop, deeper in light.
+    static let liveRed = AdaptiveChrome.dynamic(
+        light: Color(red: 0.80, green: 0.09, blue: 0.07),
+        dark: Color(red: 1.0, green: 0.27, blue: 0.23)
+    )
     static let maxListWidth: CGFloat = 720
     static let knowledgePanelWidth: CGFloat = 360
     static let knowledgePanelSpacing: CGFloat = 24
@@ -34,32 +41,33 @@ private struct SERPGlassCapsuleModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // Solid panel canvas — the SAME surface the floating sidebar uses, so the tabs/pills read at
+            // the sidebar's darkness instead of a light frosted material. A subtle wash lifts the pill
+            // off the same-colored SERP canvas (more when selected); a hairline + seat shadow define its
+            // edge — exactly how the sidebar stays legible against the same canvas behind it.
             .background(
-                isSelected
-                    ? (glassEnabled ? .thinMaterial : .regularMaterial)
-                    : .ultraThinMaterial,
-                in: Capsule()
-            )
-            .glassEffect(
-                glassEnabled
-                    ? (isSelected ? .regular.interactive() : .clear)
-                    : .clear,
-                in: Capsule()
+                ZStack {
+                    Capsule().fill(AdaptiveChrome.panelCanvas)
+                    Capsule().fill(AdaptiveChrome.fill(
+                        colorScheme,
+                        dark: isSelected ? 0.12 : 0.045,
+                        light: isSelected ? 0.10 : 0.05
+                    ))
+                }
             )
             .overlay(
-                Capsule()
-                    .strokeBorder(
-                        isSelected
-                            ? AdaptiveChrome.border(colorScheme, dark: glassEnabled ? 0.16 : 0.10)
-                            : AdaptiveChrome.border(colorScheme, dark: glassEnabled ? 0.07 : 0.04),
-                        lineWidth: isSelected ? 0.8 : 0.5
-                    )
+                Capsule().strokeBorder(
+                    isSelected
+                        ? AdaptiveChrome.border(colorScheme, dark: 0.20, light: 0.16)
+                        : AdaptiveChrome.border(colorScheme, dark: 0.10, light: 0.09),
+                    lineWidth: isSelected ? 1 : 0.75
+                )
             )
             .shadow(
-                color: AdaptiveChrome.shadow(colorScheme, darkOpacity: isSelected && glassEnabled ? 0.14 : 0.05),
-                radius: isSelected && glassEnabled ? 6 : 2,
+                color: AdaptiveChrome.shadow(colorScheme, darkOpacity: isSelected ? 0.28 : 0.18),
+                radius: isSelected ? 4 : 2,
                 x: 0,
-                y: isSelected ? 2 : 1
+                y: 1
             )
     }
 }
@@ -165,8 +173,8 @@ struct SERPResultRowChrome<Content: View>: View {
                                 .fill(.ultraThinMaterial)
                                 .opacity(glassEnabled ? 0.55 : 0.35)
                         )
-                        .glassEffect(
-                            glassEnabled ? .regular.interactive() : .clear,
+                        .searxlyGlass(
+                            glassEnabled ? .interactive : .clear,
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
                 }

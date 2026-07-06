@@ -21,6 +21,20 @@ extension WebViewRepresentable.Coordinator {
             let recovery = """
             (function() {
                 try {
+                    // Stand down while the player's own menu (settings / quality / speed / context)
+                    // is open, and only write styles that actually differ — otherwise this 0.8s
+                    // timer rewrites the player's style attribute forever and fights the menu.
+                    const menus = document.querySelectorAll('.ytp-popup, .ytp-settings-menu, .ytp-panel-menu, .ytp-contextmenu');
+                    for (let i = 0; i < menus.length; i++) {
+                        if (menus[i].offsetWidth > 0 && menus[i].offsetHeight > 0) return;
+                    }
+                    const ss = (el, prop, val) => {
+                        try {
+                            if (el.style.getPropertyValue(prop) !== val || el.style.getPropertyPriority(prop) !== 'important') {
+                                el.style.setProperty(prop, val, 'important');
+                            }
+                        } catch(_) {}
+                    };
                     const badSelectors = [
                         'ytd-enforcement-message-view-model', '.ytp-error', '[class*="enforcement"]',
                         'ytd-ad-slot-renderer', '.ytp-ad-overlay-container', '#masthead-ad', '#player-ads',
@@ -31,26 +45,18 @@ extension WebViewRepresentable.Coordinator {
                             const core = el.closest('ytd-player, #player, .html5-video-player, .html5-video-container, #movie_player') ||
                                          el.querySelector('video') || (el.tagName === 'VIDEO');
                             if (core) {
-                                try {
-                                    el.style.setProperty('display','block','important');
-                                    el.style.setProperty('visibility','visible','important');
-                                    el.style.setProperty('opacity','1','important');
-                                } catch(_) {}
+                                ss(el, 'display', 'block'); ss(el, 'visibility', 'visible'); ss(el, 'opacity', '1');
                                 return;
                             }
-                            el.style.cssText = 'display:none!important;visibility:hidden!important;';
+                            ss(el, 'display', 'none'); ss(el, 'visibility', 'hidden');
                             if (el.parentNode) try { el.parentNode.removeChild(el); } catch(_) {}
                         });
                     });
                     document.querySelectorAll('ytd-player, #player, .html5-video-player, .html5-video-container, #movie_player').forEach(p => {
-                        p.style.setProperty('display','block','important');
-                        p.style.setProperty('visibility','visible','important');
-                        p.style.setProperty('opacity','1','important');
+                        ss(p, 'display', 'block'); ss(p, 'visibility', 'visible'); ss(p, 'opacity', '1');
                     });
                     document.querySelectorAll('video').forEach(v => {
-                        v.style.setProperty('display','block','important');
-                        v.style.setProperty('visibility','visible','important');
-                        v.style.setProperty('opacity','1','important');
+                        ss(v, 'display', 'block'); ss(v, 'visibility', 'visible'); ss(v, 'opacity', '1');
                     });
                 } catch(e) {}
             })();
@@ -114,21 +120,38 @@ extension WebViewRepresentable.Coordinator {
 
             if (!window.__searxlyYTGuardian) {
               window.__searxlyYTGuardian = true;
+              const ss = (el, prop, val) => {
+                try {
+                  if (el.style.getPropertyValue(prop) !== val || el.style.getPropertyPriority(prop) !== 'important') {
+                    el.style.setProperty(prop, val, 'important');
+                  }
+                } catch(_){}
+              };
+              const menuOpen = () => {
+                const menus = document.querySelectorAll('.ytp-popup, .ytp-settings-menu, .ytp-panel-menu, .ytp-contextmenu');
+                for (let i = 0; i < menus.length; i++) {
+                  if (menus[i].offsetWidth > 0 && menus[i].offsetHeight > 0) return true;
+                }
+                return false;
+              };
               const protectPlayer = () => {
                 try {
+                  // Idempotent writes + menu guard: never re-set unchanged styles (which would
+                  // re-trigger this very observer) and never restyle while a player menu is open.
+                  if (menuOpen()) return;
                   const cores = document.querySelectorAll('ytd-player, #player, .html5-video-player, .html5-video-container, #player-container, #movie_player');
                   cores.forEach(el => {
-                    el.style.setProperty('display', 'block', 'important');
-                    el.style.setProperty('visibility', 'visible', 'important');
-                    el.style.setProperty('opacity', '1', 'important');
+                    ss(el, 'display', 'block');
+                    ss(el, 'visibility', 'visible');
+                    ss(el, 'opacity', '1');
                     if (el.tagName !== 'VIDEO') {
-                      el.style.setProperty('min-width', '640px', 'important');
-                      el.style.setProperty('width', '100%', 'important');
+                      ss(el, 'min-width', '640px');
+                      ss(el, 'width', '100%');
                     }
                     el.querySelectorAll('video').forEach(v => {
-                      v.style.setProperty('display', 'block', 'important');
-                      v.style.setProperty('visibility', 'visible', 'important');
-                      v.style.setProperty('opacity', '1', 'important');
+                      ss(v, 'display', 'block');
+                      ss(v, 'visibility', 'visible');
+                      ss(v, 'opacity', '1');
                     });
                   });
                 } catch(e){}

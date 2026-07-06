@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import WebKit
+import os
 
 extension BrowserState {
     func loadInWebView(_ url: URL) {
@@ -20,6 +21,22 @@ extension BrowserState {
         // tab — unless we're already in one, in which case it navigates in place below.
         if url.isOnionService, selectedTab?.privacyMode != .onion {
             openOnionURL(url)
+            return
+        }
+
+        // Navigating an onion (Tor) tab to a clearnet site must NOT keep it classified as a Tor tab
+        // (its privacyMode is immutable and the sidebar groups by it). Open clearnet in a fresh standard
+        // tab beside the onion one instead of loading it inside the Tor tab.
+        if !url.isOnionService, selectedTab?.privacyMode == .onion {
+            let standardTab = BrowserTab(kind: .web)   // .standard privacy by default
+            if let idx = tabs.firstIndex(where: { $0.id == selectedTabID }) {
+                tabs.insert(standardTab, at: idx + 1)
+            } else {
+                tabs.append(standardTab)
+            }
+            selectedTabID = standardTab.id
+            // Recurse: selectedTab is now standard, so this falls through to the normal load path.
+            loadInWebView(url, recordInHistory: recordInHistory)
             return
         }
 
@@ -173,6 +190,9 @@ extension BrowserState {
     }
 
     func handleDataRestored() {
+        // A backup restore / recovery may have rewritten AppData.json out from under the in-memory
+        // cache. Drop it so we re-read the authoritative on-disk state instead of stale cached data.
+        Persistence.invalidateCache()
         // Re-load everything the backup may have changed
         loadPersistedData()
     }
@@ -368,6 +388,46 @@ extension BrowserState {
         activeWebView.stopLoading()
     }
 
+    // MARK: - Zoom & Print (web page actions)
+
+    /// Discrete page-zoom stops, mirroring Safari's ⌘+/⌘−/⌘0 feel. `WKWebView.pageZoom` scales the
+    /// whole page (text + layout); because it lives on the WKWebView, each tab keeps its own zoom.
+    private static let zoomStops: [CGFloat] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+
+    func zoomIn()  { stepZoom(by: 1) }
+    func zoomOut() { stepZoom(by: -1) }
+
+    /// Returns the page to 100%. No-op on non-web tabs (passwords/bookmarks/downloads) and home/search.
+    func resetZoom() {
+        guard let wv = selectedTab?.webView else { return }
+        wv.pageZoom = 1.0
+    }
+
+    private func stepZoom(by delta: Int) {
+        Log.web.notice("[zoomdiag] stepZoom delta=\(delta) hasWebView=\(self.selectedTab?.webView != nil) showingWeb=\(self.showingWebContent)")
+        guard let wv = selectedTab?.webView else { return }
+        let stops = Self.zoomStops
+        let current = wv.pageZoom
+        // Snap to the nearest defined stop, then move one stop in the requested direction.
+        let nearest = stops.enumerated().min { abs($0.element - current) < abs($1.element - current) }?.offset ?? 5
+        let target = min(max(nearest + delta, 0), stops.count - 1)
+        wv.pageZoom = stops[target]
+        Log.web.notice("[zoomdiag] pageZoom \(current) -> \(stops[target])")
+    }
+
+    /// Prints the current web page (⌘P). No-op on non-web tabs and on home/search (nothing to print).
+    func printCurrentPage() {
+        guard let wv = selectedTab?.webView, wv.url != nil else { return }
+        let operation = wv.printOperation(with: NSPrintInfo.shared)
+        operation.showsPrintPanel = true
+        operation.showsProgressPanel = true
+        if let window = wv.window {
+            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        } else {
+            operation.run()
+        }
+    }
+
     func closeCurrentTab() {
         if let selectedID = selectedTabID,
            let tab = tabs.first(where: { $0.id == selectedID }) {
@@ -415,38 +475,101 @@ extension BrowserState {
         BookmarkURLMatcher.remove(url: urlStr, from: &updated)
         let item = BookmarkItem(url: urlStr, title: title)
         updated.insert(item, at: 0)
-        if updated.count > 200 {
-            updated.removeLast(updated.count - 200)
+        if updated.count > BookmarkLimits.maxCount {
+            updated.removeLast(updated.count - BookmarkLimits.maxCount)
         }
         bookmarks = updated
         saveAllData()
+
+        revealBookmarksBarOnFirstBookmark()
     }
 
-    func toggleReaderModeAction() {
+    /// Toggles a bookmark for a specific tab (not necessarily the active one). Used by the sidebar
+    /// tab right-click "Bookmark Tab" action. Mirrors bookmarkCurrentPage but sources the URL/title
+    /// from the given tab so background tabs can be bookmarked without switching to them.
+    func bookmarkTab(_ tab: BrowserTab) {
+        guard tab.kind == .web,
+              let url = tab.currentURL ?? tab.webView?.url,
+              !url.absoluteString.isEmpty else { return }
+        let urlStr = url.absoluteString
+
+        if BookmarkURLMatcher.contains(url: urlStr, in: bookmarks) {
+            var updated = bookmarks
+            BookmarkURLMatcher.remove(url: urlStr, from: &updated)
+            bookmarks = updated
+            saveAllData()
+            return
+        }
+
+        // Prefer the live WKWebView title, then the tab's tracked title, then the host.
+        let live = tab.webView?.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let tracked = tab.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = url.host ?? "Untitled"
+        let title = !live.isEmpty ? live : (!tracked.isEmpty && tracked != "New Tab" ? tracked : host)
+
+        var updated = bookmarks
+        BookmarkURLMatcher.remove(url: urlStr, from: &updated)
+        updated.insert(BookmarkItem(url: urlStr, title: title), at: 0)
+        if updated.count > BookmarkLimits.maxCount {
+            updated.removeLast(updated.count - BookmarkLimits.maxCount)
+        }
+        bookmarks = updated
+        saveAllData()
+
+        revealBookmarksBarOnFirstBookmark()
+    }
+
+    /// The very first time the user saves a bookmark, reveal the top bookmarks bar so the saved page is
+    /// immediately visible (it's off by default). One-time only — if the user later hides the bar, it
+    /// stays hidden. The key is shared with the @AppStorage("bookmarksBarVisible") used by the UI.
+    private func revealBookmarksBarOnFirstBookmark() {
+        let autoShownKey = "bookmarksBarAutoShownOnce"
+        guard !UserDefaults.standard.bool(forKey: autoShownKey) else { return }
+        UserDefaults.standard.set(true, forKey: autoShownKey)
+        UserDefaults.standard.set(true, forKey: "bookmarksBarVisible")
+    }
+
+    /// Summarize the current page with Searxly AI — extracts VISIBLE text (the same injection-resistant
+    /// extractor the right-click menu uses) and routes it to the quick-answer popup. Replaces the removed
+    /// reader mode as the ☰-menu page action.
+    func summarizeCurrentPageAction() {
+        guard AIFeatures.programEnabled else { return }
         let wv = activeWebView
+        wv.evaluateJavaScript(SearxlyWebView.visibleTextExtractionScript) { [weak self] result, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let dict = result as? [String: Any]
+                let text = (dict?["text"] as? String) ?? ""
+                let title = (dict?["title"] as? String) ?? (wv.title ?? "")
+                let urlStr = (dict?["url"] as? String) ?? (wv.url?.absoluteString ?? "")
+                self.handleAskAISelection(text: text,
+                                          actionRaw: AIChatSeed.Action.summarizePage.rawValue,
+                                          title: title, url: urlStr)
+            }
+        }
+    }
+
+    /// Toggles Reader mode: extracts the current page's article (readability-lite, fully on-device)
+    /// and presents it in the distraction-free ReaderView. A second invocation closes it.
+    func toggleReaderModeAction() {
         if isReaderMode || !readerHTML.isEmpty {
-            // Turn off
             isReaderMode = false
             showingReaderSheet = false
             readerHTML = ""
             readerTitle = ""
             return
         }
-
-        // Extract readable content via the shared readability-lite extractor.
-        wv.evaluateJavaScript(ReaderExtraction.script) { [weak self] result, error in
+        let wv = activeWebView
+        guard wv.url != nil else { return }   // nothing loaded → nothing to read
+        wv.evaluateJavaScript(ReaderExtraction.script) { [weak self] result, _ in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if let dict = result as? [String: Any],
-                   let html = dict["html"] as? String, !html.isEmpty {
-                    self.readerTitle = (dict["title"] as? String) ?? (wv.title ?? "")
-                    self.readerHTML = html
-                    self.isReaderMode = true
-                    self.showingReaderSheet = true
-                } else {
-                    // Fallback: at least flip the flag
-                    self.isReaderMode.toggle()
-                }
+                guard let dict = result as? [String: Any],
+                      let html = dict["html"] as? String, !html.isEmpty else { return }
+                self.readerTitle = (dict["title"] as? String) ?? (wv.title ?? "")
+                self.readerHTML = html
+                self.isReaderMode = true
+                self.showingReaderSheet = true
             }
         }
     }

@@ -1,0 +1,39 @@
+# Variant for a server that ALREADY runs a reverse proxy on 80/443 (e.g. the gateway box's Caddy).
+# Runs only SearXNG + Valkey, with SearXNG bound to localhost:8080 — nothing public, zero port conflict.
+# Your existing Caddy then proxies search.searxly.app → 127.0.0.1:8080 (see caddy-site-snippet.txt).
+services:
+  redis:
+    image: valkey/valkey:8-alpine
+    container_name: searxly-redis
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: unless-stopped
+    networks: [searxly]
+    volumes:
+      - valkey-data:/data
+    cap_drop: [ALL]
+    cap_add: [SETGID, SETUID, DAC_OVERRIDE]
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxly-searxng
+    restart: unless-stopped
+    depends_on: [redis]
+    networks: [searxly]
+    ports:
+      - "127.0.0.1:8080:8080"      # LOCALHOST ONLY — invisible publicly; your Caddy proxies to it
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=https://search.searxly.app/
+      - SEARXNG_REDIS_URL=redis://redis:6379/0
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    logging:
+      driver: json-file
+      options: { max-size: "1m", max-file: "1" }
+
+networks:
+  searxly:
+
+volumes:
+  valkey-data:

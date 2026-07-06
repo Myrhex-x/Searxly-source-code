@@ -1,10 +1,20 @@
 {% extends "simple/base.html" %}
+{# Stock result templates (images.html) call icon() — without this import they
+   raise UndefinedError and the whole page 500s. #}
+{% from 'simple/icons.html' import icon, icon_big, icon_small %}
 
 {% block title %}{% if query_in_title %}{{- q|e }} - {% endif %}{% endblock %}
 
 {% block content %}
   <!-- The premium search bar (refine). Categories/tabs are rendered inside the form (see search.html). -->
   {% include 'simple/search.html' %}
+
+  {# Mirror stock: expose e.g. only_template_images so category-specific CSS can hook the page. #}
+  {% if results and results|map(attribute='template')|unique|list|count == 1 %}
+    {% set only_template = 'only_template_' + results[0]['template']|default('default')|replace('.html', '') %}
+  {% else %}
+    {% set only_template = '' %}
+  {% endif %}
 
   <div id="results" class="searxly-results {{ only_template }}">
 
