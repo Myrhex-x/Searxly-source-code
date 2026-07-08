@@ -12,11 +12,24 @@
 		BFA000050000000000000001 /* libsecp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = BFA000040000000000000001 /* libsecp256k1 */; };
 		BFB000030000000000000001 /* Bulwark in Frameworks */ = {isa = PBXBuildFile; productRef = BFB000020000000000000001 /* Bulwark */; };
 		BFC000030000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BFC000020000000000000001 /* Sparkle */; };
+		BFDD000000000000000000AE /* SearxlyHelper.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BFDD000000000000000000B1 /* P256K in Frameworks */ = {isa = PBXBuildFile; productRef = BFDD000000000000000000B6 /* P256K */; };
+		BFDD000000000000000000B2 /* libsecp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = BFDD000000000000000000B7 /* libsecp256k1 */; };
+		BFDD000000000000000000B3 /* Bulwark in Frameworks */ = {isa = PBXBuildFile; productRef = BFDD000000000000000000B8 /* Bulwark */; };
+		BFDD000000000000000000B4 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BFDD000000000000000000B9 /* Sparkle */; };
+		BFDD000000000000000000B5 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = BFDD000000000000000000BA /* onnxruntime */; };
 		BFF000030000000000000001 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = BFF000020000000000000001 /* onnxruntime */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		BF1E14562FE07FB70064DE5C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BF13CDA62FC3421E0081D8C8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BF1E144C2FE07FB70064DE5C;
+			remoteInfo = SearxlyHelper;
+		};
+		BFDD000000000000000000AD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = BF13CDA62FC3421E0081D8C8 /* Project object */;
 			proxyType = 1;
@@ -42,6 +55,15 @@
 			);
 			name = "Embed XPC Services";
 		};
+		BFDD000000000000000000A8 /* Embed XPC Services */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolder = Product;
+			files = (
+				BFDD000000000000000000AE /* SearxlyHelper.xpc in Embed XPC Services */,
+			);
+			name = "Embed XPC Services";
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -49,6 +71,7 @@
 		BF13CDAE2FC3421E0081D8C8 /* Searxly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Searxly.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = SearxlyHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFC04F1600000000000000C1 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		BFDD000000000000000000AB /* SearxlyMaximum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SearxlyMaximum.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFE0000100000000000000A2 /* SearxlyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SearxlyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -119,6 +142,16 @@
 			files = (
 			);
 		};
+		BFDD000000000000000000A6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				BFDD000000000000000000B1 /* P256K in Frameworks */,
+				BFDD000000000000000000B2 /* libsecp256k1 in Frameworks */,
+				BFDD000000000000000000B3 /* Bulwark in Frameworks */,
+				BFDD000000000000000000B4 /* Sparkle in Frameworks */,
+				BFDD000000000000000000B5 /* onnxruntime in Frameworks */,
+			);
+		};
 		BFE0000100000000000000A5 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
@@ -148,6 +181,7 @@
 				BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */,
 				BFE0000100000000000000A2 /* SearxlyTests.xctest */,
 				BF1057010000000000000008 /* SearxlyiOS.app */,
+				BFDD000000000000000000AB /* SearxlyMaximum.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -225,6 +259,39 @@
 			productReference = BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */;
 			productType = "com.apple.product-type.xpc-service";
 		};
+		BFDD000000000000000000A1 /* SearxlyMaximum */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BFDD000000000000000000A4 /* Build configuration list for PBXNativeTarget "SearxlyMaximum" */;
+			buildPhases = (
+				BFDD000000000000000000A5 /* Sources */,
+				BFDD000000000000000000A6 /* Frameworks */,
+				BFDD000000000000000000A7 /* Resources */,
+				BFDD000000000000000000A8 /* Embed XPC Services */,
+				BFDD000000000000000000A9 /* Bundle SearXNG runtime */,
+				BFDD000000000000000000AA /* Bundle Tor runtime */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BFDD000000000000000000AC /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				BF1057010000000000000010 /* SearxlyShared */,
+				BF13CDB02FC3421E0081D8C8 /* Searxly */,
+				BF13CE082FC458470081D8C8 /* LocalSearxng */,
+			);
+			name = SearxlyMaximum;
+			packageProductDependencies = (
+				BFDD000000000000000000B6 /* P256K */,
+				BFDD000000000000000000B7 /* libsecp256k1 */,
+				BFDD000000000000000000B8 /* Bulwark */,
+				BFDD000000000000000000B9 /* Sparkle */,
+				BFDD000000000000000000BA /* onnxruntime */,
+			);
+			productName = SearxlyMaximum;
+			productReference = BFDD000000000000000000AB /* SearxlyMaximum.app */;
+			productType = "com.apple.product-type.application";
+		};
 		BFE0000100000000000000A1 /* SearxlyTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = BFE0000100000000000000A6 /* Build configuration list for PBXNativeTarget "SearxlyTests" */;
@@ -264,6 +331,9 @@
 					BF1E144C2FE07FB70064DE5C = {
 						CreatedOnToolsVersion = 27.0;
 					};
+					BFDD000000000000000000A1 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					BFE0000100000000000000A1 = {
 						CreatedOnToolsVersion = 26.5;
 						TestTargetID = BF13CDAD2FC3421E0081D8C8;
@@ -295,6 +365,7 @@
 				BF1E144C2FE07FB70064DE5C /* SearxlyHelper */,
 				BFE0000100000000000000A1 /* SearxlyTests */,
 				BF1057010000000000000001 /* SearxlyiOS */,
+				BFDD000000000000000000A1 /* SearxlyMaximum */,
 			);
 		};
 /* End PBXProject section */
@@ -311,6 +382,11 @@
 			);
 		};
 		BF1E144B2FE07FB70064DE5C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		BFDD000000000000000000A7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -351,6 +427,44 @@
 				"  exit 0",
 				"fi",
 				"mkdir -p \"$TOR_DST\"",
+				"/usr/bin/rsync -a --delete --delete-excluded --exclude=pluggable_transports \"$TOR_SRC/\" \"$TOR_DST/\"",
+				"echo \"Bundled Tor runtime -> $TOR_DST\"",
+				"",
+			);
+		};
+		BFDD000000000000000000A9 /* Bundle SearXNG runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			name = "Bundle SearXNG runtime";
+			shellPath = /bin/sh;
+			shellScript = (
+				"set -e",
+				"RUNTIME_SRC=\"${SRCROOT}/build/searxng-runtime\"",
+				"RUNTIME_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/searxng-runtime\"",
+				"if [ ! -x \"$RUNTIME_SRC/python/bin/python3.12\" ]; then",
+				"  echo \"note: SearXNG runtime missing - building it (first build only)...\"",
+				"  \"${SRCROOT}/scripts/build-searxng-runtime.sh\"",
+				"fi",
+				"mkdir -p \"$RUNTIME_DST\"",
+				"/usr/bin/rsync -a --delete \"$RUNTIME_SRC/\" \"$RUNTIME_DST/\"",
+				"echo \"Bundled SearXNG runtime -> $RUNTIME_DST\"",
+				"",
+			);
+		};
+		BFDD000000000000000000AA /* Bundle Tor runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			name = "Bundle Tor runtime";
+			shellPath = /bin/sh;
+			shellScript = (
+				"set -e",
+				"TOR_SRC=\"${SRCROOT}/build/tor-runtime\"",
+				"TOR_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/tor-runtime\"",
+				"if [ ! -x \"$TOR_SRC/tor\" ]; then",
+				"  echo \"warning: Tor runtime missing at $TOR_SRC/tor - onion support will be disabled. Run scripts/fetch-tor-runtime.sh to enable it.\"",
+				"  exit 0",
+				"fi",
+				"mkdir -p \"$TOR_DST\"",
 				"/usr/bin/rsync -a --delete \"$TOR_SRC/\" \"$TOR_DST/\"",
 				"echo \"Bundled Tor runtime -> $TOR_DST\"",
 				"",
@@ -374,6 +488,11 @@
 			files = (
 			);
 		};
+		BFDD000000000000000000A5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 		BFE0000100000000000000A4 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
@@ -386,6 +505,11 @@
 			isa = PBXTargetDependency;
 			target = BF1E144C2FE07FB70064DE5C /* SearxlyHelper */;
 			targetProxy = BF1E14562FE07FB70064DE5C /* PBXContainerItemProxy */;
+		};
+		BFDD000000000000000000AC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BF1E144C2FE07FB70064DE5C /* SearxlyHelper */;
+			targetProxy = BFDD000000000000000000AD /* PBXContainerItemProxy */;
 		};
 		BFE0000100000000000000AA /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -404,6 +528,7 @@
 				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Face ID to unlock the app when App Lock is enabled.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -437,6 +562,7 @@
 				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Face ID to unlock the app when App Lock is enabled.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -599,7 +725,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_APP_SANDBOX = NO;
@@ -615,7 +741,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LSMinimumSystemVersion = 15.0;
-				MARKETING_VERSION = 0.9.5;
+				MARKETING_VERSION = 0.9.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -639,7 +765,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_APP_SANDBOX = NO;
@@ -655,7 +781,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LSMinimumSystemVersion = 15.0;
-				MARKETING_VERSION = 0.9.5;
+				MARKETING_VERSION = 0.9.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -719,6 +845,90 @@
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		BFDD000000000000000000A2 /* Debug configuration for PBXNativeTarget "SearxlyMaximum" */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = BFC04F1600000000000000C1 /* Config.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconMaximum;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Searxly/SearxlyMaximum.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = KKRU446268;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Sparkle-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Searxly Maximum";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Touch ID and your Mac login password to lock the browser and protect your private search data and settings.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LSMinimumSystemVersion = 15.0;
+				MARKETING_VERSION = 0.9.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyMaximum;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MAXIMUM_EDITION";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		BFDD000000000000000000A3 /* Release configuration for PBXNativeTarget "SearxlyMaximum" */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = BFC04F1600000000000000C1 /* Config.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconMaximum;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Searxly/SearxlyMaximum.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = KKRU446268;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Sparkle-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Searxly Maximum";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Touch ID and your Mac login password to lock the browser and protect your private search data and settings.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LSMinimumSystemVersion = 15.0;
+				MARKETING_VERSION = 0.9.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyMaximum;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MAXIMUM_EDITION";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -796,6 +1006,14 @@
 			);
 			defaultConfigurationName = Release;
 		};
+		BFDD000000000000000000A4 /* Build configuration list for PBXNativeTarget "SearxlyMaximum" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BFDD000000000000000000A2 /* Debug configuration for PBXNativeTarget "SearxlyMaximum" */,
+				BFDD000000000000000000A3 /* Release configuration for PBXNativeTarget "SearxlyMaximum" */,
+			);
+			defaultConfigurationName = Release;
+		};
 		BFE0000100000000000000A6 /* Build configuration list for PBXNativeTarget "SearxlyTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -861,6 +1079,31 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BFC000010000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		BFDD000000000000000000B6 /* P256K */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BFA000010000000000000001 /* XCRemoteSwiftPackageReference "secp256k1" */;
+			productName = P256K;
+		};
+		BFDD000000000000000000B7 /* libsecp256k1 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BFA000010000000000000001 /* XCRemoteSwiftPackageReference "secp256k1" */;
+			productName = libsecp256k1;
+		};
+		BFDD000000000000000000B8 /* Bulwark */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BFB000010000000000000001 /* XCRemoteSwiftPackageReference "bulwark" */;
+			productName = Bulwark;
+		};
+		BFDD000000000000000000B9 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BFC000010000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+		BFDD000000000000000000BA /* onnxruntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BFF000010000000000000001 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime;
 		};
 		BFF000020000000000000001 /* onnxruntime */ = {
 			isa = XCSwiftPackageProductDependency;
