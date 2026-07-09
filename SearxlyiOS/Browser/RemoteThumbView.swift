@@ -107,7 +107,7 @@ struct RemoteThumbView: View {
             } else if keepsPlaceholder {
                 Brand.surface
                 Image(systemName: "photo")
-                    .font(.system(size: 18))
+                    .scaledFont(size: 18)
                     .foregroundStyle(Brand.textTertiary)
             }
         }

@@ -152,7 +152,7 @@ struct SidebarTabList: View {
             }
 
             bottomFooter
-            if walletSurfaceEnabled {
+            if walletSurfaceEnabled && !Edition.isMaximum {
                 walletButton
             }
             settingsButton

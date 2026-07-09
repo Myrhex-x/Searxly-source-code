@@ -80,10 +80,6 @@ struct AppData: Codable {
     var vpnAccessPass: VPNAccessPass? = nil
 
     // Local on-device AI preferences (Phase 0+).
-    // Stored inside AppData so it is automatically encrypted when the user enables "Encrypt local data at rest".
-    // All individual feature toggles default to false (master off). The manager may still use a transient
-    // UserDefaults master flag during early scaffolding; the canonical value will live here after migration.
-    var aiPreferences: AIPreferences = .default
 
     // Password Vault (on-device encrypted credential manager).
     // Metadata only (domain, username, notes, timestamps, tags). The actual passwords live exclusively
@@ -123,6 +119,11 @@ struct AppData: Codable {
     /// directly from grokipedia.com / wikipedia.org (outside the local SearXNG), so the feature stays
     /// off until the user explicitly enables it in Settings → Search.
     var knowledgePanelEnabled: Bool = false
+
+    /// Top-of-results SERP "local pack" for place queries (OpenStreetMap places + Apple's native map).
+    /// Default-OFF and opt-in: when a place query is detected the SERP offers to enable it with a privacy
+    /// note (place data is private via the gateway, but the map is drawn by Apple). Blocked in Maximum Privacy.
+    var localPackEnabled: Bool = false
 
     // Custom decoder for backward compatibility.
     // Older AppData.json files won't have the newer keys (historyEnabled, defaultNewTabsToPrivate, tabSnapshots).
@@ -164,9 +165,6 @@ struct AppData: Codable {
         vpnBrowserControlsEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .vpnBrowserControlsEnabled)) ?? false
         vpnAccessPass = (try? container.decodeIfPresent(VPNAccessPass.self, forKey: .vpnAccessPass)) ?? nil
 
-        // NEW Phase 0 — safe decode (older files get the .default which has everything off)
-        aiPreferences = (try? container.decodeIfPresent(AIPreferences.self, forKey: .aiPreferences)) ?? .default
-
         // Password Vault legacy fields — retained only so PasswordVaultStore can perform a one-time
         // migration into its own resilient file. Nothing writes these anymore.
         passwordVaultEntries = (try? container.decodeIfPresent([PasswordVaultEntry].self, forKey: .passwordVaultEntries)) ?? []
@@ -183,6 +181,7 @@ struct AppData: Codable {
         passwordVaultCopyGeneratedToClipboard = (try? container.decodeIfPresent(Bool.self, forKey: .passwordVaultCopyGeneratedToClipboard)) ?? true
 
         knowledgePanelEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .knowledgePanelEnabled)) ?? false
+        localPackEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .localPackEnabled)) ?? false
 
         // App-wide privacy posture. Older files (pre-feature) lack these keys and fall back to the
         // privacy-neutral defaults, so upgrading users are untouched; users who chose Maximum now have
@@ -220,9 +219,6 @@ struct AppData: Codable {
         vpnBrowserControlsEnabled: Bool = false,
         vpnAccessPass: VPNAccessPass? = nil,
 
-        // Local on-device AI preferences (Phase 0+). Persisted so encryption applies automatically.
-        aiPreferences: AIPreferences = .default,
-
         // Password Vault metadata (secrets stay in Keychain via PasswordVaultSecureStore).
         passwordVaultEntries: [PasswordVaultEntry] = [],
 
@@ -238,7 +234,8 @@ struct AppData: Codable {
         passwordVaultOfferToSaveEnabled: Bool = true,
         passwordVaultSuggestPasswordsEnabled: Bool = true,
         passwordVaultCopyGeneratedToClipboard: Bool = true,
-        knowledgePanelEnabled: Bool = false
+        knowledgePanelEnabled: Bool = false,
+        localPackEnabled: Bool = false
     ) {
         self.searxInstances = searxInstances
         self.history = history
@@ -265,7 +262,6 @@ struct AppData: Codable {
         self.vpnBrowserControlsEnabled = vpnBrowserControlsEnabled
         self.vpnAccessPass = vpnAccessPass
 
-        self.aiPreferences = aiPreferences
         self.passwordVaultEntries = passwordVaultEntries
 
         self.passwordVaultUseCustomPassword = passwordVaultUseCustomPassword
@@ -279,6 +275,7 @@ struct AppData: Codable {
         self.passwordVaultSuggestPasswordsEnabled = passwordVaultSuggestPasswordsEnabled
         self.passwordVaultCopyGeneratedToClipboard = passwordVaultCopyGeneratedToClipboard
         self.knowledgePanelEnabled = knowledgePanelEnabled
+        self.localPackEnabled = localPackEnabled
     }
 
     init() {}   // Convenience empty init for defaults
@@ -314,9 +311,6 @@ struct AppData: Codable {
         case vpnBrowserControlsEnabled
         case vpnAccessPass
 
-        // Local on-device AI (Phase 0+)
-        case aiPreferences
-
         // Password Vault (metadata only; actual secrets in dedicated Keychain service)
         case passwordVaultEntries
 
@@ -333,6 +327,7 @@ struct AppData: Codable {
         case passwordVaultSuggestPasswordsEnabled
         case passwordVaultCopyGeneratedToClipboard
         case knowledgePanelEnabled
+        case localPackEnabled
 
         // App-wide privacy posture (Normal / Encrypted / Maximum) + which network Maximum enforces.
         // These MUST be listed here: with an explicit CodingKeys enum, the synthesized encoder only
@@ -383,6 +378,15 @@ enum Persistence {
     /// Saves the current app data to disk.
     /// When data encryption is enabled, this goes through EncryptedDataStore.
     static func save(_ data: AppData) {
+        var data = data
+        if AmnesiaMode.isActive {
+            // RAM-only session: never write a trace of what was browsed. Browsing history and open-tab
+            // snapshots are dropped before hitting disk; user assets on `data` (bookmarks, saved
+            // passwords, instances, settings) still persist. Web cookies/cache are handled separately
+            // by forcing non-persistent WKWebsiteDataStores (see WebViewFactory).
+            data.history = []
+            data.tabSnapshots = []
+        }
         EncryptedDataStore.save(data)
     }
 
@@ -506,6 +510,16 @@ enum Persistence {
 
     static func knowledgePanelEnabled() -> Bool {
         load().knowledgePanelEnabled
+    }
+
+    static func setLocalPackEnabled(_ enabled: Bool) {
+        var current = load()
+        current.localPackEnabled = enabled
+        save(current)
+    }
+
+    static func localPackEnabled() -> Bool {
+        load().localPackEnabled
     }
 
     /// Updates the default tab privacy preference atomically.

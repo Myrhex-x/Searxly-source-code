@@ -27,26 +27,34 @@ enum Brand {
     static let textTertiary  = adaptive(dark: .white.opacity(0.35), light: .black.opacity(0.42))
 
     static let hairline      = adaptive(dark: .white.opacity(0.08), light: .black.opacity(0.10))
+
+    /// Broadcast "live" red — the only non-monochrome accent, scoped to news urgency (LIVE / BREAKING
+    /// badges and sub-hour timestamps), mirroring the macOS app. Brighter in dark for pop, deeper in
+    /// light. Green stays reserved for price/status meaning; red never decorates.
+    static let liveRed = adaptive(
+        dark:  Color(red: 1.0,  green: 0.27, blue: 0.23),
+        light: Color(red: 0.80, green: 0.09, blue: 0.07)
+    )
 }
 
 extension Text {
     /// Large, commanding result title (macOS SERP parity, tuned for phone).
     func resultTitle() -> some View {
-        self.font(.system(size: 19, weight: .semibold))
+        self.scaledFont(size: 19, weight: .semibold)
             .foregroundStyle(Brand.text)
             .lineLimit(2)
     }
 
     /// Tiny, muted URL/host line under a result.
     func resultHost() -> some View {
-        self.font(.system(size: 12.5))
+        self.scaledFont(size: 12.5)
             .foregroundStyle(Brand.textTertiary)
             .lineLimit(1)
     }
 
     /// Result snippet/description.
     func resultSnippet() -> some View {
-        self.font(.system(size: 14.5))
+        self.scaledFont(size: 14.5)
             .foregroundStyle(Brand.textSecondary)
             .lineLimit(3)
     }

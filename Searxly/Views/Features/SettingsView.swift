@@ -25,20 +25,23 @@ enum SettingsSidebarGroup: String, CaseIterable, Identifiable {
         case .general:
             return [.appearance]
         case .privacy:
-            return [.privacy, .security, .passwords, .vpn, .tor]
+            // Searxly Maximum has no managed VPN — Tor is the only protection network.
+            // Privacy Report leads the group: a glanceable posture score before the controls.
+            return Edition.isMaximum
+                ? [.privacyReport, .privacy, .security, .passwords, .tor]
+                : [.privacyReport, .privacy, .security, .passwords, .vpn, .tor]
         case .search:
             return [.search, .instances]
         case .features:
-            var categories: [SettingsCategory] = [.wallet, .performance]
-            if AIFeatures.programEnabled {
-                categories.insert(contentsOf: [.searxlyAI, .localAI], at: 0)
-            }
+            // Searxly Maximum drops the crypto wallet; AI is on-device only (no Searxly AI cloud).
+            var categories: [SettingsCategory] = Edition.isMaximum ? [.agenticTools, .performance] : [.agenticTools, .wallet, .performance]
             if ExtensionFeatures.programEnabled {
                 categories.insert(.extensions, at: categories.count - 1)
             }
             return categories
         case .support:
-            return [.feedback, .about]
+            // Searxly Maximum has no feedback webhook (nothing posts outward).
+            return Edition.isMaximum ? [.about] : [.feedback, .about]
         }
     }
 }
@@ -46,6 +49,7 @@ enum SettingsSidebarGroup: String, CaseIterable, Identifiable {
 /// Categories for the Settings sidebar navigation.
 enum SettingsCategory: String, CaseIterable, Identifiable {
     case appearance = "Appearance"
+    case privacyReport = "Privacy Report"
     case privacy = "Privacy & Data"
     case security = "App Security"
     case passwords = "Passwords"
@@ -56,8 +60,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case search = "Search"
     case instances = "SearXNG Instances"
     case wallet = "Wallet"
-    case searxlyAI = "Searxly AI"
-    case localAI = "On-Device & Local AI"
+    case agenticTools = "Agentic Tools"
     case feedback = "Feedback"
     case about = "About"
 
@@ -66,18 +69,18 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .appearance: return "paintbrush"
+        case .privacyReport: return "checkmark.seal.fill"
         case .privacy: return "lock.shield.fill"
         case .security: return "lock.fill"
         case .passwords: return "key.fill"
         case .vpn: return "network.badge.shield.half.filled"
         case .tor: return "point.3.connected.trianglepath.dotted"
         case .wallet:      return "hexagon.fill"
+        case .agenticTools: return "wrench.and.screwdriver.fill"
         case .performance: return "speedometer"
         case .extensions: return "puzzlepiece.extension.fill"
         case .search: return "text.magnifyingglass"
         case .instances: return "network"
-        case .searxlyAI: return "sparkles"
-        case .localAI: return "cpu"
         case .feedback: return "exclamationmark.bubble.fill"
         case .about: return "info.circle"
         }
@@ -86,6 +89,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     var localizedTitle: String {
         switch self {
         case .appearance:  return Localization.string("appearance_title", defaultValue: "Appearance")
+        case .privacyReport: return Localization.string("privacy_report_title", defaultValue: "Privacy Report")
         case .privacy:     return Localization.string("privacy_title", defaultValue: "Privacy & Data")
         case .security:    return Localization.string("security_title", defaultValue: "App Security")
         case .passwords:   return Localization.string("passwords_title", defaultValue: "Passwords")
@@ -96,8 +100,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .search:      return Localization.string("search_settings_title", defaultValue: "Search")
         case .instances:   return Localization.string("instances_title", defaultValue: "SearXNG Instances")
         case .wallet:      return "Wallet"
-        case .searxlyAI:   return Localization.string("searxly_ai_title", defaultValue: "Searxly AI")
-        case .localAI:     return Localization.string("local_ai_title", defaultValue: "On-Device & Local AI")
+        case .agenticTools: return Localization.string("agentic_tools_title", defaultValue: "Agentic Tools")
         case .feedback:    return Localization.string("feedback_title", defaultValue: "Feedback")
         case .about:       return Localization.string("about_title", defaultValue: "About")
         }
@@ -109,6 +112,7 @@ struct SettingsView: View {
     @Binding var searxInstances: [SearXNGInstance]
     @Binding var currentInstanceID: UUID
     @Binding var knowledgePanelEnabled: Bool
+    @Binding var localPackEnabled: Bool
 
     /// Binding to let Settings trigger the advanced Clear Browsing Data sheet (owned by ContentView).
     @Binding var showingClearData: Bool
@@ -238,6 +242,8 @@ struct SettingsView: View {
         switch selectedCategory {
         case .appearance:
             AppearanceSettingsView(reduceLiquidGlass: $reduceLiquidGlass, appearanceModeRaw: $appearanceModeRaw)
+        case .privacyReport:
+            PrivacyReportView(onNavigate: { selectedCategory = $0 })
         case .privacy:
             PrivacySettingsView(
                 historyEnabled: $historyEnabled,
@@ -273,18 +279,16 @@ struct SettingsView: View {
         case .extensions:
             ExtensionsSettingsView()
         case .search:
-            SearchSettingsView(knowledgePanelEnabled: $knowledgePanelEnabled)
+            SearchSettingsView(knowledgePanelEnabled: $knowledgePanelEnabled, localPackEnabled: $localPackEnabled)
         case .instances:
             InstancesSettingsView(
                 searxInstances: $searxInstances,
                 currentInstanceID: $currentInstanceID
             )
+        case .agenticTools:
+            AgenticToolsSettingsView()
         case .wallet:
             WalletSettingsSection()
-        case .searxlyAI:
-            SearxlyAICloudSettingsView()
-        case .localAI:
-            LocalAISettingsView()
         case .feedback:
             FeedbackSettingsView(
                 searxInstances: $searxInstances,

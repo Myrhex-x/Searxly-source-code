@@ -50,6 +50,9 @@ private struct MenuCommandNotifications: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .panicWipeRequested)) { _ in
                 browserState.showingPanicWipeConfirm = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: .newIdentityRequested)) { _ in
+                browserState.newIdentity()
+            }
             .alert("Panic Wipe — Clear Everything?", isPresented: $browserState.showingPanicWipeConfirm) {
                 Button("Wipe Everything", role: .destructive) {
                     browserState.performPanicWipe()
@@ -65,6 +68,10 @@ private struct MenuCommandNotifications: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .findInPageRequested)) { _ in
                 // ⌘F (and the ☰ menu's Find on Page) — show the find bar on the current page.
                 browserState.showFindInPage()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openLocalFileRequested)) { _ in
+                // ⌘O (File ▸ Open File…) — pick a local HTML file / web-project folder to view.
+                browserState.openLocalFile()
             }
             .onReceive(NotificationCenter.default.publisher(for: .readerModeRequested)) { _ in
                 // ⌘⇧R (and the ☰ menu's Reader View) — toggle the distraction-free reader.
@@ -83,16 +90,26 @@ private struct MenuCommandNotifications: ViewModifier {
             .translationTask(PageTranslator.shared.configuration) { session in
                 await PageTranslator.shared.run(session)
             }
+            // Settings-navigation + import commands are grouped into their own modifier so this chain
+            // stays short enough for the SwiftUI type-checker (adding one more .onReceive here tips it
+            // past its budget: "unable to type-check this expression in reasonable time").
+            .modifier(SettingsNavigationCommands(browserState: browserState))
+    }
+}
+
+/// The "open Settings to category X" and "import data" menu commands, split out of
+/// MenuCommandNotifications to keep each view-modifier chain within the SwiftUI type-checker's budget.
+private struct SettingsNavigationCommands: ViewModifier {
+    let browserState: BrowserState
+
+    func body(content: Content) -> some View {
+        content
             .onReceive(NotificationCenter.default.publisher(for: .openSettingsToSearch)) { _ in
                 browserState.settingsInitialCategory = .search
                 browserState.showingSettings = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .openSettingsToVPN)) { _ in
                 browserState.settingsInitialCategory = .vpn
-                browserState.showingSettings = true
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToSearxlyAI)) { _ in
-                browserState.settingsInitialCategory = .searxlyAI
                 browserState.showingSettings = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .openSettingsToPrivacy)) { _ in
@@ -205,25 +222,6 @@ extension ContentView {
                             browserState.isReaderMode = false
                             browserState.readerHTML = ""
                             browserState.readerTitle = ""
-                        },
-                        // AI hand-offs are inert while the AI program is disabled (ReaderView hides
-                        // its AI controls behind AIFeatures.programEnabled).
-                        onAskAI: {
-                            browserState.showingReaderSheet = false
-                            browserState.isReaderMode = false
-                            browserState.openLocalAIChat()
-                        },
-                        onTalkToSearxly: { summary, title in
-                            // Continue the reader summary in the full chat. Only the model's summary +
-                            // the page title cross over — never the raw (untrusted) page text.
-                            browserState.showingReaderSheet = false
-                            browserState.isReaderMode = false
-                            browserState.pendingAIChatSeed = AIChatSeed(
-                                selection: title.isEmpty ? "this page" : title,
-                                action: .summarizePage,
-                                priorAnswer: summary
-                            )
-                            browserState.openLocalAIChat()
                         }
                     )
                 }
@@ -245,8 +243,19 @@ extension ContentView {
         baseWithSheets
             .onAppear {
                 _ = Persistence.load()
-                // Onion tabs aren't restored, so a Tor process alive at launch is stale — reap it.
-                Task { await TorManager.shared.cleanupStaleAtLaunch() }
+                // Onion tabs aren't restored, so a leftover Tor at launch is normally stale — reap it.
+                // EXCEPTION: when we launch already in Maximum + Tor, PrivacyGate brings Tor up at launch
+                // and OWNS its lifecycle. Reaping here races that auto-start and kills the freshly-spawned
+                // process — start() then sits in its bootstrap wait holding `isBusy`, so the pill's
+                // "Start Tor" looks dead (guarded out by isBusy) and protection never comes up. In that
+                // case leave Tor to the gate, which adopts a still-running instance or starts a fresh one.
+                // (This is the "clicking Start Tor does nothing" bug — hit by any build relaunched into
+                // persisted Maximum+Tor, and always by Searxly Maximum since it's Maximum+Tor by design.)
+                let gateOwnsTor = PrivacyManager.shared.appPrivacyMode == .maximum
+                    && PrivacyManager.shared.maxProtection == .tor
+                if !gateOwnsTor {
+                    Task { await TorManager.shared.cleanupStaleAtLaunch() }
+                }
                 guard !encryptionRecoveryManager.isRecoveryRequired else { return }
                 if appLockManager.isAppLockEnabled && !appLockManager.isUnlocked {
                     return
@@ -339,12 +348,6 @@ extension ContentView {
                 }
             }
             .modifier(MenuCommandNotifications(browserState: browserState))
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("Searxly.LocalAIClearRequested"))) { _ in
-                browserState.clearAIState()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("Searxly.OpenLocalAIChatRequested"))) { _ in
-                browserState.openLocalAIChat()
-            }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 NotificationManager.shared.isBrowserActive = browserState.showingWebContent
                 // Resume the (battery-saving) idle hibernation timer paused on background.
@@ -392,6 +395,10 @@ extension ContentView {
             knowledgePanelEnabled: Binding(
                 get: { browserState.knowledgePanelEnabled },
                 set: { browserState.setKnowledgePanelEnabled($0) }
+            ),
+            localPackEnabled: Binding(
+                get: { browserState.localPackEnabled },
+                set: { browserState.setLocalPackEnabled($0) }
             ),
             showingClearData: $browserState.showingClearData,
             initialCategory: browserState.settingsInitialCategory
@@ -500,13 +507,6 @@ extension ContentView {
 
     var keyboardShortcutsSheet: some View {
         KeyboardShortcutsView(isPresented: $browserState.showingKeyboardShortcuts)
-    }
-
-    /// The wired Local AI Chat content is now extracted to its own file (the closures for private search,
-    /// openWebsite, and RAG are implemented there).
-    /// See Views/Features/LocalAI/LocalAIChatView.swift
-    var localAIChatView: some View {
-        LocalAIChatView(browserState: browserState)
     }
 
     @ViewBuilder

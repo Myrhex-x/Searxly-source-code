@@ -28,6 +28,8 @@ struct PrivacySettingsView: View {
 
     @State private var appPrivacyMode: AppPrivacyMode = .normal
     @State private var maxProtection: MaxProtection = .tor
+    @State private var amnesiaPreference: Bool = AmnesiaMode.preference
+    @State private var securityLevel: MaximumSecurityLevel = .standard
 
     var body: some View {
         SettingsPane {
@@ -37,6 +39,15 @@ struct PrivacySettingsView: View {
             )
 
             privacyModeSection
+            // Searxly Maximum edition features only: the live Privacy Self-Test, Network Ledger, Tor
+            // bridges, and Amnesic mode are premium hardening and are absent from the base (free) app.
+            if Edition.isMaximum {
+                securityLevelSection
+                PrivacySelfTestSection()
+                NetworkLedgerSection()
+                TorBridgesSection()
+                amnesicSection
+            }
             browsingSection
             filteringSection
             dataSection
@@ -47,6 +58,76 @@ struct PrivacySettingsView: View {
     // MARK: - 1. Privacy Mode
 
     private var privacyModeSection: some View {
+        Group {
+            if Edition.isMaximum {
+                lockedMaximumModeSection
+            } else {
+                editablePrivacyModeSection
+            }
+        }
+    }
+
+    /// Searxly Maximum: the ladder is not user-selectable — the app is permanently in Maximum
+    /// Privacy over Tor. Show a read-only, locked panel instead of the picker.
+    private var lockedMaximumModeSection: some View {
+        SettingsSection(
+            title: "Privacy Mode",
+            footer: "Searxly Maximum runs permanently in Maximum Privacy — this can't be turned down, it's the point of this edition. Your fingerprint is scrambled and your data on this Mac is encrypted. You choose how your IP is hidden: Tor is the default and the most private; the Searxly VPN is faster, but you trust our exit node. Either way, if the lane isn't up, all traffic is blocked."
+        ) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: "shield.lefthalf.filled")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Maximum Privacy — always on")
+                        .font(.callout.weight(.semibold))
+                    Text("Locked on: IP protection, Strict fingerprint scrambling, at-rest encryption, and App Lock.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+
+            SettingsDivider()
+
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Hide my IP with")
+                        .font(.callout)
+                    Text(maxProtection == .tor
+                         ? "Tor — most private, slower. The default."
+                         : "Searxly VPN — faster, but you trust our exit node.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Picker("", selection: $maxProtection) {
+                    ForEach(MaxProtection.allCases, id: \.self) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                .onChange(of: maxProtection) { _, newValue in
+                    PrivacyManager.shared.setMaxProtection(newValue)
+                    // setMaxProtection may coerce VPN → Tor if the (future) premium entitlement is locked;
+                    // reflect the value that actually took effect.
+                    maxProtection = PrivacyManager.shared.maxProtection
+                }
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                maxProtection = PrivacyManager.shared.maxProtection
+            }
+        }
+    }
+
+    private var editablePrivacyModeSection: some View {
         SettingsSection(
             title: "Privacy Mode",
             footer: "Normal and Encrypted keep every site working. Maximum Privacy hides your IP behind the Searxly VPN or Tor — or blocks all traffic if neither is up — and scrambles your browser fingerprint. Much harder to track, but some sites may break."
@@ -103,6 +184,63 @@ struct PrivacySettingsView: View {
         }
     }
 
+    // MARK: - 1a. Security level (Tor-Browser-style slider) — Maximum only
+
+    private var securityLevelSection: some View {
+        SettingsSection(
+            title: "Security Level",
+            footer: "Like Tor Browser's slider. Higher levels shrink what a malicious page can do — the biggest residual risk in any browser is a JavaScript-engine exploit (historically the way Tor users have been deanonymised). Safest turns JavaScript off on the web; your local search still works. Reload a page to apply a change."
+        ) {
+            Picker("", selection: $securityLevel) {
+                ForEach(MaximumSecurityLevel.allCases, id: \.self) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .onChange(of: securityLevel) { _, newValue in
+                MaximumSecurity.shared.setLevel(newValue)
+            }
+
+            Text(securityLevel.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear {
+            DispatchQueue.main.async { securityLevel = MaximumSecurity.shared.level }
+        }
+    }
+
+    // MARK: - 1b. Amnesic mode
+
+    private var amnesicSection: some View {
+        SettingsSection(
+            title: "Amnesic mode",
+            footer: "When on, Searxly runs entirely in memory — browsing history, open tabs, cookies, and cache are never written to disk and are gone the moment you quit. Your bookmarks, saved passwords, and settings are kept. Takes full effect at the next launch."
+        ) {
+            SettingsToggleRow(
+                title: "Leave no trace on disk",
+                description: "RAM-only browsing: nothing about what you do this session survives quitting.",
+                isOn: $amnesiaPreference,
+                badge: AmnesiaMode.isActive ? "Active" : (amnesiaPreference ? "Next launch" : nil)
+            )
+            .onChange(of: amnesiaPreference) { _, newValue in
+                AmnesiaMode.preference = newValue
+            }
+
+            if amnesiaPreference && !AmnesiaMode.isActive {
+                Text("Relaunch Searxly to start an amnesic session.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if AmnesiaMode.isActive && !amnesiaPreference {
+                Text("Amnesic mode stays active until you relaunch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     // MARK: - 2. Browsing
 
     private var browsingSection: some View {
@@ -129,6 +267,20 @@ struct PrivacySettingsView: View {
             .onChange(of: defaultNewTabsToPrivate) { _, newValue in
                 // Persist synchronously — same durability reason as history above.
                 PrivacyManager.shared.setDefaultNewTabsToPrivate(newValue)
+            }
+
+            if Edition.isMaximum {
+                SettingsDivider()
+
+                SettingsToggleRow(
+                    title: "Auto-upgrade to .onion when offered",
+                    description: "When a site advertises a Tor onion mirror, open it automatically — end-to-end encrypted, with no exit node. Otherwise Searxly just offers a banner.",
+                    isOn: Binding(
+                        get: { OnionPreferences.autoUpgrade },
+                        set: { OnionPreferences.autoUpgrade = $0 }
+                    ),
+                    badge: OnionPreferences.autoUpgrade ? "On" : nil
+                )
             }
 
             if historyEnabled {

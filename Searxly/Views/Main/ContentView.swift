@@ -165,11 +165,6 @@ struct ContentView: View {
         browserState.openSearchResultInNewTab(result)
     }
 
-    func enableAIToolsQuick() {
-        LocalIntelligenceManager.shared.preferences.toolsEnabled = true
-        LocalIntelligenceManager.shared.persistPreferences()
-    }
-
     func newTab() { browserState.newTab() }
     func newPrivateTab() { browserState.newPrivateTab() }
     func closeTab(_ tab: BrowserTab) { browserState.closeTab(tab) }
@@ -213,6 +208,11 @@ struct ContentView: View {
         loadPersistedData()
         restoreLastSession()
         NotificationManager.shared.isBrowserActive = browserState.showingWebContent
+
+        // Agentic Tools: give the local MCP server the live browser context (for the user's SearXNG
+        // instances) and start it if the user opted in. Off by default — no listener until enabled.
+        AgenticServerManager.shared.browserState = browserState
+        AgenticServerManager.shared.startIfEnabled()
 
         if UserDefaults.standard.string(forKey: "tabLayout") != "sidebar" {
             UserDefaults.standard.set("sidebar", forKey: "tabLayout")
@@ -297,10 +297,10 @@ struct ContentView: View {
                 NoSearxInstancesView(onOpenSettings: { browserState.showingSettings = true })
 
             } else if browserState.isLoadingSearch {
-                VStack(spacing: 12) {
-                    ProgressView().scaleEffect(1.2)
-                    Text(Localization.string("searching_searxng")).foregroundStyle(.secondary)
-                }
+                SearchLoadingView(
+                    torRouted: PrivacyManager.shared.appPrivacyMode == .maximum
+                        && PrivacyManager.shared.maxProtection == .tor
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             } else if !browserState.searchResults.isEmpty
@@ -344,6 +344,16 @@ struct ContentView: View {
                             clearNativeSearch()
                         }
                     },
+                    localPackState: browserState.localPackState,
+                    onOpenLocalPackURL: { urlString in
+                        if let url = URL(string: urlString) {
+                            browserState.searchText = urlString
+                            loadInWebView(url)
+                            clearNativeSearch()
+                        }
+                    },
+                    onEnableLocalPack: { browserState.enableLocalPackFromPrompt() },
+                    onDismissLocalPackPrompt: { browserState.dismissLocalPackPrompt() },
                     newsTimeRange: browserState.newsTimeRange,
                     newsSortByRecency: browserState.newsSortByRecency,
                     newsLastRefreshed: browserState.newsLastRefreshed,
@@ -422,24 +432,10 @@ struct ContentView: View {
                     isAddressBarFocused: $isAddressBarFocused,
                     searchErrorMessage: browserState.searchErrorMessage,
                     showInstanceNotDetected: browserState.shouldShowHomeInstanceWarning,
-                    showEnableAIToolsPrompt: AIFeatures.programEnabled && browserState.showEnableAIToolsPrompt,
-                    localAIChatEnabled: AIFeatures.programEnabled
-                        && LocalIntelligenceManager.shared.preferences.masterEnabled
-                        && LocalIntelligenceManager.shared.preferences.chatEnabled,
                     browserState: browserState,
                     onSubmit: { submitFromAddressBar() },
                     onOpenSettings: { browserState.showingSettings = true },
                     onDismissError: { browserState.searchErrorMessage = nil },
-                    onEnableAITools: {
-                        enableAIToolsQuick()
-                        browserState.showEnableAIToolsPrompt = false
-                    },
-                    onLaterAITools: {
-                        browserState.showEnableAIToolsPrompt = false
-                    },
-                    onOpenLocalAIChat: {
-                        browserState.openLocalAIChat()
-                    },
                     onOpenNewsStory: { result in
                         if let url = URL(string: result.url) {
                             HoverLinkState.shared.url = ""
@@ -493,22 +489,6 @@ struct ContentView: View {
                     .padding(.top, 90)
                     .padding(.trailing, 16)
                     .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
-                }
-            }
-            // Fluid centered floating panel for Local AI Chat (extracted).
-            .overlay {
-                if AIFeatures.programEnabled {
-                    LocalAIChatFloatingPanel(
-                        isPresented: $browserState.showingLocalAIChat,
-                        glassEnabled: glassEnabled,
-                        content: localAIChatView
-                    )
-                }
-            }
-            // Lightweight Siri-style quick answer (Explain / Summarize from page selection).
-            .overlay(alignment: .bottom) {
-                if AIFeatures.programEnabled {
-                    QuickAnswerPopup(browserState: browserState, glassEnabled: glassEnabled)
                 }
             }
             // Spotlight-style ⌘K command palette (tabs / bookmarks / history / quick actions).

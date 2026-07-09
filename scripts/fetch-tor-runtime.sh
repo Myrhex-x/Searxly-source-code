@@ -69,9 +69,32 @@ chmod +x "$OUT/tor"
 # Copy any sibling dylibs the binary may need (most expert-bundle builds are self-contained).
 find "$(dirname "$TOR_BIN")" -maxdepth 1 -name '*.dylib' -exec cp {} "$OUT/" \; 2>/dev/null || true
 
+# Pluggable transports for censored networks (see TorBridgeConfig.swift). Optional — Tor works without
+# them, but bridges won't. In the current expert bundle a SINGLE binary — `lyrebird` — serves BOTH obfs4
+# AND Snowflake (pt_config.json maps "snowflake … exec …/lyrebird"); there's no separate snowflake-client
+# anymore. So lyrebird is all we bundle. Kept under pluggable_transports/ so bundledPluggableTransportPath finds it.
+PT_SRC="$(find "$WORK" -type d -name pluggable_transports | head -1)"
+if [ -n "$PT_SRC" ]; then
+  mkdir -p "$OUT/pluggable_transports"
+  for pt in lyrebird; do
+    PT_BIN="$(find "$PT_SRC" -type f -name "$pt" -perm -u+x | head -1)"
+    if [ -n "$PT_BIN" ]; then
+      cp "$PT_BIN" "$OUT/pluggable_transports/$pt"
+      chmod +x "$OUT/pluggable_transports/$pt"
+      echo "  + pluggable transport: $pt"
+    else
+      echo "  note: pluggable transport '$pt' not found in bundle"
+    fi
+  done
+else
+  echo "  note: no pluggable_transports/ in this bundle — Tor bridges will be unavailable"
+fi
+
 if [ "${SEARXLY_RUNTIME_SKIP_SIGN:-0}" != "1" ]; then
   echo "▶ Code-signing (Hardened Runtime): $SIGN_IDENTITY"
   for f in "$OUT"/*.dylib; do [ -e "$f" ] && codesign --force --options runtime --timestamp -s "$SIGN_IDENTITY" "$f"; done
+  # Sign each pluggable-transport binary (Tor exec's them; they must satisfy the Hardened Runtime).
+  for f in "$OUT"/pluggable_transports/*; do [ -e "$f" ] && codesign --force --options runtime --timestamp -s "$SIGN_IDENTITY" "$f"; done
   codesign --force --options runtime --timestamp -s "$SIGN_IDENTITY" "$OUT/tor"
   codesign -dv "$OUT/tor" 2>&1 | sed 's/^/   /' || true
 else

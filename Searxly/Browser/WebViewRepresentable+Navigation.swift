@@ -5,6 +5,7 @@
 //  WKNavigationDelegate methods and certificate handling for WebViewRepresentable.Coordinator.
 //
 
+import AppKit
 import WebKit
 import os
 
@@ -16,13 +17,23 @@ extension WebViewRepresentable.Coordinator {
     /// per-tab plumbing is needed.
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
-                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+                 preferences: WKWebpagePreferences,
+                 decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        // Searxly Maximum "Safest" security level: deny content JavaScript on the WEB (remote http/https),
+        // which removes the JIT and the entire JS exploit surface — the class of bug historically used to
+        // deanonymise Tor users. The local SearXNG search UI (loopback) keeps JS so search still works.
+        if Edition.isMaximum, MaximumSecurity.effective.deniesRemoteJavaScript {
+            let host = navigationAction.request.url?.host?.lowercased()
+            let isLoopback = host == nil || host == "localhost" || host == "127.0.0.1" || host == "::1"
+            preferences.allowsContentJavaScript = isLoopback
+        }
+
         let isOnionTab = !webView.configuration.websiteDataStore.proxyConfigurations.isEmpty
         if isOnionTab {
             let scheme = navigationAction.request.url?.scheme?.lowercased() ?? ""
             let allowed: Set<String> = ["http", "https", "about", "data", "blob"]
             if !allowed.contains(scheme) {
-                decisionHandler(.cancel)
+                decisionHandler(.cancel, preferences)
                 return
             }
         }
@@ -32,12 +43,26 @@ extension WebViewRepresentable.Coordinator {
         if PrivacyGate.shared.shouldBlockWebNavigation(to: navigationAction.request.url) {
             if navigationAction.targetFrame?.isMainFrame ?? true {
                 lastBlockedURL = navigationAction.request.url
+                NetworkEgressLedger.record(host: navigationAction.request.url?.host, lane: .blocked, kind: "page")
                 let reason = PrivacyGate.shared.blockReason ?? "Maximum Privacy is on, but protection isn't active yet."
                 webView.loadHTMLString(Self.protectionBlockedHTML(reason: reason),
                                        baseURL: navigationAction.request.url)
                 Task { await PrivacyGate.shared.ensureProtection() }
             }
-            decisionHandler(.cancel)
+            decisionHandler(.cancel, preferences)
+            return
+        }
+        // Searxly Maximum: a link that would hand off to ANOTHER app (mailto:, magnet:, tel:, a custom
+        // scheme, etc.) can leak outside Tor — the receiving app ignores our proxy. Block the silent
+        // handoff and surface a confirmation instead. http(s) and our local/placeholder schemes pass.
+        if Edition.isMaximum,
+           let url = navigationAction.request.url,
+           let scheme = url.scheme?.lowercased(),
+           !["http", "https", "about", "data", "blob", "file", "searxly"].contains(scheme) {
+            decisionHandler(.cancel, preferences)
+            if navigationAction.targetFrame?.isMainFrame ?? true {
+                Self.confirmExternalAppHandoff(url)
+            }
             return
         }
         // ⌘-click a link → open it in a new tab (background by default, foreground with ⇧ held),
@@ -54,15 +79,40 @@ extension WebViewRepresentable.Coordinator {
                 object: url,
                 userInfo: ["background": !foreground]
             )
-            decisionHandler(.cancel)
+            decisionHandler(.cancel, preferences)
             return
         }
         // Links explicitly marked for download (e.g. <a download>) save to disk instead of navigating.
         if navigationAction.shouldPerformDownload {
-            decisionHandler(.download)
+            decisionHandler(.download, preferences)
             return
         }
-        decisionHandler(.allow)
+        // Network Ledger: record how this main-frame page load leaves the device (Tor / VPN / direct).
+        // Sub-resources ride the same per-tab lane, so the main-frame entry represents the whole page.
+        if navigationAction.targetFrame?.isMainFrame ?? true,
+           let url = navigationAction.request.url,
+           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            NetworkEgressLedger.recordWebNavigation(url: url, isOnionTab: isOnionTab)
+        }
+        decisionHandler(.allow, preferences)
+    }
+
+    /// Searxly Maximum: confirm before handing a link off to another app (mailto:, magnet:, tel:, a
+    /// custom scheme, …). The receiving app ignores Tor, so opening it can reveal the real IP — make it
+    /// a deliberate, one-off choice, never a silent handoff.
+    static func confirmExternalAppHandoff(_ url: URL) {
+        let shown = url.absoluteString.count > 140
+            ? String(url.absoluteString.prefix(140)) + "…"
+            : url.absoluteString
+        let alert = NSAlert()
+        alert.messageText = "Open this outside Searxly?"
+        alert.informativeText = "“\(shown)” would open in another app. That app doesn't use Tor, so it can reveal your real IP address. Only continue if you trust it."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Anyway")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// Onion-Location auto-detect: when a normal page's response carries an `Onion-Location` header

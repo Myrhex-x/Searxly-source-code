@@ -16,6 +16,19 @@ struct SearchResultsView: View {
     /// Wikipedia knowledge card for entity queries (web scope, non-private, setting-gated).
     @State private var knowledgeCard: KnowledgeCard?
 
+    /// News-tab lead: the freshest story with a real photo makes a magazine-style hero at the top.
+    /// nil when no result has an upscalable photo (then the tab is just rows — never an empty hero).
+    private var newsLead: SearXNGResult? {
+        guard model.scope == .news else { return nil }
+        return model.results.first { $0.newsHasResizablePhoto }
+    }
+
+    /// Results shown as rows — the lead is lifted into the hero above, so it never appears twice.
+    private var rowResults: [SearXNGResult] {
+        guard let lead = newsLead else { return model.results }
+        return model.results.filter { $0.id != lead.id }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             scopeBar
@@ -60,8 +73,8 @@ struct SearchResultsView: View {
                     let selected = model.scope == scope
                     Button { model.setScope(scope) } label: {
                         HStack(spacing: 5) {
-                            Image(systemName: scope.icon).font(.system(size: 11, weight: .semibold))
-                            Text(scope.label).font(.system(size: 13, weight: .semibold))
+                            Image(systemName: scope.icon).scaledFont(size: 11, weight: .semibold)
+                            Text(scope.label).scaledFont(size: 13, weight: .semibold)
                         }
                         .foregroundStyle(selected ? Brand.bg : Brand.text)
                         .padding(.horizontal, 14)
@@ -90,7 +103,7 @@ struct SearchResultsView: View {
     private func failed(_ message: String) -> some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.magnifyingglass")
-                .font(.system(size: 34, weight: .light))
+                .scaledFont(size: 34, weight: .light)
                 .foregroundStyle(Brand.textTertiary)
             Text(message)
                 .font(.callout)
@@ -115,15 +128,27 @@ struct SearchResultsView: View {
     /// A List (not a ScrollView) so rows get native trailing swipe actions:
     /// swipe LEFT on a result → Open in New Tab (full swipe) or Copy Link.
     private var webList: some View {
-        List {
-            // On-device AI Overview — allowed even in private tabs (zero egress).
-            if model.scope == .web, !model.results.isEmpty,
-               ShieldSettings.shared.aiOverview, PageIntelligence.isAvailable {
-                AIOverviewCard(model: model)
-                    .id(model.searchQuery)  // fresh card (and stream) per query
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+        // Computed here on the main actor: the separator inset closure below is @Sendable and can't
+        // read the MainActor-isolated `model.scope` itself, so we capture the resolved value.
+        let separatorLeading: CGFloat = model.scope == .news ? 16 : 58
+        return List {
+            // On-device AI Overview — allowed even in private tabs (zero egress). When the model isn't
+            // ready yet (downloading / Apple Intelligence off) a one-line status row explains WHY the
+            // overview is missing, instead of the SERP silently omitting it.
+            if model.scope == .web, !model.results.isEmpty, ShieldSettings.shared.aiOverview {
+                if PageIntelligence.isAvailable {
+                    AIOverviewCard(model: model)
+                        .id(model.searchQuery)  // fresh card (and stream) per query
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                } else if PageIntelligence.availability == .downloading
+                            || PageIntelligence.availability == .notEnabled {
+                    AIOverviewStatusRow(availability: PageIntelligence.availability)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
             }
 
             if model.scope == .web, let card = knowledgeCard {
@@ -133,21 +158,51 @@ struct SearchResultsView: View {
                     .listRowSeparator(.hidden)
             }
 
-            ForEach(Array(model.results.enumerated()), id: \.element.id) { index, result in
+            // Google-style "Top stories" module — fresh news for the query, inline in the All results.
+            if model.scope == .web, !model.allTabNews.isEmpty {
+                AllTabNewsModule(
+                    news: model.allTabNews,
+                    query: model.searchQuery,
+                    onOpen: { model.open($0) },
+                    onSeeAll: { model.setScope(.news) }
+                )
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+
+            // News tab: a magazine-style lead story above the rows.
+            if let lead = newsLead {
+                HomeTopStoryHero(cluster: NewsCluster(lead: lead, others: []), onOpen: { model.open($0) })
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 6)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+
+            ForEach(Array(rowResults.enumerated()), id: \.element.id) { index, result in
                 Button { model.open(result) } label: {
-                    WebResultRow(result: result,
-                                 query: model.searchQuery,
-                                 showsThumbnail: model.scope != .web)
+                    if model.scope == .news {
+                        NewsRowContent(result: result)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 13)
+                    } else {
+                        WebResultRow(result: result,
+                                     query: model.searchQuery,
+                                     showsThumbnail: model.scope != .web)
+                    }
                 }
                 .buttonStyle(.plain)
                 .contextMenu { ResultContextMenu(result: result, model: model) }
                 .onAppear {
-                    if index >= model.results.count - 3 { model.loadMore() }
+                    if index >= rowResults.count - 3 { model.loadMore() }
                 }
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
                 .listRowSeparatorTint(Brand.hairline)
-                .alignmentGuide(.listRowSeparatorLeading) { _ in 58 }
+                .alignmentGuide(.listRowSeparatorLeading) { _ in separatorLeading }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button {
                         // Full-swipe queues a background tab (stay on results); the menu foregrounds.
@@ -327,6 +382,9 @@ struct ResultContextMenu: View {
         if let url = URL(string: result.url) {
             Button { model.onOpenInNewTab?(url) } label: {
                 Label(L("Open in New Tab"), systemImage: "plus.square.on.square")
+            }
+            Button { ReadingListStore.shared.add(url: result.url, title: result.title) } label: {
+                Label(L("Add to Reading List"), systemImage: "eyeglasses")
             }
             Button { UIPasteboard.general.string = result.url } label: {
                 Label(L("Copy Link"), systemImage: "doc.on.doc")

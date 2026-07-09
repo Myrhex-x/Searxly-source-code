@@ -18,4 +18,9 @@ enum Haptics {
     static func tap() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
+
+    /// Completion notification — a task finished cleanly (a download landed).
+    static func success() {
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
 }

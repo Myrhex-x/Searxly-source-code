@@ -37,9 +37,7 @@ struct BrowserHeaderView: View {
     @Binding var showingFullHistory: Bool
     @Binding var showingDownloads: Bool
     @Binding var showingKeyboardShortcuts: Bool
-    let onSummarizePage: () -> Void
     let onShowFind: () -> Void
-    let onOpenLocalAIChat: () -> Void
     let onBookmarkCurrentPage: () -> Void
     let onGoBack: () -> Void
     let onGoForward: () -> Void
@@ -62,7 +60,7 @@ struct BrowserHeaderView: View {
         Group {
         if !isPureHomeState {
             HStack(spacing: 8) {
-                SearxlyVPNPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
+                if !Edition.isMaximum { SearxlyVPNPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial) }
 
                 // In Maximum + Tor, ALL traffic is Tor and the Maximum pill already owns that status
                 // (network + live circuit + new-circuit) — so the standalone Tor pill would just
@@ -133,9 +131,7 @@ struct BrowserHeaderView: View {
                     showingFullHistory: $showingFullHistory,
                     showingDownloads: $showingDownloads,
                     showingKeyboardShortcuts: $showingKeyboardShortcuts,
-                    onSummarizePage: AIFeatures.programEnabled ? onSummarizePage : nil,
                     onShowFind: onShowFind,
-                    onOpenLocalAIChat: AIFeatures.programEnabled ? onOpenLocalAIChat : nil,
                     currentWebDomain: currentWebDomain,
                     hasPasswordFieldOnPage: hasPasswordFieldOnPage,
                     isLikelySignupForm: isLikelySignupForm,
@@ -157,7 +153,7 @@ struct BrowserHeaderView: View {
             .frame(height: AdaptiveChrome.slimToolbarRowHeight)
         } else {
             HStack {
-                SearxlyVPNPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
+                if !Edition.isMaximum { SearxlyVPNPill(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial) }
                 if !foldTorIntoMaximumPill {
                     SearxlyTorPill(
                         glassEnabled: glassEnabled,
@@ -181,9 +177,7 @@ struct BrowserHeaderView: View {
                     showingFullHistory: $showingFullHistory,
                     showingDownloads: $showingDownloads,
                     showingKeyboardShortcuts: $showingKeyboardShortcuts,
-                    onSummarizePage: AIFeatures.programEnabled ? onSummarizePage : nil,
                     onShowFind: onShowFind,
-                    onOpenLocalAIChat: AIFeatures.programEnabled ? onOpenLocalAIChat : nil,
                     currentWebDomain: currentWebDomain,
                     hasPasswordFieldOnPage: hasPasswordFieldOnPage,
                     isLikelySignupForm: isLikelySignupForm,

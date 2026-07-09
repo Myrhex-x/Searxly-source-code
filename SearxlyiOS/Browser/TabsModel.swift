@@ -66,21 +66,24 @@ final class TabsModel {
         }()
 
         if let saved, !saved.tabs.isEmpty {
-            var restored: [BrowserModel] = []
+            var restored: [(tab: BrowserModel, url: URL)] = []
             for entry in saved.tabs.prefix(Self.restoreCap) {
                 guard let url = URL(string: entry.url) else { continue }
-                let tab = BrowserModel()
-                tab.load(url)
-                restored.append(tab)
+                restored.append((BrowserModel(), url))
             }
             if restored.isEmpty {
                 let first = BrowserModel()
                 tabs = [first]
                 activeID = first.id
             } else {
-                tabs = restored
                 let idx = min(max(saved.activeIndex, 0), restored.count - 1)
-                activeID = restored[idx].id
+                // Only the active tab loads at launch; the rest park and load on first activation —
+                // a huge launch win (no more N concurrent page loads + N script injections for N tabs).
+                for (i, entry) in restored.enumerated() {
+                    if i == idx { entry.tab.load(entry.url) } else { entry.tab.parkForRestore(entry.url) }
+                }
+                tabs = restored.map(\.tab)
+                activeID = restored[idx].tab.id
             }
         } else {
             let first = BrowserModel()
@@ -90,14 +93,25 @@ final class TabsModel {
         for tab in tabs { wire(tab) }
 
         // Persist when the app heads to background — the one reliable "session ended" signal.
-        // Also re-lock private tabs so they need Face ID again on return.
+        // Also re-lock private tabs so they need Face ID again on return, and — critically for
+        // battery — suspend all media so a page that's playing (or autoplaying) audio/video can't
+        // keep WebKit's media session, and therefore the whole app, awake in the background.
         NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.persistSession()
                 self?.privateTabsRevealed = false
+                self?.setMediaPlaybackSuspended(true)
             }
+        }
+
+        // Coming back to the foreground: lift the media suspension so the user can play again.
+        // Nothing auto-resumes — media we paused stays paused until tapped.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setMediaPlaybackSuspended(false) }
         }
 
         // Memory pressure: hibernate every background tab (about:blank placeholder + snapshot)
@@ -111,6 +125,20 @@ final class TabsModel {
 
     private func hibernateBackgroundTabs() {
         for tab in tabs where tab.id != activeID { tab.hibernate() }
+    }
+
+    /// Suspends (or resumes) HTML5 media on every live tab as the app leaves/enters the foreground.
+    /// This is the fix for "backgrounded Searxly heats the phone and drains the battery all day":
+    /// a page playing or autoplaying audio/video keeps WebKit's media session — and therefore the
+    /// whole app — from being suspended by iOS, so it keeps running (decoding media, firing the
+    /// page's timers) indefinitely in the background. Suspending media releases that hold; iOS then
+    /// suspends the app, which also stops every background task, timer, and animation. There is no
+    /// audio background mode, so nothing else keeps us awake once media is quiet.
+    private func setMediaPlaybackSuspended(_ suspended: Bool) {
+        for tab in tabs {
+            if suspended { tab.webView.pauseAllMediaPlayback(completionHandler: nil) }
+            tab.webView.setAllMediaPlaybackSuspended(suspended, completionHandler: nil)
+        }
     }
 
     /// Saves open web tabs (never private, never transient home/results states).

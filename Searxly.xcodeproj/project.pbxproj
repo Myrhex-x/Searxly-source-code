@@ -528,6 +528,7 @@
 				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "SearxlyiOS-Info.plist";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Face ID to unlock the app when App Lock is enabled.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -562,6 +563,7 @@
 				DEVELOPMENT_TEAM = KKRU446268;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "SearxlyiOS-Info.plist";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Face ID to unlock the app when App Lock is enabled.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

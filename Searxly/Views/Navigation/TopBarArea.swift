@@ -46,9 +46,7 @@ struct TopBarArea: View {
     let currentInstanceDisplay: String
 
     // Feature actions (Reader Mode, Find in Page)
-    var onSummarizePage: (() -> Void)? = nil
     var onShowFind: (() -> Void)? = nil
-    var onOpenLocalAIChat: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -129,9 +127,7 @@ struct TopBarArea: View {
                     showingFullHistory: $showingFullHistory,
                     showingDownloads: $showingDownloads,
                     showingKeyboardShortcuts: $showingKeyboardShortcuts,
-                    onSummarizePage: onSummarizePage,
-                    onShowFind: onShowFind,
-                    onOpenLocalAIChat: onOpenLocalAIChat
+                    onShowFind: onShowFind
                 )
             }
             .padding(.horizontal, 16)

@@ -198,6 +198,34 @@ final class BrowserTab: Identifiable {
     /// Native SERP / home entries that WKWebView history does not cover.
     let navigationHistory = TabNavigationHistory()
 
+    /// A security-scoped resource this tab is actively accessing — the local file or folder the user
+    /// opened via "Open File…" (NSOpenPanel hands back a sandbox-scoped URL). WebKit reads the HTML and
+    /// its sibling assets over the tab's lifetime, so the scope must stay open the whole time the tab is
+    /// showing the file; it's released when the tab is closed or deallocated. nil for ordinary web tabs.
+    private var securityScopedResource: URL?
+
+    /// Begins (and retains) security-scoped access to a local file/folder for this tab, releasing any
+    /// previously held one first (e.g. the tab navigated to a different local file). Safe to call with a
+    /// non-scoped URL — it simply won't be retained. Balanced by `releaseSecurityScopedAccess()`/`deinit`.
+    func retainSecurityScopedAccess(to url: URL) {
+        releaseSecurityScopedAccess()
+        if url.startAccessingSecurityScopedResource() {
+            securityScopedResource = url
+        }
+    }
+
+    /// Ends security-scoped access held for this tab, if any. Called on tab close and from `deinit`.
+    func releaseSecurityScopedAccess() {
+        if let url = securityScopedResource {
+            url.stopAccessingSecurityScopedResource()
+            securityScopedResource = nil
+        }
+    }
+
+    deinit {
+        securityScopedResource?.stopAccessingSecurityScopedResource()
+    }
+
     /// - Parameter hibernated: When true, a `.web` tab is created as a lazy *stub* — no WKWebView is
     ///   allocated and no page load is started. `currentURL`/`title` are still seeded so the sidebar can
     ///   render it. The tab transparently loads its page the first time it is selected (the existing
@@ -263,6 +291,10 @@ final class BrowserTab: Identifiable {
         // session/circuit and leave the tab unable to reload (.onion needs the proxied webView), and
         // onion tabs are ephemeral by design — there's nothing to restore them to.
         guard kind == .web, privacyMode != .onion else { return }
+        // Local-file tabs (opened via "Open File…") are never hibernated: waking reloads currentURL, but
+        // the security-scoped access grant can't be re-obtained without another user pick, so a woken
+        // file tab would fail to read its own file. Keep them resident, like onion tabs.
+        guard currentURL?.isFileURL != true else { return }
         guard !isHibernated, let wv = webView else { return }
         isHibernated = true
 

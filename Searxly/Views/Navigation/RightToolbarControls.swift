@@ -28,9 +28,7 @@ struct RightToolbarControls: View {
     @Binding var showingKeyboardShortcuts: Bool
 
     // New actions for extracted features (passed from parent to avoid global notifications)
-    var onSummarizePage: (() -> Void)? = nil
     var onShowFind: (() -> Void)? = nil
-    var onOpenLocalAIChat: (() -> Void)? = nil
 
     /// Optional current web domain for "Save current login" in the passwords pill.
     var currentWebDomain: String? = nil
@@ -173,9 +171,7 @@ struct RightToolbarControls: View {
                 onReaderMode: { NotificationCenter.default.post(name: .readerModeRequested, object: nil) },
                 onTranslatePage: { PageTranslator.shared.toggleTranslation(for: activeWebView) },
                 isPageTranslated: PageTranslator.shared.isTranslated(activeWebView),
-                onSummarizePage: onSummarizePage,
                 onShowFind: onShowFind,
-                onOpenLocalAIChat: onOpenLocalAIChat,
                 onOpenExtensions: onOpenExtensions,
                 onOpenWallet: onOpenWallet,
                 onOpenSettings: onOpenSettings,

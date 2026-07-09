@@ -31,9 +31,7 @@ struct BrowserMenuControl: View {
     var onTranslatePage: (() -> Void)? = nil
     /// Current page is showing translations → the row flips to "Show Original".
     var isPageTranslated: Bool = false
-    var onSummarizePage: (() -> Void)? = nil
     var onShowFind: (() -> Void)? = nil
-    var onOpenLocalAIChat: (() -> Void)? = nil
     var onOpenExtensions: (() -> Void)? = nil
     var onOpenWallet: (() -> Void)? = nil
     var onOpenSettings: (() -> Void)? = nil
@@ -93,9 +91,7 @@ struct BrowserMenuControl: View {
             onReaderMode: onReaderMode,
             onTranslatePage: onTranslatePage,
             isPageTranslated: isPageTranslated,
-            onSummarizePage: onSummarizePage,
             onShowFind: onShowFind,
-            onOpenLocalAIChat: onOpenLocalAIChat,
             onOpenExtensions: onOpenExtensions,
             onOpenWallet: onOpenWallet,
             onOpenSettings: onOpenSettings,
@@ -118,9 +114,7 @@ private struct BrowserMenuPanel: View {
     var onReaderMode: (() -> Void)? = nil
     var onTranslatePage: (() -> Void)? = nil
     var isPageTranslated: Bool = false
-    var onSummarizePage: (() -> Void)? = nil
     var onShowFind: (() -> Void)? = nil
-    var onOpenLocalAIChat: (() -> Void)? = nil
     var onOpenExtensions: (() -> Void)? = nil
     var onOpenWallet: (() -> Void)? = nil
     var onOpenSettings: (() -> Void)? = nil
@@ -131,7 +125,7 @@ private struct BrowserMenuPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if showingWebContent,
-               onReaderMode != nil || onTranslatePage != nil || onSummarizePage != nil || onShowFind != nil {
+               onReaderMode != nil || onTranslatePage != nil || onShowFind != nil {
                 section("THIS PAGE") {
                     if let onReaderMode {
                         BrowserMenuRow(icon: "doc.plaintext", label: "Reader View", shortcut: "⌘⇧R") {
@@ -145,13 +139,7 @@ private struct BrowserMenuPanel: View {
                             onClose(); onTranslatePage()
                         }
                     }
-                    if (onReaderMode != nil || onTranslatePage != nil) && onSummarizePage != nil { rowDivider }
-                    if let onSummarizePage {
-                        BrowserMenuRow(icon: "list.bullet.rectangle", label: "Summarize Page") {
-                            onClose(); onSummarizePage()
-                        }
-                    }
-                    if (onReaderMode != nil || onTranslatePage != nil || onSummarizePage != nil) && onShowFind != nil { rowDivider }
+                    if (onReaderMode != nil || onTranslatePage != nil) && onShowFind != nil { rowDivider }
                     if let onShowFind {
                         BrowserMenuRow(icon: "magnifyingglass", label: "Find on Page", shortcut: "⌘F") {
                             onClose(); onShowFind()
@@ -176,18 +164,10 @@ private struct BrowserMenuPanel: View {
                 }
             }
 
-            if onOpenLocalAIChat != nil || onOpenWallet != nil {
+            if let onOpenWallet {
                 section("TOOLS") {
-                    if let onOpenLocalAIChat {
-                        BrowserMenuRow(icon: "sparkles", label: "AI Chat", shortcut: "⌘⌥A") {
-                            onClose(); onOpenLocalAIChat()
-                        }
-                        if onOpenWallet != nil { rowDivider }
-                    }
-                    if let onOpenWallet {
-                        BrowserMenuRow(icon: "creditcard", label: "Wallet") {
-                            onClose(); onOpenWallet()
-                        }
+                    BrowserMenuRow(icon: "creditcard", label: "Wallet") {
+                        onClose(); onOpenWallet()
                     }
                 }
             }

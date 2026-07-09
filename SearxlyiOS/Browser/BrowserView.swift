@@ -10,6 +10,7 @@
 import SwiftUI
 import UIKit
 import WebKit
+import CoreSpotlight
 
 struct BrowserView: View {
     @State private var tabs = TabsModel()
@@ -18,14 +19,35 @@ struct BrowserView: View {
     @State private var showTabs = false
     @State private var showSettings = false
     @State private var showLibrary = false
+    @State private var libraryTab: LibraryView.Tab = .bookmarks
     @State private var showBurnConfirm = false
     @State private var showPageInfo = false
     @State private var showSummary = false
     @State private var showPageChat = false
     @State private var showReaderUnavailable = false
+    @State private var showDownloads = false
+    @State private var downloads = DownloadManager.shared
     @State private var intentRouter = IntentRouter.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var debugForceFocused = false
+    /// Live horizontal offset while swiping the bottom bar to switch tabs — interactive (tracks the
+    /// finger frame-by-frame), so it feels like Safari instead of a lurch on release.
+    @State private var dragX: CGFloat = 0
+    /// Screen width, captured continuously so the swipe thresholds and previews are exact. Seeded with
+    /// the current screen bounds so the gesture is correct even before the first layout pass.
+    @State private var contentWidth: CGFloat = BrowserView.initialScreenWidth
     @Environment(\.colorScheme) private var colorScheme
+
+    /// The active window scene's screen width (`UIScreen.main` is deprecated in iOS 26). This is only a
+    /// seed — `widthReader` overwrites it on the first layout pass — so a missing scene falls back to a
+    /// typical iPhone width rather than failing.
+    private static var initialScreenWidth: CGFloat {
+        let width = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?
+            .screen.bounds.width
+        return width ?? 393
+    }
 
     private var active: BrowserModel { tabs.active }
 
@@ -40,10 +62,27 @@ struct BrowserView: View {
 
     private var trimmedQuery: String { editingText.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    /// The empty-field quick-access panel is worth showing if there's anything for it — Top Sites
+    /// (history) or bookmarks to fall back on, recent searches, or a Paste-and-Go clipboard string.
+    /// `hasStrings` is banner-free (it doesn't read the clipboard), so this stays privacy-clean.
+    private var hasQuickPanelContent: Bool {
+        let lib = LibraryStore.shared
+        return !lib.recentSearches.isEmpty || !lib.history.isEmpty || !lib.bookmarks.isEmpty
+            || UIPasteboard.general.hasStrings
+    }
+
     var body: some View {
         ZStack {
             Brand.bg.ignoresSafeArea()
+
+            // Adjacent-tab previews slide in from the side during an interactive tab swipe (rendered
+            // only while a swipe is in progress, so there's zero cost at rest).
+            if dragX != 0 { swipePreviews }
+
+            // `.offset` is a render-only transform, so the web content still runs under the bar and the
+            // home/SERP keep their own layout — the swipe just slides them, Safari-style.
             content
+                .offset(x: dragX)
 
             // Focused overlay: a dim scrim (tap to dismiss) + private suggestions. Both are siblings of
             // `content` and render ABOVE the bar — they NEVER wrap the bottom bar / text field, so they
@@ -55,8 +94,9 @@ struct BrowserView: View {
                     .onTapGesture { addressFocused = false }
                     .transition(.opacity)
             }
-            // Non-empty query → live suggestions; empty query → recent searches (if any).
-            if addressFocused && (!trimmedQuery.isEmpty || !LibraryStore.shared.recentSearches.isEmpty) {
+            // Non-empty query → live suggestions; empty query → the quick-access panel (Top Sites +
+            // recent searches) whenever there's anything local to show.
+            if addressFocused && (!trimmedQuery.isEmpty || hasQuickPanelContent) {
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
                     SuggestionsView(
@@ -72,15 +112,21 @@ struct BrowserView: View {
             }
         }
         .animation(.easeOut(duration: 0.16), value: addressFocused)
+        .background(widthReader)
         // safeAreaInset keeps the floating glass bar pinned correctly and — crucially — lifts it above
         // the keyboard when the address field is focused, instead of letting it run off-screen.
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
         .sheet(isPresented: $showTabs) { TabSwitcherView(tabs: tabs) }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showLibrary) {
-            LibraryView { url in tabs.active.load(url) }
+            LibraryView(
+                initialTab: libraryTab,
+                onOpen: { url in tabs.active.load(url) },
+                onOpenInNewTab: { url in tabs.newTab(url: url); syncEditing() }
+            )
         }
         .sheet(isPresented: $showPageInfo) { PageInfoView(model: active) }
+        .sheet(isPresented: $showDownloads) { DownloadsView() }
         .sheet(isPresented: $showSummary) { SummarySheet(model: active) }
         .sheet(isPresented: $showPageChat) { PageChatSheet(model: active) }
         .sheet(item: readerBinding) { article in ReaderView(article: article) }
@@ -149,6 +195,16 @@ struct BrowserView: View {
                 // simctl can't send scroll gestures — force the minimized-chrome look instead.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { active.debugForceCollapsed() }
             }
+            if env["SEARXLY_DEMO_SWIPE"] == "1" {
+                // simctl can't do a fluid drag — load two pages, then park the gesture mid-swipe so the
+                // next tab's live preview sliding in is screenshottable.
+                active.load(URL(string: "https://en.wikipedia.org/wiki/Tiger")!)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                    _ = tabs.newTab(url: URL(string: "https://en.wikipedia.org/wiki/Lion")!)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) { tabs.switchToPrevious() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8.5) { dragX = -175 }
+            }
             switch env["SEARXLY_DEMO_PANEL"] {
             case "settings":
                 showSettings = true
@@ -166,20 +222,79 @@ struct BrowserView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { showSummary = true }
             case "reader":
                 DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) { openReader() }
+            case "downloads":
+                DownloadManager.shared.seedDemo()
+                showDownloads = true
+            case "reading":
+                ReadingListStore.shared.seedDemo()
+                libraryTab = .reading
+                showLibrary = true
             default:
                 break
             }
             #endif
         }
         .background { keyboardShortcuts }
+        .overlay { privacySnapshotCover }
         .onAppear { consumePendingIntents() }
         .onChange(of: intentRouter.pendingSearch) { consumePendingIntents() }
         .onChange(of: intentRouter.pendingPrivateTab) { consumePendingIntents() }
+        .onChange(of: intentRouter.pendingNewSearch) { consumePendingIntents() }
+        .onChange(of: intentRouter.pendingReopenLast) { consumePendingIntents() }
+        .onChange(of: intentRouter.pendingURL) { consumePendingIntents() }
+        .onChange(of: intentRouter.pendingDownloads) { consumePendingIntents() }
         .onChange(of: active.id) { syncEditing() }
         .onChange(of: active.displayText) { if !addressFocused { syncEditing() } }
+        // A download just started → surface the Downloads sheet (Safari's downloads popover).
+        .onChange(of: downloads.startedGeneration) { showDownloads = true }
         .onChange(of: addressFocused) { _, focused in
             editingText = focused ? active.editText : active.displayText
             if focused { active.expandChrome() }
+        }
+        // Publish the current page for Handoff so it can be picked up on the Mac (or any device
+        // signed into the same iCloud account). Never for private tabs or non-web content —
+        // `handoffURL` is nil there and the activity goes inactive.
+        .userActivity(NSUserActivityTypeBrowsingWeb, isActive: handoffURL != nil) { activity in
+            guard let url = handoffURL else { return }
+            activity.webpageURL = url
+            activity.title = active.pageTitle.isEmpty ? url.absoluteString : active.pageTitle
+            activity.isEligibleForHandoff = true
+            activity.isEligibleForSearch = false
+            activity.isEligibleForPrediction = false
+        }
+        // A tapped Spotlight bookmark hands us its URL → open it in a new tab.
+        .onContinueUserActivity(CSSearchableItemActionType) { activity in
+            if let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+               let url = URL(string: id) {
+                intentRouter.pendingURL = url
+            }
+        }
+        // searxly:// deep links (Home Screen widgets, Share extension, Shortcuts) → the browser.
+        .onOpenURL { handleDeepLink($0) }
+    }
+
+    /// Routes a `searxly://` deep link into the browser via IntentRouter. Hosts:
+    /// `search` (focus a new search), `private` (new private tab), `reopen` (reopen last tab),
+    /// `open?url=…` (open a specific page).
+    private func handleDeepLink(_ url: URL) {
+        // Plain web links handed to us (Share extension, another app, or as the default browser)
+        // open in a new tab.
+        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            intentRouter.pendingURL = url
+            return
+        }
+        guard url.scheme == "searxly" else { return }
+        switch url.host {
+        case "search":  intentRouter.pendingNewSearch = true
+        case "private": intentRouter.pendingPrivateTab = true
+        case "reopen":  intentRouter.pendingReopenLast = true
+        case "open":
+            if let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                            .queryItems?.first(where: { $0.name == "url" })?.value,
+               let target = URL(string: value), (target.scheme?.hasPrefix("http") ?? false) {
+                intentRouter.pendingURL = target
+            }
+        default: break
         }
     }
 
@@ -188,12 +303,11 @@ struct BrowserView: View {
         switch active.content {
         case .home:
             HomeView(
-                onPullDown: {
-                    Haptics.tick()
-                    addressFocused = true
-                },
-                onSwipeUp: { openTabs() },
-                onOpenFavorite: { url in active.load(url) }
+                onOpenFavorite: { url in active.load(url) },
+                onOpenFavoriteNewTab: { url in tabs.newTab(url: url); syncEditing() },
+                onOpenStory: { result in active.open(result) },
+                onSeeAllNews: { query in active.runSearch(query, scope: .news) },
+                isPrivate: active.isPrivate
             )
         case .results:
             SearchResultsView(model: active)
@@ -239,7 +353,15 @@ struct BrowserView: View {
         }
     }
 
-    /// Consumes any action handed over by an App Intent (Siri / Spotlight / Shortcuts).
+    /// The page to advertise for Handoff: the active tab's web URL, and only for normal (non-private)
+    /// tabs. Nil disables the activity entirely (home, native SERP, or any private tab).
+    private var handoffURL: URL? {
+        guard !active.isPrivate, let s = active.currentURLString else { return nil }
+        return URL(string: s)
+    }
+
+    /// Consumes any action handed over by an App Intent, home-screen Quick Action, or a tapped
+    /// Spotlight result — all delivered through IntentRouter on the main actor.
     private func consumePendingIntents() {
         if let q = intentRouter.pendingSearch {
             intentRouter.pendingSearch = nil
@@ -251,6 +373,26 @@ struct BrowserView: View {
             intentRouter.pendingPrivateTab = false
             tabs.newTab(isPrivate: true)
             syncEditing()
+        }
+        if intentRouter.pendingNewSearch {
+            intentRouter.pendingNewSearch = false
+            tabs.newTab()
+            syncEditing()
+            addressFocused = true
+        }
+        if intentRouter.pendingReopenLast {
+            intentRouter.pendingReopenLast = false
+            tabs.reopenMostRecent()
+            syncEditing()
+        }
+        if let url = intentRouter.pendingURL {
+            intentRouter.pendingURL = nil
+            tabs.newTab(url: url)
+            syncEditing()
+        }
+        if intentRouter.pendingDownloads {
+            intentRouter.pendingDownloads = false
+            showDownloads = true
         }
     }
 
@@ -274,6 +416,10 @@ struct BrowserView: View {
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             Button("") { openTabs() }
                 .keyboardShortcut("\\", modifiers: [.command, .shift])
+            Button("") { if active.content == .web { active.toggleBookmarkCurrent() } }
+                .keyboardShortcut("d", modifiers: .command)
+            Button("") { libraryTab = .history; showLibrary = true }
+                .keyboardShortcut("y", modifiers: .command)
         }
         .frame(width: 0, height: 0)
         .opacity(0)
@@ -301,12 +447,29 @@ struct BrowserView: View {
             lib.toggleBookmark(url: "https://www.swift.org", title: "Swift.org — Welcome to Swift.org")
             lib.toggleBookmark(url: "https://news.ycombinator.com", title: "Hacker News")
         }
-        if lib.history.isEmpty {
-            lib.recordVisit(url: "https://en.wikipedia.org/wiki/Coffee", title: "Coffee — Wikipedia")
-            lib.recordVisit(url: "https://www.apple.com", title: "Apple")
-        }
+        lib.seedDemoHistory()
     }
     #endif
+
+    /// Opaque cover drawn in the app-switcher snapshot (and any inactive / interrupted state) whenever
+    /// a private tab is open — so a private page never leaks into the multitasking preview, even when
+    /// App Lock is off. Renders nothing while the scene is active or when no private tabs exist.
+    @ViewBuilder private var privacySnapshotCover: some View {
+        if scenePhase != .active && tabs.hasPrivateTabs {
+            ZStack {
+                Brand.bg.ignoresSafeArea()
+                VStack(spacing: 10) {
+                    Image(systemName: "hand.raised.fill")
+                        .scaledFont(size: 26, weight: .medium)
+                        .foregroundStyle(Brand.textSecondary)
+                    Text("Private")
+                        .scaledFont(size: 15, weight: .semibold)
+                        .foregroundStyle(Brand.textSecondary)
+                }
+            }
+            .transition(.opacity)
+        }
+    }
 
     // MARK: - Bottom bar (Safari-style floating Liquid Glass card)
 
@@ -349,30 +512,166 @@ struct BrowserView: View {
         return colorScheme == .dark ? Color.black.opacity(0.32) : Color.black.opacity(0.05)
     }
 
-    /// Toolbar gestures (Safari-style), attached only to the toolbar row — NEVER the address pill,
-    /// since a drag recognizer over a TextField breaks text editing:
-    ///   · horizontal swipe → previous/next tab
-    ///   · swipe up → tab overview
-    private var toolbarSwipe: some Gesture {
-        DragGesture(minimumDistance: 24).onEnded { handleBarSwipe($0) }
+    // MARK: - Interactive tab swipe (Safari-style)
+
+    /// The tab to the left / right of the active one (nil at the ends).
+    private var prevTab: BrowserModel? {
+        let i = tabs.activeIndex
+        return i > 0 ? tabs.tabs[i - 1] : nil
+    }
+    private var nextTab: BrowserModel? {
+        let i = tabs.activeIndex
+        return i < tabs.tabs.count - 1 ? tabs.tabs[i + 1] : nil
     }
 
-    /// Shared bottom-bar swipe logic (pill + toolbar): swipe UP → all-tabs overview (generous
-    /// tolerance so a natural upward flick that drifts sideways still counts), horizontal →
-    /// switch tabs, swipe DOWN → reopen the last closed tab.
-    private func handleBarSwipe(_ value: DragGesture.Value) {
-        let w = value.translation.width
-        let h = value.translation.height
-        if h < -28, abs(w) < 70 {
-            openTabs()
-        } else if h > 34, abs(w) < 70, !tabs.recentlyClosed.isEmpty {
-            Haptics.tick()
-            tabs.reopenMostRecent()
-            syncEditing()
-        } else if abs(w) > 55, abs(h) < 40 {
-            withAnimation(.smooth) {
-                if w < 0 { tabs.switchToNext() } else { tabs.switchToPrevious() }
+    /// One interactive drag on the bottom bar. `.onChanged` moves `dragX` with the finger every frame
+    /// (this is what makes it fluid — the old code only reacted on release), and `.onEnded` settles with
+    /// a velocity-aware spring: horizontal → switch tabs (or a new tab past the last), up → the tab grid,
+    /// down → reopen the last closed tab.
+    private var barDrag: some Gesture {
+        DragGesture(minimumDistance: 6)
+            .onChanged { value in
+                guard !barFocused else { return }
+                // Track clearly-horizontal drags only; vertical intents resolve on release.
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                dragX = rubberBanded(value.translation.width)
             }
+            .onEnded { value in
+                guard !barFocused else { dragX = 0; return }
+                endBarDrag(value)
+            }
+    }
+
+    /// Resistance past the ends: you can page LEFT past the last tab (that reveals a new tab), but not
+    /// RIGHT past the first; and a one-screen clamp so a page never over-travels.
+    private func rubberBanded(_ x: CGFloat) -> CGFloat {
+        let w = contentWidth
+        if x > 0, prevTab == nil { return rubber(x, w) }
+        return max(-w, min(w, x))
+    }
+
+    private func rubber(_ x: CGFloat, _ w: CGFloat) -> CGFloat {
+        let c: CGFloat = 0.55
+        return (1 - 1 / (x * c / w + 1)) * w
+    }
+
+    private func endBarDrag(_ value: DragGesture.Value) {
+        let t = value.translation
+        let v = value.velocity
+        let w = contentWidth
+
+        // Mostly-vertical flick → grid (up) / reopen last closed (down).
+        if abs(t.height) > abs(t.width), abs(t.height) > 40 {
+            dragX = 0
+            if t.height < 0 {
+                openTabs()
+            } else if !tabs.recentlyClosed.isEmpty {
+                Haptics.tick(); tabs.reopenMostRecent(); syncEditing()
+            }
+            return
+        }
+
+        // Horizontal: commit if dragged far enough OR flicked hard enough (velocity), else snap back.
+        let goLeft  = dragX < -w * 0.30 || (v.width < -500 && dragX < -8)
+        let goRight = dragX >  w * 0.30 || (v.width >  500 && dragX >  8)
+
+        if goLeft {
+            if nextTab != nil { commitSwitch(toNext: true) } else { commitNewTab() }
+        } else if goRight, prevTab != nil {
+            commitSwitch(toNext: false)
+        } else {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { dragX = 0 }
+        }
+    }
+
+    /// Slide the current page fully out, then swap to the neighbour and reset the offset — the incoming
+    /// snapshot was already at x=0, so the live view replaces it with no visible jump.
+    private func commitSwitch(toNext: Bool) {
+        Haptics.tick()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            dragX = toNext ? -contentWidth : contentWidth
+        } completion: {
+            if toNext { tabs.switchToNext() } else { tabs.switchToPrevious() }
+            dragX = 0
+            syncEditing()
+        }
+    }
+
+    private func commitNewTab() {
+        Haptics.tap()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            dragX = -contentWidth
+        } completion: {
+            _ = tabs.newTab()
+            dragX = 0
+            syncEditing()
+        }
+    }
+
+    // MARK: - Swipe previews
+
+    /// Captures the live screen width so the swipe math is exact (and updates on rotation).
+    private var widthReader: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onChange(of: geo.size.width, initial: true) { _, w in contentWidth = max(w, 1) }
+        }
+    }
+
+    /// The adjacent tab(s), rendered behind `content` only while swiping: a live snapshot when we have
+    /// one, else a light identity placeholder; a "+" page when paging past the last tab toward a new one.
+    private var swipePreviews: some View {
+        GeometryReader { geo in
+            let w = max(geo.size.width, 1)
+            ZStack {
+                if dragX > 0, let prev = prevTab {
+                    tabPreview(prev).offset(x: dragX - w)
+                } else if dragX < 0 {
+                    Group {
+                        if let next = nextTab { tabPreview(next) } else { newTabPreview }
+                    }
+                    .offset(x: dragX + w)
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private func tabPreview(_ tab: BrowserModel) -> some View {
+        ZStack {
+            Brand.bg
+            if let snapshot = tab.snapshot {
+                Image(uiImage: snapshot).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: tab.isPrivate ? "hand.raised.fill" : "magnifyingglass")
+                        .scaledFont(size: 24, weight: .light)
+                        .foregroundStyle(Brand.textTertiary)
+                    Text(previewLabel(tab))
+                        .scaledFont(size: 14, weight: .medium)
+                        .foregroundStyle(Brand.textSecondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 40)
+                }
+            }
+        }
+        .clipped()
+    }
+
+    private var newTabPreview: some View {
+        ZStack {
+            Brand.bg
+            Image(systemName: "plus")
+                .scaledFont(size: 30, weight: .light)
+                .foregroundStyle(Brand.textTertiary)
+        }
+    }
+
+    private func previewLabel(_ tab: BrowserModel) -> String {
+        switch tab.content {
+        case .home:    return L("New Tab")
+        case .results: return tab.searchQuery
+        case .web:     return tab.webView.url?.host ?? tab.sessionURL?.host ?? (tab.pageTitle.isEmpty ? L("Tab") : tab.pageTitle)
         }
     }
 
@@ -390,7 +689,7 @@ struct BrowserView: View {
                     if active.content == .web { showPageInfo = true }
                 } label: {
                     Image(systemName: pillIcon)
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textTertiary)
                 }
                 .buttonStyle(.plain)
@@ -418,9 +717,9 @@ struct BrowserView: View {
                 if active.pageBlockedCount > 0 {
                     HStack(spacing: 3) {
                         Image(systemName: "shield.fill")
-                            .font(.system(size: 10, weight: .medium))
+                            .scaledFont(size: 10, weight: .medium)
                         Text("\(active.pageBlockedCount)")
-                            .font(.system(size: 11, weight: .semibold))
+                            .scaledFont(size: 11, weight: .semibold)
                             .monospacedDigit()
                     }
                     .foregroundStyle(Brand.textTertiary)
@@ -428,7 +727,7 @@ struct BrowserView: View {
                 }
                 Button { active.reloadOrStop() } label: {
                     Image(systemName: active.isLoading ? "xmark" : "arrow.clockwise")
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(size: 13, weight: .medium)
                         .foregroundStyle(Brand.textSecondary)
                 }
                 .buttonStyle(.plain)
@@ -448,14 +747,10 @@ struct BrowserView: View {
         // Recessed field inside the glass card (Safari look) — not a second glass layer.
         .background(Capsule().fill(Brand.text.opacity(barFocused ? 0.11 : 0.07)))
         .overlay(Capsule().strokeBorder(Brand.text.opacity(barFocused ? 0.10 : 0.06), lineWidth: 0.5))
-        // Safari's signature: swipe the address pill sideways to switch tabs, up for the grid.
-        // The mask (not a structural branch — see the typing-bug rule) disables it entirely
-        // while editing, so a drag can never fight the TextField.
-        .simultaneousGesture(pillSwipe, including: barFocused ? .none : .all)
-    }
-
-    private var pillSwipe: some Gesture {
-        DragGesture(minimumDistance: 22).onEnded { handleBarSwipe($0) }
+        // Safari's signature: swipe the address pill sideways to switch tabs (interactive — the page
+        // tracks your finger), up for the grid. The mask (not a structural branch — see the typing-bug
+        // rule) disables it entirely while editing, so a drag can never fight the TextField.
+        .simultaneousGesture(barDrag, including: barFocused ? .none : .all)
     }
 
     private var pillIcon: String {
@@ -476,7 +771,7 @@ struct BrowserView: View {
             pageMenu
                 .accessibilityLabel("Page options")
             Spacer()
-            navButton("book") { showLibrary = true }
+            navButton("book") { libraryTab = .bookmarks; showLibrary = true }
                 .accessibilityLabel("Bookmarks and history")
             Spacer()
             tabsButton
@@ -484,7 +779,7 @@ struct BrowserView: View {
         }
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
-        .simultaneousGesture(toolbarSwipe)
+        .simultaneousGesture(barDrag)
     }
 
     /// Back/forward with Safari's long-press history menu (tap = step once).
@@ -506,7 +801,7 @@ struct BrowserView: View {
                 }
             } label: {
                 Image(systemName: systemName)
-                    .font(.system(size: 20, weight: .regular))
+                    .scaledFont(size: 20, weight: .regular)
                     .foregroundStyle(enabled ? Brand.text : Brand.text.opacity(0.22))
                     .frame(width: 44, height: 34)
                     .contentShape(Rectangle())
@@ -572,6 +867,12 @@ struct BrowserView: View {
                     Button { active.toggleBookmarkCurrent() } label: {
                         Label(active.isCurrentBookmarked ? L("Remove Bookmark") : L("Add Bookmark"),
                               systemImage: active.isCurrentBookmarked ? "bookmark.fill" : "bookmark")
+                    }
+                    Button {
+                        ReadingListStore.shared.toggle(url: urlStr, title: active.pageTitle)
+                    } label: {
+                        Label(ReadingListStore.shared.contains(urlStr) ? L("Remove from Reading List") : L("Add to Reading List"),
+                              systemImage: "eyeglasses")
                     }
                     ShareLink(item: url) { Label(L("Share…"), systemImage: "square.and.arrow.up") }
                     if let clean = active.cleanLinkString, clean != urlStr {
@@ -651,6 +952,10 @@ struct BrowserView: View {
             }
 
             Section {
+                Button { showDownloads = true } label: {
+                    Label(downloads.badgeCount > 0 ? "\(L("Downloads")) (\(downloads.badgeCount))" : L("Downloads"),
+                          systemImage: "arrow.down.circle")
+                }
                 Button { showSettings = true } label: {
                     Label(L("Settings"), systemImage: "gearshape")
                 }
@@ -660,7 +965,7 @@ struct BrowserView: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 19, weight: .regular))
+                .scaledFont(size: 19, weight: .regular)
                 .foregroundStyle(Brand.text)
                 .frame(width: 44, height: 34)
                 .contentShape(Rectangle())
@@ -673,7 +978,7 @@ struct BrowserView: View {
                 .stroke(Brand.text, lineWidth: 1.7)
                 .frame(width: 22, height: 22)
             Text("\(tabs.tabs.count)")
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(size: 12, weight: .semibold)
                 .foregroundStyle(Brand.text)
         }
     }
@@ -681,7 +986,7 @@ struct BrowserView: View {
     private func navButton(_ systemName: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 20, weight: .regular))
+                .scaledFont(size: 20, weight: .regular)
                 .foregroundStyle(enabled ? Brand.text : Brand.text.opacity(0.22))
                 .frame(width: 44, height: 34)
                 .contentShape(Rectangle())
@@ -703,11 +1008,11 @@ private struct ErrorPageView: View {
             Brand.bg.ignoresSafeArea()
             VStack(spacing: 16) {
                 Image(systemName: "wifi.exclamationmark")
-                    .font(.system(size: 36, weight: .light))
+                    .scaledFont(size: 36, weight: .light)
                     .foregroundStyle(Brand.textTertiary)
                 if !host.isEmpty {
                     Text(host)
-                        .font(.system(size: 17, weight: .semibold))
+                        .scaledFont(size: 17, weight: .semibold)
                         .foregroundStyle(Brand.text)
                 }
                 Text(message)

@@ -76,6 +76,19 @@ final class PrivacyManager {
         appPrivacyMode = persistedData.appPrivacyMode
         maxProtection = persistedData.maxProtection
 
+        // Searxly Maximum is permanently in Maximum Privacy over Tor — the posture is not
+        // user-selectable in that edition. Force it on every launch regardless of the persisted
+        // value, so PrivacyGate (kill switch) and WebViewFactory (Strict farbling) engage from launch.
+        if Edition.isMaximum {
+            appPrivacyMode = .maximum
+            // Protection network is user-selectable in Maximum: Tor (default, most private) or the faster
+            // Searxly VPN. Respect the persisted choice, but fall back to Tor if VPN was picked and isn't
+            // currently unlocked (payments off today → VPN is free; this is the seam for later).
+            if maxProtection == .vpn && !LicenseManager.shared.isUnlocked(.fasterVPN) {
+                maxProtection = .tor
+            }
+        }
+
         // Load encryption preference (stored in a small metadata key for now).
         dataEncryptionEnabled = EncryptedDataStore.isEncryptionEnabled()
     }
@@ -105,6 +118,11 @@ final class PrivacyManager {
         data.historyEnabled = false
         data.defaultNewTabsToPrivate = true
         data.appLockEnabled = deviceAuthAvailable
+        if Edition.isMaximum {
+            // Searxly Maximum starts fully locked down: Maximum Privacy over Tor.
+            data.appPrivacyMode = .maximum
+            data.maxProtection = .tor
+        }
         Persistence.save(data)
 
         let manager = PrivacyManager.shared
@@ -114,6 +132,12 @@ final class PrivacyManager {
 
         if deviceAuthAvailable {
             AppLockManager.shared.setAppLockEnabled(true)
+        }
+
+        if Edition.isMaximum {
+            // Complete the Maximum posture on first run: Strict fingerprint cluster + kill switch.
+            // (Mode/protection are forced in init() and persisted above; encryption/App Lock done here.)
+            manager.enableStrictPrivacyMode()
         }
 
         if DeveloperSettings.shared.verboseSecurityLogging {
@@ -161,6 +185,8 @@ final class PrivacyManager {
     /// lower mode only disengages the web-layer protections (kill switch + farbling), which are keyed
     /// off this value at read time. Posts `appPrivacyModeChangedNotification` so tabs refresh.
     func setAppPrivacyMode(_ mode: AppPrivacyMode) {
+        // Searxly Maximum can never leave Maximum Privacy — ignore any downgrade attempt.
+        if Edition.isMaximum && mode != .maximum { return }
         guard mode != appPrivacyMode else { return }
         switch mode {
         case .normal:
@@ -179,6 +205,8 @@ final class PrivacyManager {
     /// own hardening (possibly with different options, like App Lock off). Posts the change notification
     /// so open tabs rebuild and PrivacyGate updates.
     func markAppPrivacyMode(_ mode: AppPrivacyMode) {
+        // Searxly Maximum can never leave Maximum Privacy — this closes the onboarding path too.
+        if Edition.isMaximum && mode != .maximum { return }
         guard mode != appPrivacyMode else { return }
         appPrivacyMode = mode
         Persistence.setAppPrivacyMode(mode)
@@ -188,6 +216,12 @@ final class PrivacyManager {
 
     /// Sets which network Maximum Privacy enforces (Searxly VPN or Tor) and persists it.
     func setMaxProtection(_ protection: MaxProtection) {
+        // Tor is the default and always free. The faster Searxly VPN lane is user-selectable in Maximum
+        // but will one day require a paid Maximum license — while payments are off it's free (see Licensing).
+        var protection = protection
+        if Edition.isMaximum, protection == .vpn, !LicenseManager.shared.isUnlocked(.fasterVPN) {
+            protection = .tor
+        }
         guard protection != maxProtection else { return }
         maxProtection = protection
         Persistence.setMaxProtection(protection)
@@ -359,14 +393,6 @@ final class PrivacyManager {
             clearStandardWebData()
         }
 
-        // Phase 0+: also force-disable Local AI features and clear any transient synthesis/chat state.
-        // Users who want "Maximum Privacy" should not have on-device AI running.
-        // Also clear any (possibly permanently saved) Local AI chat transcript.
-        LocalIntelligenceManager.shared.isEnabled = false
-        Task { await LocalIntelligenceManager.shared.unloadAll() }
-        LocalIntelligenceManager.shared.clearCurrentChatTranscript()
-        NotificationCenter.default.post(name: Notification.Name("Searxly.LocalAIClearRequested"), object: nil)
-
         if DeveloperSettings.shared.verboseSecurityLogging {
             Log.privacy.info("PrivacyManager: Strict/Maximum Privacy mode enabled (private tabs default + history off + Local AI disabled)")
         }
@@ -519,16 +545,9 @@ final class PrivacyManager {
                 Task { @MainActor in
                     await LocalSearxngManager.shared.stop()
                     Log.privacy.notice("PrivacyManager: panic wipe also stopped the local SearXNG process")
-                    // New in Phase 0: also nuke any in-memory AI state (synthesis, rewrite badge, open chat sheet, etc.)
-                    // The manager itself will unload models when the master toggle is forced off by UI or other paths.
-                    // We call through BrowserState if a reference is available; otherwise the next load will see clean state.
-                    LocalIntelligenceManager.shared.clearCurrentChatTranscript()
-                    NotificationCenter.default.post(name: Notification.Name("Searxly.LocalAIClearRequested"), object: nil)
                     completion?()
                 }
             } else {
-                LocalIntelligenceManager.shared.clearCurrentChatTranscript()
-                NotificationCenter.default.post(name: Notification.Name("Searxly.LocalAIClearRequested"), object: nil)
                 completion?()
             }
         }
@@ -556,17 +575,12 @@ final class PrivacyManager {
         Persistence.save(current)
 
         NotificationCenter.default.post(name: Self.historyClearedNotification, object: nil)
-        // P5: if RAG was using history, drop the in-memory index so the next retrieve/chat can't
-        // surface items the user just asked to forget. Rebuild will happen on next use if RAG still enabled.
-        LocalIntelligenceManager.shared.clearRAGIndex()
         Log.privacy.info("PrivacyManager: history cleared (since: \(since?.description ?? "all time"))")
     }
 
     /// Clears persisted bookmarks.
     func clearBookmarks() {
         Persistence.clearBookmarks()
-        // P5: keep RAG index in sync with the cleared data.
-        LocalIntelligenceManager.shared.clearRAGIndex()
     }
 
     /// Clears cookies, caches, localStorage, etc. for all *standard* (non-private) tabs.

@@ -17,13 +17,13 @@ struct PrivacyReportView: View {
             Section {
                 VStack(spacing: 6) {
                     Image(systemName: "shield.fill")
-                        .font(.system(size: 26, weight: .medium))
+                        .scaledFont(size: 26, weight: .medium)
                         .foregroundStyle(Brand.textSecondary)
                     Text(shields.lifetimeTrackersBlocked.formatted())
-                        .font(.system(size: 40, weight: .bold)).monospacedDigit()
+                        .scaledFont(size: 40, weight: .bold).monospacedDigit()
                         .foregroundStyle(Brand.text)
                     Text("tracking requests blocked")
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textTertiary)
                 }
                 .frame(maxWidth: .infinity)
@@ -39,11 +39,11 @@ struct PrivacyReportView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
                                 Text(entry.domain)
-                                    .font(.system(size: 14, weight: .medium))
+                                    .scaledFont(size: 14, weight: .medium)
                                     .lineLimit(1)
                                 Spacer()
                                 Text(entry.count.formatted())
-                                    .font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                                    .scaledFont(size: 13, weight: .semibold).monospacedDigit()
                                     .foregroundStyle(Brand.textSecondary)
                             }
                             GeometryReader { geo in

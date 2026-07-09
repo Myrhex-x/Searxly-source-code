@@ -42,17 +42,12 @@ struct HomeView: View {
 
     let searchErrorMessage: String?
     let showInstanceNotDetected: Bool
-    let showEnableAIToolsPrompt: Bool
-    let localAIChatEnabled: Bool
 
     @Bindable var browserState: BrowserState
 
     let onSubmit: () -> Void
     let onOpenSettings: () -> Void
     let onDismissError: () -> Void
-    let onEnableAITools: () -> Void
-    let onLaterAITools: () -> Void
-    let onOpenLocalAIChat: () -> Void
     /// Opens a home-news story in the browser.
     var onOpenNewsStory: (SearXNGResult) -> Void = { _ in }
     /// Runs the News tab for a topic (the "See all" action).
@@ -75,6 +70,11 @@ struct HomeView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(alignment: .center, spacing: 34) {
                         heroSection(height: proxy.size.height, upwardBias: upwardBias, withScrollHint: true)
+
+                        newsRefreshControl
+                            .frame(maxWidth: 1060, alignment: .trailing)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 28)
 
                         breakingHeroSlot
                             .frame(maxWidth: 1060, alignment: .leading)
@@ -102,8 +102,18 @@ struct HomeView: View {
                 .scrollIndicators(.hidden)
                 .onAppear {
                     revealHero()
-                    // Preload the hero + all topics up front so scrolling reveals ready content.
-                    HomeNewsFeed.shared.loadAll(instances: browserState.searxInstances)
+                    // Preload topic news in the background — deferred past first paint and bounded, so the
+                    // home no longer stalls the instant it opens (see HomeNewsFeed.preload).
+                    HomeNewsFeed.shared.preload(instances: browserState.searxInstances)
+                }
+                .task {
+                    // Gentle auto-refresh while the news home is on screen. `.task` is cancelled the moment
+                    // the home disappears (tab switch / navigation), so it never refreshes in the background.
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(HomeNewsFeed.autoRefreshInterval))
+                        guard !Task.isCancelled else { break }
+                        HomeNewsFeed.shared.refresh(instances: browserState.searxInstances)
+                    }
                 }
             } else {
                 heroSection(height: proxy.size.height, upwardBias: upwardBias, withScrollHint: false)
@@ -164,7 +174,43 @@ struct HomeView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.quaternary.opacity(0.22))
                 .frame(height: 300)
-                .onAppear { feed.loadAll(instances: browserState.searxInstances) }
+                .onAppear { feed.preload(instances: browserState.searxInstances) }
+        }
+    }
+
+    /// Right-aligned "Refresh" pill at the top of the news area — manual refresh, with a spinner while a
+    /// manual or automatic refresh is in flight. Monochrome, matches the news content's width/padding.
+    private var newsRefreshControl: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Button {
+                HomeNewsFeed.shared.refresh(instances: browserState.searxInstances)
+            } label: {
+                HStack(spacing: 6) {
+                    if HomeNewsFeed.shared.isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    Text(HomeNewsFeed.shared.isRefreshing
+                         ? Localization.string("home_news_refreshing", defaultValue: "Refreshing…")
+                         : Localization.string("home_news_refresh", defaultValue: "Refresh"))
+                        .font(.system(size: 12.5, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(glassEnabled ? .ultraThinMaterial : .regularMaterial, in: Capsule())
+                .overlay(
+                    Capsule().strokeBorder(AdaptiveChrome.border(colorScheme, dark: 0.10), lineWidth: 0.7)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(HomeNewsFeed.shared.isRefreshing)
+            .help(Localization.string("home_news_refresh_help", defaultValue: "Refresh news"))
         }
     }
 
@@ -194,15 +240,49 @@ struct HomeView: View {
     }
 
     private var logoBlock: some View {
-        SearxlyLogo(
-            glassEnabled: glassEnabled,
-            size: 58,
-            style: .hero,
-            animated: !reduceMotion,
-            showShine: glassEnabled && !reduceMotion,
-            showTagline: false
-        )
+        VStack(spacing: 14) {
+            SearxlyLogo(
+                glassEnabled: glassEnabled,
+                size: 58,
+                style: .hero,
+                animated: !reduceMotion,
+                showShine: glassEnabled && !reduceMotion,
+                showTagline: false,
+                // Maximum's home hero glows orange (its one sanctioned accent) instead of white.
+                glowTint: Edition.isMaximum ? Color(red: 1.0, green: 0.52, blue: 0.12) : .white,
+                glowStrength: Edition.isMaximum ? 1.6 : 1.0
+            )
+
+            // Searxly Maximum wears its badge on the hero: an orange-glow "MAXIMUM" plate under the
+            // wordmark that sets the paid, locked-down edition apart from the standard app at a glance.
+            if Edition.isMaximum {
+                maximumBadge
+            }
+        }
         .heroReveal(heroRevealed, reduceMotion: reduceMotion, delay: 0)
+    }
+
+    /// The "MAXIMUM" edition plate — the monochrome brand's one sanctioned splash of colour. Orange
+    /// fill + stroke + layered outer glow so it reads as premium against the dark ambient hero.
+    private var maximumBadge: some View {
+        let orange = Color(red: 1.0, green: 0.52, blue: 0.12)
+        return Text("MAXIMUM")
+            .font(.system(size: 12.5, weight: .heavy, design: .rounded))
+            .tracking(4)
+            .foregroundStyle(orange)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(orange.opacity(0.12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(orange.opacity(0.55), lineWidth: 1.2)
+                    )
+            )
+            .shadow(color: orange.opacity(0.75), radius: 10)
+            .shadow(color: orange.opacity(0.45), radius: 22)
+            .accessibilityLabel("Searxly Maximum edition")
     }
 
     private var taglineBlock: some View {
@@ -310,14 +390,6 @@ struct HomeView: View {
             if let errorMsg = searchErrorMessage {
                 homeErrorBanner(errorMsg)
             }
-
-            if showEnableAIToolsPrompt {
-                aiToolsPrompt
-            }
-
-            if localAIChatEnabled {
-                localAIChatButton
-            }
         }
     }
 
@@ -378,61 +450,6 @@ struct HomeView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.22), lineWidth: 0.6)
         )
-    }
-
-    private var aiToolsPrompt: some View {
-        HStack(spacing: 8) {
-            Text("The on-device AI can search the web for you using tools (via your private SearXNG).")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Button("Enable") { onEnableAITools() }
-                .font(.caption.bold())
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            Button("Later") { onLaterAITools() }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 6)
-    }
-
-    private var localAIChatButton: some View {
-        Button {
-            onOpenLocalAIChat()
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary.opacity(0.85))
-                Text("Local AI Chat")
-                    .font(.callout.weight(.semibold))
-            }
-            .foregroundStyle(.primary.opacity(0.95))
-            .padding(.horizontal, 18)
-            .padding(.vertical, 9)
-            .background(
-                glassEnabled ? .thinMaterial : .regularMaterial,
-                in: Capsule()
-            )
-            .searxlyGlass(glassEnabled ? .interactive : .clear, in: Capsule())
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        AdaptiveChrome.border(colorScheme, dark: glassEnabled ? 0.12 : 0.08),
-                        lineWidth: 0.7
-                    )
-            )
-            .shadow(
-                color: AdaptiveChrome.shadow(colorScheme, darkOpacity: glassEnabled ? 0.12 : 0.06),
-                radius: 6,
-                x: 0,
-                y: 2
-            )
-        }
-        .buttonStyle(.plain)
-        .help("Open private on-device chat. Works great with or without a prior search (⌘⌥A).")
-        .transition(.opacity.combined(with: .scale(scale: 0.985)))
     }
 
     private func revealHero() {
