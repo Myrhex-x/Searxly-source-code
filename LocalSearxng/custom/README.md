@@ -1,5 +1,11 @@
 # Searxly Premium Web Theme
 
+> **License: AGPL-3.0-or-later.** This theme overrides and extends SearXNG's own
+> `simple` theme templates, so it is a derivative work of **SearXNG**
+> (https://github.com/searxng/searxng) and is licensed under the GNU Affero General
+> Public License v3.0 or later — not the Searxly app's PolyForm license. See
+> [`../LICENSE`](../LICENSE) and the repo-root [`THIRD-PARTY-LICENSES.md`](../../THIRD-PARTY-LICENSES.md).
+
 Stark monochrome (black/grey/white), extreme minimalism, massive negative space.
 
 Inspired by the official xAI website, Grok interface, and SpaceX’s futuristic restraint.

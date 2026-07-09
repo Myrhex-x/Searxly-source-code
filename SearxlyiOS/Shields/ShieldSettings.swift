@@ -102,6 +102,27 @@ final class ShieldSettings {
         didSet { defaults.set(restoreTabs, forKey: "searxly.ios.shields.restoreTabs") }
     }
 
+    /// Topic news feed on the start page — scroll down from the hero to browse headlines by topic.
+    /// Fetched from the configured instance (categories=news), cached in memory only, never shown
+    /// in private tabs. Default ON; turning it off keeps the start page a pure hero.
+    var newsHomeFeed: Bool {
+        didSet {
+            defaults.set(newsHomeFeed, forKey: "searxly.ios.shields.newsHomeFeed")
+            if !newsHomeFeed { HomeNewsFeed.shared.clear() }
+        }
+    }
+
+    /// News topics the user hid from the start-page feed (by topic id). Everything is shown by default.
+    private(set) var hiddenNewsTopics: Set<String> {
+        didSet { defaults.set(Array(hiddenNewsTopics), forKey: "searxly.ios.shields.hiddenNewsTopics") }
+    }
+
+    func isNewsTopicVisible(_ id: String) -> Bool { !hiddenNewsTopics.contains(id) }
+
+    func setNewsTopic(_ id: String, visible: Bool) {
+        if visible { hiddenNewsTopics.remove(id) } else { hiddenNewsTopics.insert(id) }
+    }
+
     // MARK: - Per-site shields
 
     /// Hosts where the user turned shields down (network rule lists disabled after reload).
@@ -133,7 +154,10 @@ final class ShieldSettings {
     /// Lifetime count of tracker/ad requests attempted against pages the user visited while
     /// shields were up. Approximate by design (see TrackerTally) — a floor, not an exact audit.
     private(set) var lifetimeTrackersBlocked: Int {
-        didSet { defaults.set(lifetimeTrackersBlocked, forKey: "searxly.ios.shields.lifetimeBlocked") }
+        didSet {
+            defaults.set(lifetimeTrackersBlocked, forKey: "searxly.ios.shields.lifetimeBlocked")
+            SharedPrivacyStats.setLifetimeBlocked(lifetimeTrackersBlocked)  // feed the Home Screen widget
+        }
     }
 
     /// Per-tracker-domain hit counts (top offenders for the Privacy Report). Tracker company
@@ -187,6 +211,8 @@ final class ShieldSettings {
         preferGrokipedia = bool("searxly.ios.shields.preferGrokipedia", default: true)
         aiOverview = bool("searxly.ios.shields.aiOverview", default: true)
         restoreTabs = bool("searxly.ios.shields.restoreTabs", default: true)
+        newsHomeFeed = bool("searxly.ios.shields.newsHomeFeed", default: true)
+        hiddenNewsTopics = Set(UserDefaults.standard.stringArray(forKey: "searxly.ios.shields.hiddenNewsTopics") ?? [])
         shieldsOffHosts = Set(UserDefaults.standard.stringArray(forKey: "searxly.ios.shields.offHosts") ?? [])
         lifetimeTrackersBlocked = UserDefaults.standard.integer(forKey: "searxly.ios.shields.lifetimeBlocked")
         trackerDomainCounts = (UserDefaults.standard.dictionary(forKey: "searxly.ios.shields.trackerDomains") as? [String: Int]) ?? [:]

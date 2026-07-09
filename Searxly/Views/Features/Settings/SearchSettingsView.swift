@@ -8,6 +8,7 @@ import AppKit
 
 struct SearchSettingsView: View {
     @Binding var knowledgePanelEnabled: Bool
+    @Binding var localPackEnabled: Bool
 
     @AppStorage(AppLanguage.overrideKey) private var appLanguageOverride: String = ""
     @AppStorage("searchQueryHistoryEnabled") private var searchQueryHistoryEnabled: Bool = true
@@ -15,6 +16,9 @@ struct SearchSettingsView: View {
     @State private var showClearConfirmation = false
     /// Language in effect when this pane opened — used to offer a relaunch once it changes.
     @State private var languageWhenOpened: String = ""
+
+    /// The local map pack is blocked in Maximum Privacy (its map picture is served by Apple).
+    private var isMaximumPrivacy: Bool { PrivacyManager.shared.appPrivacyMode == .maximum }
 
     var body: some View {
         SettingsPane {
@@ -43,6 +47,35 @@ struct SearchSettingsView: View {
                     description: "Google-style info cards for brands, people, and dictionary words.",
                     isOn: $knowledgePanelEnabled
                 )
+            }
+
+            SettingsSection(
+                title: "Local map pack",
+                footer: "Shows a map plus nearby places at the top of results for place searches like “pharmacie perpignan”. Off by default — when a place search is detected, Searxly offers to turn it on. Your other searches always stay private through your local SearXNG."
+            ) {
+                SettingsCallout(
+                    title: "Place info is private; the map is drawn by Apple",
+                    message: "When enabled, place searches geocode the city and fetch nearby listings from OpenStreetMap through the Searxly gateway — OpenStreetMap only ever sees the gateway, never you. The map picture itself is drawn by Apple Maps, so Apple sees the map area you look at (never your search query). Requires a configured gateway.",
+                    tint: .secondary,
+                    systemImage: "mappin.and.ellipse"
+                )
+
+                if isMaximumPrivacy {
+                    SettingsCallout(
+                        title: "Unavailable in Maximum Privacy",
+                        message: "Because the map is served by Apple, the local map pack is disabled while Maximum Privacy is on. Lower the privacy mode to use it.",
+                        tint: .orange,
+                        systemImage: "lock.fill"
+                    )
+                }
+
+                SettingsToggleRow(
+                    title: "Local map pack for place searches",
+                    description: "Map and nearby places for queries like “restaurant lyon” or “pharmacie perpignan”.",
+                    isOn: $localPackEnabled
+                )
+                .disabled(isMaximumPrivacy)
+                .opacity(isMaximumPrivacy ? 0.5 : 1)
             }
         }
     }

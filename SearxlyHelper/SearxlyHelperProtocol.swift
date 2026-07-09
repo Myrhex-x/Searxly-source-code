@@ -53,12 +53,20 @@ import Foundation
 
     /// Launches the bundled Tor; the helper generates the torrc and tracks a pidfile. Idempotent
     /// (returns the existing pid if already running). geoip paths may be "" to omit.
+    ///
+    /// Bridges / pluggable transports: `transportPluginLine` is the argument to `ClientTransportPlugin`
+    /// (e.g. "obfs4 exec /path/to/lyrebird"), or "" for a direct connection. `bridgeLines` is a
+    /// newline-separated list of bridge lines (each the part after "Bridge "); ignored when the
+    /// transport line is empty. The app builds these from the bundled transport paths so the helper
+    /// only assembles known torrc directives.
     /// Reply: (pid, error). pid > 0 on success.
     func startTor(
         torBinaryPath: String,
         geoipPath: String,
         geoip6Path: String,
         socksPort: Int32,
+        transportPluginLine: String,
+        bridgeLines: String,
         reply: @escaping (Int32, String) -> Void
     )
 
@@ -139,14 +147,18 @@ extension SearxlyHelperProtocol {
         torBinaryPath: String,
         geoipPath: String,
         geoip6Path: String,
-        socksPort: Int32
+        socksPort: Int32,
+        transportPluginLine: String = "",
+        bridgeLines: String = ""
     ) async -> (pid: Int32, error: String) {
         await withCheckedContinuation { continuation in
             startTor(
                 torBinaryPath: torBinaryPath,
                 geoipPath: geoipPath,
                 geoip6Path: geoip6Path,
-                socksPort: socksPort
+                socksPort: socksPort,
+                transportPluginLine: transportPluginLine,
+                bridgeLines: bridgeLines
             ) { pid, err in
                 continuation.resume(returning: (pid, err))
             }

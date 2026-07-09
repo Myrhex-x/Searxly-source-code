@@ -120,6 +120,8 @@ final class HelperService: NSObject, SearxlyHelperProtocol {
         geoipPath: String,
         geoip6Path: String,
         socksPort: Int32,
+        transportPluginLine: String,
+        bridgeLines: String,
         reply: @escaping (Int32, String) -> Void
     ) {
         // Idempotent: if Tor is already running, return the existing pid.
@@ -156,6 +158,19 @@ final class HelperService: NSObject, SearxlyHelperProtocol {
         }
         if !geoip6Path.isEmpty, FileManager.default.fileExists(atPath: geoip6Path) {
             torrc += "GeoIPv6File \(geoip6Path)\n"
+        }
+
+        // Bridges / pluggable transports for censored networks. The app supplies the
+        // ClientTransportPlugin argument (with the bundled transport binary's absolute path) and the
+        // bridge lines; we only assemble the known directives. Empty transport line = direct connection.
+        let ptLine = transportPluginLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !ptLine.isEmpty {
+            torrc += "UseBridges 1\n"
+            torrc += "ClientTransportPlugin \(ptLine)\n"
+            for raw in bridgeLines.split(whereSeparator: \.isNewline) {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                if !line.isEmpty { torrc += "Bridge \(line)\n" }
+            }
         }
         do {
             try torrc.write(to: torrcURL, atomically: true, encoding: .utf8)

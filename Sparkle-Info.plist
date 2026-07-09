@@ -6,8 +6,25 @@
 	<string>Ux3FWPU98QvA5heMYRYMd+yREYF+tgWSyAczgXFbH1w=</string>
 	<key>SUFeedURL</key>
 	<string>https://searxly.app/appcast.xml</string>
+
+	<!-- Searxly Maximum is a SEPARATE product with its own signed release channel. It must NEVER pull the
+	     base appcast above — installing that would replace Maximum with the base Searxly app. Maximum's
+	     feed lives in these keys and is read ONLY by Maximum builds. They are intentionally BLANK until
+	     the Maximum channel is published, so Maximum does not auto-update yet. To turn it on later, set
+	     SUFeedURLMaximum (and optionally a .onion mirror) — no code change required. -->
+	<key>SUFeedURLMaximum</key>
+	<string></string>
+	<key>SUFeedURLMaximumOnion</key>
+	<string></string>
+
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
+
+	<!-- Only used for city-less place searches like "mcdonalds" / "restaurant near me" — to find places
+	     near you. One coarse fix, never stored or shared. Searches with an explicit city need no location. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Searxly uses your location only to find places near you when you search for something like “restaurant” or “mcdonalds” without naming a city. It’s used once for that search and never stored or shared.</string>
+
 	<!-- Searxly gateway app token. Substituted at build time from SEARXLY_GATEWAY_APP_TOKEN
 	     (blank default in Config.xcconfig; real value layered in via the gitignored Secrets.xcconfig).
 	     A soft gate only — the upstream 0x / io.net keys live on the gateway server, never here.

@@ -50,6 +50,7 @@ struct SettingsView: View {
                 Section(L("About")) {
                     LabeledContent(L("Version"), value: appVersion)
                     Link("searxly.app", destination: URL(string: "https://searxly.app")!)
+                    NavigationLink(L("Open-Source Licenses")) { LicensesPane() }
                 }
             }
             .navigationTitle(L("Settings"))
@@ -74,14 +75,14 @@ struct SettingsView: View {
                     .strokeBorder(Brand.hairline, lineWidth: 0.5)
                     .frame(width: 74, height: 74)
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 34, weight: .medium))
+                    .scaledFont(size: 34, weight: .medium)
                     .foregroundStyle(Brand.text)
             }
             Text("Searxly")
-                .font(.system(size: 17, weight: .semibold))
+                .scaledFont(size: 17, weight: .semibold)
                 .foregroundStyle(Brand.text)
             Text(L("Private search & browsing"))
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textTertiary)
         }
         .frame(maxWidth: .infinity)
@@ -116,7 +117,7 @@ private func chip(_ systemName: String) -> some View {
         .frame(width: 30, height: 30)
         .overlay(
             Image(systemName: systemName)
-                .font(.system(size: 15, weight: .medium))
+                .scaledFont(size: 15, weight: .medium)
                 .foregroundStyle(Brand.bg)
         )
 }
@@ -178,10 +179,49 @@ private struct SearchSettingsPane: View {
             } footer: {
                 Text("Online Suggestions sends what you type to your instance for completions (off by default). Site Icons fetches each result site's icon anonymously. Knowledge Cards summarize entity searches — Grokipedia first, Wikipedia as fallback (never in private tabs).")
             }
+
+            Section {
+                Toggle("News on Start Page", isOn: $shields.newsHomeFeed)
+                NavigationLink(L("Topics")) { NewsTopicsPane() }
+                    .disabled(!shields.newsHomeFeed)
+            } header: {
+                Text(L("News"))
+            } footer: {
+                Text("Scroll down from the start page for a topic-by-topic headline feed pulled from your search instance. Headlines are kept in memory only — never saved to disk — and the feed never appears in private tabs.")
+            }
         }
         .navigationTitle(L("Search"))
         .navigationBarTitleDisplayMode(.inline)
         .tint(Brand.text)
+    }
+}
+
+/// Choose which topics appear in the start-page news feed.
+private struct NewsTopicsPane: View {
+    @Bindable private var shields = ShieldSettings.shared
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(HomeNewsFeed.topics) { topic in
+                    Toggle(isOn: visibility(topic.id)) {
+                        Label(L(topic.label), systemImage: topic.systemIcon)
+                    }
+                }
+            } footer: {
+                Text("Turn topics off to hide them from the start-page news feed. The top-story banner only draws from the hard-news topics you keep on.")
+            }
+        }
+        .navigationTitle(L("Topics"))
+        .navigationBarTitleDisplayMode(.inline)
+        .tint(Brand.text)
+    }
+
+    private func visibility(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { shields.isNewsTopicVisible(id) },
+            set: { shields.setNewsTopic(id, visible: $0) }
+        )
     }
 }
 
@@ -387,7 +427,7 @@ private struct IntelligencePane: View {
                             .progressViewStyle(.linear)
                             .tint(Brand.text)
                         Text(L("iOS is downloading Apple's on-device model in the background. It goes fastest on Wi-Fi with the iPhone charging. This screen updates automatically."))
-                            .font(.system(size: 12))
+                            .scaledFont(size: 12)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -395,7 +435,7 @@ private struct IntelligencePane: View {
 
                 if availability == .notEnabled {
                     Text(L("Turn on Apple Intelligence in Settings ▸ Apple Intelligence & Siri, then come back here."))
-                        .font(.system(size: 12))
+                        .scaledFont(size: 12)
                         .foregroundStyle(.secondary)
                 }
             } header: {
@@ -431,6 +471,43 @@ private struct IntelligencePane: View {
             }
         }
         .navigationTitle(L("Intelligence"))
+        .navigationBarTitleDisplayMode(.inline)
+        .tint(Brand.text)
+    }
+}
+
+// MARK: - Open-Source Licenses
+
+/// Attribution and source links for the third-party software Searxly builds on.
+/// The SearXNG entry is what satisfies the AGPL's network-use clause: it gives
+/// anyone whose searches reach our instance a link to the Corresponding Source.
+/// Presentation only — no behavior, no data leaves the device.
+private struct LicensesPane: View {
+    // Where the (modified) SearXNG source is published. Must stay publicly reachable.
+    private let sourceURL = URL(string: "https://github.com/Searxly/Searxly-source-code")!
+    private let upstreamURL = URL(string: "https://github.com/searxng/searxng")!
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("SearXNG")
+                        .scaledFont(size: 16, weight: .semibold)
+                        .foregroundStyle(Brand.text)
+                    Text(L("Private search is powered by SearXNG, an open-source metasearch engine, licensed under the GNU AGPL v3.0."))
+                        .scaledFont(size: 13)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+                Link(L("View source code"), destination: sourceURL)
+                Link(L("SearXNG project"), destination: upstreamURL)
+            } header: {
+                Text(L("Search Engine"))
+            } footer: {
+                Text("Searxly's changes to SearXNG (its theme and configuration) are published at the source link above under the same AGPL-3.0 license — you're free to download, run, and redistribute them.")
+            }
+        }
+        .navigationTitle(L("Open-Source Licenses"))
         .navigationBarTitleDisplayMode(.inline)
         .tint(Brand.text)
     }

@@ -6,18 +6,12 @@
 import SwiftUI
 
 enum OnboardingStyle {
-    static let stepCount = 10
-    static let stepLabels = ["Welcome", "Search", "News", "Encryption", "Wallet", "VPN", "Tor", "Searxly AI", "Security", "Ready"]
+    static let stepCount = 9
+    static let stepLabels = ["Welcome", "Search", "News", "Encryption", "Wallet", "VPN", "Tor", "Security", "Ready"]
 
-    /// Raw step index of the Searxly AI slide. It's skipped entirely while the AI program is off
-    /// (`AIFeatures.programEnabled`), so the flow hops over it — see `OnboardingFlow.advance/goBack`.
-    static let aiStepIndex = 7
-
-    /// The steps actually reachable right now, in order. Excludes the AI slide when the AI program is
-    /// off, so the progress dots + "N of M" counter never number or count a step the user can't land
-    /// on (which produced a visible gap: "6 of 9" jumping straight to "8 of 9").
+    /// The steps actually reachable right now, in order.
     static var visibleSteps: [Int] {
-        AIFeatures.programEnabled ? Array(0..<stepCount) : (0..<stepCount).filter { $0 != aiStepIndex }
+        Array(0..<stepCount)
     }
     static var visibleStepCount: Int { visibleSteps.count }
     /// 1-based position of a raw step within the visible sequence (for "N of M").

@@ -51,7 +51,8 @@ enum SearchIntelligence {
     /// often yields empty output (the "completely blank" bug). Plain text streaming is reliable.
     /// Follow-ups come separately from SearXNG's own related searches (see AIOverviewCard).
     static func overview(query: String, results: [SearXNGResult]) -> AsyncThrowingStream<String, Error> {
-        // Keep grounding well within the ~4k-token context: fewer sources, shorter snippets.
+        // Build the whole prompt HERE (main actor, pure string work) so the off-main model task
+        // captures only Sendable strings — never the results array.
         let sources = results.prefix(5)
         var grounding = ""
         for (i, r) in sources.enumerated() {
@@ -73,24 +74,21 @@ enum SearchIntelligence {
 
         return AsyncThrowingStream { continuation in
             #if canImport(FoundationModels)
-            let task = Task {
+            // Use the SINGLE proven call from the working macOS provider: `respond(to:)` (non-streaming),
+            // not `streamResponse`. macOS `AppleIntelligenceProvider.generate()` does exactly this and is
+            // the reliable on-device path; the SERP overview is short (≤90 words) so one-shot latency is
+            // fine. Wrapped in a one-yield stream so the card's consumer is unchanged. No mid-inference
+            // task cancellation (documented crash risk); a short generation just runs to completion.
+            Task {
                 do {
-                    let session = LanguageModelSession(instructions: """
-                    You write brief search overviews grounded ONLY in the provided snippets — never \
-                    outside knowledge. Answer in at most 90 words of plain prose (no headings, no \
-                    lists), citing snippets inline like [1] or [2][4]. If the snippets don't answer \
-                    the query, say so in one sentence. Match the query's language.
-                    """)
-                    let options = GenerationOptions(temperature: 0.3)
-                    for try await partial in session.streamResponse(to: prompt, options: options) {
-                        continuation.yield(partial.content)
-                    }
+                    let session = LanguageModelSession(instructions: Self.overviewInstructions)
+                    let response = try await session.respond(to: prompt)
+                    continuation.yield(response.content)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
             #else
             continuation.finish(throwing: NSError(
                 domain: "Searxly.Intelligence", code: 1,
@@ -99,6 +97,13 @@ enum SearchIntelligence {
             #endif
         }
     }
+
+    private static let overviewInstructions = """
+    You write brief search overviews grounded ONLY in the provided snippets — never outside \
+    knowledge. Answer in at most 90 words of plain prose (no headings, no lists), citing snippets \
+    inline like [1] or [2][4]. If the snippets don't answer the query, say so in one sentence. \
+    Match the query's language.
+    """
 
     /// Related searches for the follow-up chips, from the instance's `/autocompleter` (the same
     /// endpoint the address bar uses — reliable, unlike the `suggestions` engine which many

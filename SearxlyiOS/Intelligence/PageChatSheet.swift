@@ -47,7 +47,7 @@ struct PageChatSheet: View {
                             }
                             if pageUnavailable {
                                 Text(L("There isn't enough readable text on this page to summarize."))
-                                    .font(.system(size: 14))
+                                    .scaledFont(size: 14)
                                     .foregroundStyle(Brand.textSecondary)
                                     .padding(.top, 20)
                             }
@@ -84,14 +84,14 @@ struct PageChatSheet: View {
     private var starters: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(model.pageTitle.isEmpty ? (model.webView.url?.host ?? "") : model.pageTitle)
-                .font(.system(size: 14, weight: .semibold))
+                .scaledFont(size: 14, weight: .semibold)
                 .foregroundStyle(Brand.text)
                 .lineLimit(2)
             ForEach([L("What are the key points?"), L("Explain this simply"), L("Any caveats or criticism mentioned?")], id: \.self) { starter in
                 Button { send(starter) } label: {
                     HStack(spacing: 7) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 11))
+                            .scaledFont(size: 11)
                             .foregroundStyle(Brand.textTertiary)
                         Text(starter)
                             .font(.system(size: 13.5 * appearance.textScale))
@@ -129,7 +129,7 @@ struct PageChatSheet: View {
         HStack(spacing: 9) {
             TextField(L("Ask about this page…"), text: $input)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .scaledFont(size: 15)
                 .focused($inputFocused)
                 .submitLabel(.send)
                 .onSubmit { send(input) }
@@ -141,7 +141,7 @@ struct PageChatSheet: View {
                 send(input)
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 28))
+                    .scaledFont(size: 28)
                     .foregroundStyle(canSend ? Brand.text : Brand.text.opacity(0.25))
             }
             .buttonStyle(.plain)
@@ -184,7 +184,7 @@ struct PageChatSheet: View {
                 }
             } catch {
                 if let idx = messages.lastIndex(where: { !$0.isUser }), messages[idx].text.isEmpty {
-                    messages[idx].text = error.localizedDescription
+                    messages[idx].text = PageIntelligence.friendlyError(error)
                 }
             }
             isResponding = false

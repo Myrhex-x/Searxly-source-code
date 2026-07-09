@@ -27,13 +27,13 @@ struct PageInfoView: View {
                         FaviconView(host: displayHost, size: 38)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(model.pageTitle.isEmpty ? displayHost : model.pageTitle)
-                                .font(.system(size: 16, weight: .semibold))
+                                .scaledFont(size: 16, weight: .semibold)
                                 .lineLimit(1)
                             HStack(spacing: 4) {
                                 Image(systemName: isSecure ? "lock.fill" : "lock.open")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .scaledFont(size: 10, weight: .semibold)
                                 Text(isSecure ? "Connection is encrypted" : "Connection is not fully secure")
-                                    .font(.system(size: 12))
+                                    .scaledFont(size: 12)
                             }
                             .foregroundStyle(isSecure ? Brand.textSecondary : Color.red)
                         }
@@ -61,7 +61,7 @@ struct PageInfoView: View {
                         }
                         .buttonStyle(.bordered)
                         Text("\(Int((model.textZoom * 100).rounded()))%")
-                            .font(.system(size: 13, weight: .medium)).monospacedDigit()
+                            .scaledFont(size: 13, weight: .medium).monospacedDigit()
                             .frame(width: 44)
                         Button { model.adjustTextZoom(0.1) } label: {
                             Image(systemName: "textformat.size.larger").frame(width: 34, height: 26)

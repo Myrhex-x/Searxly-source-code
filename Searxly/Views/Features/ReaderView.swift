@@ -13,9 +13,6 @@ struct ReaderView: View {
     let title: String
     let html: String
     let onDismiss: () -> Void
-    var onAskAI: (() -> Void)? = nil
-    /// Hands the produced summary off to the full chat (summary, page title).
-    var onTalkToSearxly: ((String, String) -> Void)? = nil
 
     @AppStorage("reduceLiquidGlass") private var reduceLiquidGlass = false
     @Environment(\.colorScheme) private var colorScheme
@@ -23,12 +20,6 @@ struct ReaderView: View {
     // Reading preferences persist across sessions (a reader you re-tune on every open isn't one).
     @AppStorage("Reader.fontSize") private var fontSize: Double = 17
     @AppStorage("Reader.useSerif") private var useSerif = false
-
-    // In-reader AI summary (Siri-style), produced from the cleaned reader content.
-    @State private var summary: String = ""
-    @State private var isSummarizing = false
-    @State private var showSummary = false
-    @State private var summaryTask: Task<Void, Never>? = nil
 
     private var toolbarMaterial: Material {
         reduceLiquidGlass ? .regularMaterial : .ultraThinMaterial
@@ -71,30 +62,6 @@ struct ReaderView: View {
                     .foregroundStyle(.secondary)
                     .help(useSerif ? "Switch to sans-serif" : "Switch to serif")
 
-                    // AI affordances exist only while the AI program ships (release kill switch —
-                    // see AIFeatures). With it off, Reader is a pure on-device reading surface.
-                    if AIFeatures.programEnabled {
-                        Divider().frame(height: 16)
-
-                        Button(action: toggleSummary) {
-                            Label("Summarize", systemImage: "sparkles")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .help("Summarize this article with Searxly AI")
-
-                        if let askAI = onAskAI {
-                            Button(action: askAI) {
-                                Label("Ask AI", systemImage: "bubble.left.and.bubble.right")
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help("Open Searxly AI chat — ask questions about this page")
-                        }
-                    }
-
                     Divider().frame(height: 16)
 
                     Button("Done", action: onDismiss)
@@ -118,207 +85,8 @@ struct ReaderView: View {
         // Near-fullscreen: large ideal size (macOS clamps the sheet to the screen).
         .frame(minWidth: 1000, idealWidth: 1440, maxWidth: .infinity,
                minHeight: 700, idealHeight: 980, maxHeight: .infinity)
-        .overlay(alignment: .bottom) {
-            if showSummary {
-                summaryPanel
-                    .padding(18)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: showSummary)
-        .onDisappear { summaryTask?.cancel() }
     }
 
-    // MARK: - In-reader summary panel (Siri-style, Liquid Glass)
-
-    private var summaryPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
-                SearxlyChatMark(color: WalletTheme.textSecondary, lineWidth: 1.5)
-                    .frame(width: 18, height: 18)
-                Text("Searxly AI")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(WalletTheme.textPrimary)
-                Text("· Summary")
-                    .font(.subheadline)
-                    .foregroundStyle(WalletTheme.textSecondary)
-                if LocalIntelligenceManager.shared.preferences.searxlyAIEnabled
-                    && LocalIntelligenceManager.shared.preferences.useSearxlyAI {
-                    Text("Cloud")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WalletTheme.textSecondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(WalletTheme.surfaceStrong))
-                        .help("Generated on Searxly's cloud — this content is sent off your Mac.")
-                }
-                Spacer()
-                Button {
-                    summaryTask?.cancel()
-                    showSummary = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(WalletTheme.textSecondary)
-                        .padding(5)
-                        .background(Circle().fill(WalletTheme.surfaceStrong))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-
-            Divider().overlay(WalletTheme.hairline)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    if summary.isEmpty && isSummarizing {
-                        TypingDots(color: WalletTheme.textSecondary).padding(.vertical, 2)
-                    } else {
-                        Text(summary)
-                            .textSelection(.enabled)
-                            .font(.callout)
-                            .foregroundStyle(WalletTheme.textPrimary.opacity(0.94))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-            }
-            .frame(maxHeight: 240)
-
-            Divider().overlay(WalletTheme.hairline)
-
-            HStack(spacing: 10) {
-                Button {
-                    let polished = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !polished.isEmpty else { return }
-                    summaryTask?.cancel()
-                    onTalkToSearxly?(polished, title)
-                } label: {
-                    Label("Talk to Searxly", systemImage: "bubble.left.and.bubble.right")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(WalletTheme.primaryText(enabled: true))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(WalletTheme.primaryFill(enabled: true)))
-                }
-                .buttonStyle(.plain)
-                .disabled(summary.isEmpty)
-
-                Spacer()
-
-                Button {
-                    let text = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.callout)
-                        .foregroundStyle(WalletTheme.textSecondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(WalletTheme.surfaceStrong))
-                }
-                .buttonStyle(.plain)
-                .disabled(summary.isEmpty)
-                .help("Copy summary")
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-        }
-        .frame(maxWidth: 560)
-        .background {
-            if reduceLiquidGlass {
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(WalletTheme.canvasRaised)
-            }
-        }
-        .searxlyGlass(reduceLiquidGlass ? .clear : .regular,
-                      in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(WalletTheme.hairline, lineWidth: 0.7)
-        )
-        .shadow(color: .black.opacity(0.22), radius: 24, x: 0, y: 10)
-    }
-
-    // MARK: - Summary generation (hardened against prompt injection)
-
-    private func toggleSummary() {
-        if showSummary {
-            summaryTask?.cancel()
-            showSummary = false
-        } else {
-            startSummary()
-        }
-    }
-
-    private func startSummary() {
-        showSummary = true
-        summary = ""
-        isSummarizing = true
-
-        let manager = LocalIntelligenceManager.shared
-        manager.warmUpIfNeeded()
-        guard manager.canUseFeatures else {
-            isSummarizing = false
-            summary = "Turn on Searxly AI in Settings to summarize."
-            return
-        }
-
-        // Reader HTML is already cleaned, but still treat it as UNTRUSTED: strip to text, then run it
-        // through the same PageContentGuard defenses as the right-click page summary (no tools, nonce
-        // framing, role defang, non-actionable output).
-        let text = PageContentGuard.sanitize(Self.plainText(fromHTML: html))
-        guard !text.isEmpty else {
-            isSummarizing = false
-            summary = "There's no readable text to summarize."
-            return
-        }
-
-        let isCloud = manager.preferences.searxlyAIEnabled && manager.preferences.useSearxlyAI
-        let nonce = PageContentGuard.makeNonce()
-        let suspected = PageContentGuard.looksLikeInjection(text)
-        let system = PageContentGuard.systemPrompt(nonce: nonce, injectionSuspected: suspected, isCloud: isCloud, task: .summarizePage)
-        let prompt = PageContentGuard.userBlock(content: text, nonce: nonce, title: title, url: "", task: .summarizePage)
-
-        let engine = ConversationEngine()
-        summaryTask = Task { @MainActor in
-            do {
-                for try await chunk in engine.generateStream(prompt: prompt, instructions: system) {
-                    if Task.isCancelled { return }
-                    summary += chunk
-                }
-                summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-                isSummarizing = false
-            } catch {
-                isSummarizing = false
-                if summary.isEmpty {
-                    let msg = (error as NSError).localizedDescription
-                    summary = msg.isEmpty ? "Searxly AI couldn’t summarize this. Try again." : msg
-                }
-            }
-        }
-    }
-
-    /// Strips reader HTML down to plain text for the model (tags removed, basic entities decoded).
-    /// PageContentGuard.sanitize then collapses whitespace + caps length.
-    static func plainText(fromHTML html: String) -> String {
-        var s = html
-        s = s.replacingOccurrences(of: "(?is)<(script|style)[^>]*>.*?</\\1>", with: " ", options: .regularExpression)
-        s = s.replacingOccurrences(of: "(?i)<br\\s*/?>", with: "\n", options: .regularExpression)
-        s = s.replacingOccurrences(of: "(?i)</(p|div|h[1-6]|li)>", with: "\n", options: .regularExpression)
-        s = s.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-        s = s.replacingOccurrences(of: "&amp;", with: "&")
-             .replacingOccurrences(of: "&lt;", with: "<")
-             .replacingOccurrences(of: "&gt;", with: ">")
-             .replacingOccurrences(of: "&quot;", with: "\"")
-             .replacingOccurrences(of: "&#39;", with: "'")
-             .replacingOccurrences(of: "&nbsp;", with: " ")
-        return s
-    }
 }
 
 // MARK: - WKWebView renderer

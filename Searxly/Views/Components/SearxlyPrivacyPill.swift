@@ -242,6 +242,16 @@ struct SearxlyPrivacyPill: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // Surface the concrete Tor start failure (was previously swallowed — the pill only showed a
+            // generic "connecting" line, so a failed "Start Tor" looked like it did nothing).
+            if usingTor, let err = tor.lastError, !err.isEmpty {
+                Text(err)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+
             Button {
                 Task { await gate.ensureProtection() }
             } label: {
@@ -291,34 +301,37 @@ struct SearxlyPrivacyPill: View {
 
             Spacer()
 
-            // Quick switcher for the backing network while staying in Maximum
-            Menu {
-                ForEach(MaxProtection.allCases, id: \.self) { opt in
-                    Button {
-                        if privacy.maxProtection != opt {
-                            PrivacyManager.shared.setMaxProtection(opt)
-                        }
-                    } label: {
-                        HStack {
-                            Text(opt.displayName)
-                            if privacy.maxProtection == opt {
-                                Image(systemName: "checkmark")
+            // Quick switcher for the backing network. Searxly Maximum is Tor-only — the managed VPN
+            // isn't part of that edition — so the VPN⇄Tor switcher is hidden there.
+            if !Edition.isMaximum {
+                Menu {
+                    ForEach(MaxProtection.allCases, id: \.self) { opt in
+                        Button {
+                            if privacy.maxProtection != opt {
+                                PrivacyManager.shared.setMaxProtection(opt)
+                            }
+                        } label: {
+                            HStack {
+                                Text(opt.displayName)
+                                if privacy.maxProtection == opt {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: usingTor ? "point.3.connected.trianglepath.dotted" : "network.badge.shield.half.filled")
+                            .font(.system(size: 10))
+                        Text("Switch")
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(.secondary)
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: usingTor ? "point.3.connected.trianglepath.dotted" : "network.badge.shield.half.filled")
-                        .font(.system(size: 10))
-                    Text("Switch")
-                        .font(.system(size: 11, weight: .medium))
-                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
-                }
-                .foregroundStyle(.secondary)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
         }
     }
 

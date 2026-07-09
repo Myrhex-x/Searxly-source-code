@@ -172,7 +172,7 @@ struct KnowledgeCardView: View {
                                     .lineLimit(2)
                                 Spacer(minLength: 6)
                                 Image(systemName: "chevron.down")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .scaledFont(size: 11, weight: .semibold)
                                     .foregroundStyle(Brand.textTertiary)
                                     .rotationEffect(.degrees(expanded ? 180 : 0))
                             }
@@ -212,7 +212,7 @@ struct KnowledgeCardView: View {
                     Text(expanded ? "\(L("Read on")) \(card.source.rawValue)" : card.source.rawValue)
                         .font(.system(size: 11 * scale, weight: .medium))
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .scaledFont(size: 9, weight: .semibold)
                 }
                 .foregroundStyle(Brand.textTertiary)
                 .padding(.top, 8)

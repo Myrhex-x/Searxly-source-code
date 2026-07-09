@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct SuggestionsView: View {
     let query: String
@@ -36,24 +37,35 @@ struct SuggestionsView: View {
         let matches = store.suggestions(for: trimmed)
         VStack(spacing: 0) {
             if trimmed.isEmpty {
-                // Empty field: recent searches (Safari's start-typing panel).
-                HStack {
-                    Text(L("Recent Searches"))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Brand.textTertiary)
-                    Spacer()
-                    Button(L("Clear")) { store.clearRecentSearches() }
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Brand.textSecondary)
-                        .buttonStyle(.plain)
+                // Empty field: Safari's start-typing panel — Paste and Go, then quick-access Top Sites,
+                // then recent searches.
+                // `hasStrings` is a banner-free check (unlike reading the string), so the clipboard is
+                // only actually read when the user taps — nothing is inspected as you open the field.
+                if UIPasteboard.general.hasStrings {
+                    row(icon: "doc.on.clipboard", title: L("Paste and Go"),
+                        subtitle: L("Open or search your clipboard")) {
+                        pasteAndGo()
+                    }
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-
-                ForEach(store.recentSearches.prefix(6), id: \.self) { term in
-                    Rectangle().fill(Brand.hairline).frame(height: 0.5).padding(.leading, 48)
-                    row(icon: "clock.arrow.circlepath", title: term, subtitle: L("Search again")) { onSearch(term) }
+                let sites = quickAccessURLs
+                if !sites.isEmpty {
+                    if UIPasteboard.general.hasStrings {
+                        Rectangle().fill(Brand.hairline).frame(height: 0.5)
+                            .padding(.horizontal, 14).padding(.top, 6)
+                    }
+                    sectionHeader(L("Top Sites"), clear: nil)
+                    topSitesRow(sites)
+                }
+                if !store.recentSearches.isEmpty {
+                    if !sites.isEmpty {
+                        Rectangle().fill(Brand.hairline).frame(height: 0.5)
+                            .padding(.horizontal, 14).padding(.top, 6)
+                    }
+                    sectionHeader(L("Recent Searches")) { store.clearRecentSearches() }
+                    ForEach(store.recentSearches.prefix(6), id: \.self) { term in
+                        Rectangle().fill(Brand.hairline).frame(height: 0.5).padding(.leading, 48)
+                        row(icon: "clock.arrow.circlepath", title: term, subtitle: L("Search again")) { onSearch(term) }
+                    }
                 }
             } else {
                 // Primary action: open as a URL if it clearly is one, else search.
@@ -92,6 +104,75 @@ struct SuggestionsView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
+    }
+
+    // MARK: - Empty-state quick access (Top Sites)
+
+    /// Most-visited hosts; falls back to bookmarks on a fresh install with no history yet.
+    private var quickAccessURLs: [String] {
+        let sites = store.topSites(limit: 8).map(\.url)
+        return sites.isEmpty ? store.bookmarks.prefix(8).map(\.url) : sites
+    }
+
+    /// Reads the clipboard ONLY now (on tap, never on open): a URL opens directly, anything else searches.
+    private func pasteAndGo() {
+        guard let raw = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return }
+        if let url = BrowserModel.directURL(raw) { onOpen(url) } else { onSearch(raw) }
+    }
+
+    private func sectionHeader(_ title: String, clear: (() -> Void)? = nil) -> some View {
+        HStack {
+            Text(title)
+                .scaledFont(size: 12, weight: .semibold)
+                .foregroundStyle(Brand.textTertiary)
+            Spacer()
+            if let clear {
+                Button(L("Clear"), action: clear)
+                    .scaledFont(size: 12, weight: .medium)
+                    .foregroundStyle(Brand.textSecondary)
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+
+    /// Horizontal favicon tiles — tap to open. Cache-only icons (these are already-visited sites).
+    private func topSitesRow(_ urls: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(urls, id: \.self) { urlString in
+                    let host = URL(string: urlString)?.host?.replacingOccurrences(of: "www.", with: "") ?? urlString
+                    Button {
+                        if let u = URL(string: urlString) { onOpen(u) }
+                    } label: {
+                        VStack(spacing: 6) {
+                            FaviconView(host: host, size: 34)
+                                .padding(9)
+                                .background(Brand.surfaceHi, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            Text(siteLabel(host: host))
+                                .scaledFont(size: 10.5, weight: .medium)
+                                .foregroundStyle(Brand.textSecondary)
+                                .lineLimit(1)
+                                .frame(width: 54)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Top site: \(host)")
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+        }
+    }
+
+    /// A short, stable name for a site tile — the second-level domain label ("apple", "wikipedia").
+    private func siteLabel(host: String) -> String {
+        let labels = host.split(separator: ".")
+        let main = labels.count >= 2 ? String(labels[labels.count - 2]) : (labels.first.map(String.init) ?? host)
+        return main.prefix(1).uppercased() + main.dropFirst()
     }
 
     /// Bookmark/history match: real favicon when cached (these are visited sites, so it almost
@@ -139,7 +220,7 @@ struct SuggestionsView: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 15))
+                    .scaledFont(size: 15)
                     .foregroundStyle(Brand.textSecondary)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 1) {

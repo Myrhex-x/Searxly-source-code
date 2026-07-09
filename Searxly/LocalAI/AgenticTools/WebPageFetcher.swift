@@ -112,7 +112,7 @@ enum WebPageFetcher {
     /// it classifies IP literals in every encoding but returns `false` for a real hostname (nothing to
     /// classify without a lookup). With `allowDNS == true` it performs a normal DNS resolution and
     /// classifies every returned address — used only on the direct lane to catch DNS-based SSRF.
-    static func hostHasBlockedAddress(_ host: String, allowDNS: Bool) -> Bool {
+    nonisolated static func hostHasBlockedAddress(_ host: String, allowDNS: Bool) -> Bool {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
@@ -143,7 +143,7 @@ enum WebPageFetcher {
     /// Classifies a host-order IPv4 address against the standard SSRF blocklist (RFC 1918 private,
     /// loopback, link-local incl. the 169.254.169.254 cloud-metadata endpoint, CGNAT, unspecified,
     /// benchmarking, multicast and reserved space).
-    static func isBlockedIPv4(_ addr: UInt32) -> Bool {
+    nonisolated static func isBlockedIPv4(_ addr: UInt32) -> Bool {
         func inRange(_ base: UInt32, _ prefix: UInt32) -> Bool {
             let mask: UInt32 = prefix == 0 ? 0 : ~UInt32(0) << (32 - prefix)
             return (addr & mask) == (base & mask)
@@ -164,7 +164,7 @@ enum WebPageFetcher {
     /// Classifies a 16-byte IPv6 address: unspecified `::`, loopback `::1`, ULA `fc00::/7`, link-local
     /// `fe80::/10`, multicast `ff00::/8`, and IPv4-mapped `::ffff:a.b.c.d` (the embedded v4 is classified
     /// with the IPv4 rules, so `::ffff:127.0.0.1` is blocked too).
-    static func isBlockedIPv6(_ b: [UInt8]) -> Bool {
+    nonisolated static func isBlockedIPv6(_ b: [UInt8]) -> Bool {
         guard b.count == 16 else { return false }
         if b.allSatisfy({ $0 == 0 }) { return true }                                   // ::            unspecified
         if b[0..<15].allSatisfy({ $0 == 0 }) && b[15] == 1 { return true }             // ::1           loopback

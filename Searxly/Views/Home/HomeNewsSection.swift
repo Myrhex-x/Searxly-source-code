@@ -21,16 +21,20 @@ struct HomeTopicSection: View {
     private let columns = [GridItem(.adaptive(minimum: 250, maximum: .infinity), spacing: 16, alignment: .top)]
 
     var body: some View {
-        // nil = not attempted yet (reserve height with a placeholder + trigger the load); [] = resolved
-        // empty → collapse to nothing; [items] = show the grid.
+        // Raw state drives not-yet-loaded vs loaded: nil = not attempted (reserve height + trigger load);
+        // [] = resolved empty. `display` is the cross-topic-deduped list actually shown, so the same story
+        // never repeats across rows. If a topic resolves but every story was already claimed by a
+        // higher-priority topic, `display` is empty and the whole section collapses.
         let resolved = feed.stories[topic.id]
+        let isLoading = feed.loading.contains(topic.id)
+        let display = feed.dedupedStories(for: topic.id)
 
-        if resolved == nil || feed.loading.contains(topic.id) || (resolved?.isEmpty == false) {
+        if resolved == nil || isLoading || !display.isEmpty {
             VStack(alignment: .leading, spacing: 13) {
                 header
-                if let stories = resolved, !stories.isEmpty {
+                if !display.isEmpty {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                        ForEach(stories.prefix(8)) { result in
+                        ForEach(display.prefix(8)) { result in
                             HomeNewsCard(result: result, glassEnabled: glassEnabled, onOpen: onOpenStory)
                         }
                     }
@@ -41,7 +45,7 @@ struct HomeTopicSection: View {
                     }
                 }
             }
-            .animation(.easeOut(duration: 0.28), value: resolved?.count ?? -1)
+            .animation(.easeOut(duration: 0.28), value: display.count)
             .onAppear { feed.loadIfNeeded(topic, instances: instances) }
         }
     }

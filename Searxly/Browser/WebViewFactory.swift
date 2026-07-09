@@ -82,6 +82,21 @@ struct WebViewFactory {
         webpagePrefs.allowsContentJavaScript = true
         configuration.defaultWebpagePreferences = webpagePrefs
 
+        // Searxly Maximum, Safer/Safest: turn on WebKit's Lockdown Mode via SPI — real, engine-level
+        // JIT-off (the #1 exploit mitigation, the exact thing JS can't do), plus WASM/other surface cuts.
+        // Guarded + best-effort: if the symbol is gone on a future WebKit this no-ops, and JS-off (Safest,
+        // via the nav delegate) + the JS farbling remain the floor. At Safest JS is off entirely anyway;
+        // at Safer this keeps JS working while killing the JIT.
+        if Edition.isMaximum, MaximumSecurity.effective.dropsHighRiskAPIs {
+            for name in ["_setLockdownModeEnabled:", "_setCaptivePortalModeEnabled:"] {
+                let sel = NSSelectorFromString(name)
+                if webpagePrefs.responds(to: sel) {
+                    webpagePrefs.perform(sel, with: NSNumber(value: true))  // non-nil arg → BOOL true
+                    break
+                }
+            }
+        }
+
         configuration.allowsAirPlayForMediaPlayback = false
 
         // User-Agent: present every tab as desktop Safari on macOS. WKWebView's default UA omits the
@@ -134,6 +149,10 @@ struct WebViewFactory {
         if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.webInspectorEnabled {
             configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         }
+
+        // Tier-1 engine-level feature hardening (Searxly Maximum): turn privacy-relevant WebKit features
+        // OFF in the ENGINE itself — real and undetectable, unlike the JS shims that stay as the floor.
+        Self.applyEngineHardening(to: configuration.preferences, level: MaximumSecurity.effective)
 
         // Apply general ad & tracker blocking (network + cosmetic).
         AdBlockManager.shared.apply(to: configuration)
@@ -240,7 +259,15 @@ struct WebViewFactory {
         case .standard:
             // Default behavior: persistent website data store (cookies, localStorage, cache survive).
             // UA is set once in the shared configuration above (desktop-Safari for every mode).
-            if maxTorRouting { Self.applyTorRouting(to: configuration) }
+            if maxTorRouting {
+                Self.applyTorRouting(to: configuration)   // forces a non-persistent store already
+            } else if AmnesiaMode.isActive || Edition.isMaximum {
+                // Amnesic sessions — and ALL of Searxly Maximum, including its VPN lane — keep even
+                // standard tabs RAM-only: cookies / cache / localStorage are never written to disk, can't
+                // be used to correlate you across sites, and vanish on quit. (Maximum + Tor already gets a
+                // non-persistent store via applyTorRouting; this covers Maximum + VPN too.)
+                configuration.websiteDataStore = WKWebsiteDataStore.nonPersistent()
+            }
             let webView = SearxlyWebView(frame: .zero, configuration: configuration)
             // Lane A: register this standard tab with the WebExtension controller. Attaching the controller
             // (above) is not enough — the engine only injects content scripts into tabs it has been told
@@ -275,11 +302,7 @@ struct WebViewFactory {
             // resolves the hostname (incl. .onion) at the proxy, so onions work with no DNS leak.
             // Tor must be bootstrapped first — openOnionURL awaits ensureReadyAndRunning() before loading.
             let onionStore = WKWebsiteDataStore.nonPersistent()
-            let endpoint = NWEndpoint.hostPort(
-                host: NWEndpoint.Host(TorRuntimeConfig.socksHost),
-                port: NWEndpoint.Port(rawValue: TorRuntimeConfig.socksPort) ?? 19050
-            )
-            onionStore.proxyConfigurations = [ProxyConfiguration(socksv5Proxy: endpoint)]
+            onionStore.proxyConfigurations = [Self.makeTorProxyConfiguration()]
             configuration.websiteDataStore = onionStore
 
             // Leak hardening: neuter WebRTC (the classic IP-leak vector) + deny geolocation in every
@@ -294,6 +317,51 @@ struct WebViewFactory {
             let webView = SearxlyWebView(frame: .zero, configuration: configuration)
             return webView
         }
+    }
+
+    /// Tier-1 engine-level hardening (Searxly Maximum): flip privacy-relevant WebKit features OFF in the
+    /// ENGINE via private SPI (`_experimentalFeatures` / `_internalDebugFeatures` + the matching
+    /// `_setEnabled:for…Feature:` setters). Engine-off is undetectable and unbypassable, unlike the JS
+    /// shims — which stay as the floor. Every call is guarded by `responds(to:)`, and the DISABLE uses the
+    /// nil-argument trick (a nil `id` argument reads as `BOOL false`), so on any future WebKit where a
+    /// symbol is gone this simply no-ops. It can't crash and can't make things worse.
+    static func applyEngineHardening(to preferences: WKPreferences, level: MaximumSecurityLevel) {
+        guard Edition.isMaximum else { return }
+
+        // Off at every Maximum level: IP-adjacent + high-entropy features already neutered from JS.
+        let alwaysOff = ["peerconnection", "webrtc", "mediastream", "mediadevices", "mediarecorder",
+                         "gamepad", "webnfc", "webserial", "webhid", "webusb", "webbluetooth",
+                         "battery", "networkinformation", "prefetch", "prerender", "speculationrules"]
+        // Also off at Safer / Safest: the heavy GPU + WASM exploit/entropy surface.
+        let saferOff = ["webgl", "webgpu", "webassembly", "offscreencanvas"]
+        let tokens = level.dropsHighRiskAPIs ? (alwaysOff + saferOff) : alwaysOff
+
+        func matches(_ s: String) -> Bool {
+            let l = s.lowercased()
+            return tokens.contains { l.contains($0) }
+        }
+
+        func disable(list listSelector: String, setter setterSelector: String) {
+            let classObject = WKPreferences.self as AnyObject
+            let listSel = NSSelectorFromString(listSelector)
+            guard classObject.responds(to: listSel),
+                  let features = classObject.perform(listSel)?.takeUnretainedValue() as? [NSObject] else { return }
+            let setSel = NSSelectorFromString(setterSelector)
+            guard preferences.responds(to: setSel) else { return }
+            let keySel = NSSelectorFromString("key")
+            let nameSel = NSSelectorFromString("name")
+            for feature in features {
+                let key = feature.responds(to: keySel) ? (feature.value(forKey: "key") as? String ?? "") : ""
+                let name = feature.responds(to: nameSel) ? (feature.value(forKey: "name") as? String ?? "") : ""
+                if matches(key) || matches(name) {
+                    // nil first arg → the BOOL parameter reads as 0 (false) → the feature is disabled.
+                    preferences.perform(setSel, with: nil, with: feature)
+                }
+            }
+        }
+
+        disable(list: "_experimentalFeatures", setter: "_setEnabled:forExperimentalFeature:")
+        disable(list: "_internalDebugFeatures", setter: "_setEnabled:forInternalDebugFeature:")
     }
 
     /// Injected into every tab at document start (all frames). Clamps navigator.hardwareConcurrency to a
@@ -320,17 +388,28 @@ struct WebViewFactory {
     """
 
     /// Injected into every tab at document start (all frames) ONLY in Maximum Privacy. The Strict
-    /// fingerprint cluster: per-read farbling of canvas / WebGL / audio readbacks, reporting the content
-    /// window as the screen (so the screen-dimension fingerprint rows match the window, Tor-letterbox
-    /// style), trimming the referrer to same-origin, and clearing window.name across sites. Every block
-    /// is independently try/caught with a double-install guard. This is the breakage-prone, opt-in layer
-    /// — NOT injected in Normal/Encrypted.
+    /// fingerprint cluster — each block independently try/caught behind a double-install guard:
+    ///   • WebRTC neutered (no RTCPeerConnection → no IP leak around the Tor SOCKS proxy)
+    ///   • canvas / WebGL / audio / OffscreenCanvas readbacks farbled per-read
+    ///   • font metrics noised (canvas measureText) + FontFaceSet enumeration capped to common/registered
+    ///   • WebGL vendor+renderer standardized to Apple; WebGPU (navigator.gpu) made absent
+    ///   • screen == content window; window/screen/documentElement/visualViewport letterboxed to a bucket
+    ///   • devicePixelRatio→1×/2×; colour depth→24 (low-entropy display)
+    ///   • timezone reported as UTC (getTimezoneOffset + Intl) so the local region can't be read
+    ///   • referrer trimmed to same-origin; window.name cleared across sites
+    ///   • every shim native-code-masked so Function.prototype.toString can't reveal the tampering
+    /// This is the breakage-prone, opt-in layer — NOT injected in Normal/Encrypted.
     ///
-    /// Honest limits (WKWebView ceiling): the shim is detectable, Worker-context reads aren't covered,
-    /// and TLS/JA3 + font fingerprints are untouched — this raises the cost of fingerprinting, it does
-    /// not make the browser un-fingerprintable. matchMedia interception is scoped to device-width/height
-    /// only (the FP vectors), so ordinary responsive (max-width/min-width) layouts are left alone.
-    static let strictPrivacySource: String = """
+    /// Honest limits (WKWebView ceiling): shims are native-masked but still detectable via descriptor
+    /// inspection or a fresh-realm (dynamically-created about:blank iframe) escape. Font metrics are now
+    /// noised (canvas measureText) and FontFaceSet enumeration capped, but the DOM offsetWidth font-probe
+    /// and Worker-context reads stay open; letterboxing now spans innerWidth/screen/documentElement/
+    /// visualViewport, yet a full-width element's getBoundingClientRect still reveals the true width (true
+    /// letterboxing needs native content margins); TLS/JA3 is untouched. This raises the cost of
+    /// fingerprinting; it does not make the browser un-fingerprintable — only a patched engine would.
+    /// matchMedia interception is scoped to device-width/height (the FP vectors), so ordinary responsive
+    /// (max-width/min-width) layouts are left alone.
+    static var strictPrivacySource: String { """
     (function() {
         'use strict';
         if (window.__searxlyStrictInstalled) { return; }
@@ -338,8 +417,41 @@ struct WebViewFactory {
 
         function jitter() { return (Math.random() < 0.5) ? -1 : 1; }
         function clampByte(v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+
+        // --- Native-code masking -------------------------------------------------------------------
+        // Report every shim below as `[native code]` and hide the masking itself, so a fingerprinter
+        // reading Function.prototype.toString on our overrides can't spot the tampering (the "this is a
+        // privacy browser" tell that plain JS farbling otherwise leaks). Honest limit: this raises the
+        // cost of detection, it does not remove it — descriptor inspection or a fresh-realm escape can
+        // still find shims. That's the WKWebView JS ceiling; only a patched engine closes it fully.
+        var mask = (function () {
+            var nativeToString = Function.prototype.toString;
+            var shimNames = new WeakMap();
+            function toString() {
+                try { if (shimNames.has(this)) { return 'function ' + shimNames.get(this) + '() { [native code] }'; } } catch (e) {}
+                return nativeToString.call(this);
+            }
+            shimNames.set(toString, 'toString');
+            try {
+                Object.defineProperty(Function.prototype, 'toString', {
+                    value: toString, writable: true, enumerable: false, configurable: true
+                });
+            } catch (e) {}
+            return function (fn, name) {
+                try { shimNames.set(fn, name || (fn && fn.name) || ''); } catch (e) {}
+                return fn;
+            };
+        })();
+
+        // Mask the always-on hardwareConcurrency getter installed earlier (fingerprintMitigationSource).
+        try {
+            var hcDesc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'hardwareConcurrency');
+            if (hcDesc && hcDesc.get) { mask(hcDesc.get, 'get hardwareConcurrency'); }
+        } catch (e) {}
+
+        // Getter installer that native-code-masks the getter it defines.
         function defGet(obj, prop, fn) {
-            try { Object.defineProperty(obj, prop, { get: fn, configurable: true }); } catch (e) {}
+            try { Object.defineProperty(obj, prop, { get: mask(fn, 'get ' + prop), configurable: true }); } catch (e) {}
         }
 
         // --- WebRTC: neutralize RTCPeerConnection so a page can't discover the real IP ---
@@ -395,6 +507,9 @@ struct WebViewFactory {
             }
         } catch (e) {}
 
+        // --- Fonts (metrics + enumeration) — Maximum edition only (see strictFontDefenseJS). ---
+        \(Edition.isMaximum ? Self.strictFontDefenseJS : "")
+
         // --- WebGL: standardize the high-signal strings + perturb readback ---
         try {
             function patchGL(proto) {
@@ -437,18 +552,43 @@ struct WebViewFactory {
             }
         } catch (e) {}
 
-        // --- Screen metrics: report the content window, not the physical display ---
+        // --- Screen metrics + viewport letterboxing --------------------------------------------------
+        // Report the content window (not the physical display), AND round it to a coarse bucket so an
+        // exact pixel size can't single you out — the entropy in window.innerWidth/Height is otherwise
+        // one of the strongest passive signals. This is "letterbox the reported metrics": CSS layout /
+        // media queries still use the real viewport (so nothing breaks), but scripts reading the size
+        // see a low-entropy bucket. Honest limit: a script can still compare against
+        // documentElement.clientWidth to detect the rounding — closing that needs real content margins
+        // (a patched engine / Tor Browser-style letterboxing), which WKWebView can't do here.
         try {
+            var __lbStepW = 100, __lbStepH = 100;
+            function __lb(v, s) { v = v | 0; return v <= 0 ? s : Math.max(s, Math.round(v / s) * s); }
+            function __origGetter(obj, prop) {
+                var o = obj;
+                while (o) { var d = Object.getOwnPropertyDescriptor(o, prop); if (d && d.get) { return d.get; } o = Object.getPrototypeOf(o); }
+                return null;
+            }
+            var __iwGet = __origGetter(window, 'innerWidth');
+            var __ihGet = __origGetter(window, 'innerHeight');
+            if (__iwGet) { defGet(window, 'innerWidth',  function() { return __lb(__iwGet.call(window), __lbStepW); }); }
+            if (__ihGet) { defGet(window, 'innerHeight', function() { return __lb(__ihGet.call(window), __lbStepH); }); }
+
+            // screen == the (now bucketed) content window, and its position is pinned to the origin.
             defGet(Screen.prototype, 'width',       function() { return window.innerWidth; });
             defGet(Screen.prototype, 'height',      function() { return window.innerHeight; });
             defGet(Screen.prototype, 'availWidth',  function() { return window.innerWidth; });
             defGet(Screen.prototype, 'availHeight', function() { return window.innerHeight; });
+            defGet(Screen.prototype, 'availLeft',   function() { return 0; });
+            defGet(Screen.prototype, 'availTop',    function() { return 0; });
             defGet(window, 'screenX',     function() { return 0; });
             defGet(window, 'screenY',     function() { return 0; });
             defGet(window, 'screenLeft',  function() { return 0; });
             defGet(window, 'screenTop',   function() { return 0; });
             defGet(window, 'outerWidth',  function() { return window.innerWidth; });
             defGet(window, 'outerHeight', function() { return window.innerHeight; });
+            // Letterboxing (cont.) — Maximum edition only; injected here (inside this block) so it can see
+            // __origGetter, which is block-scoped to this try under 'use strict'. See strictLetterboxExtrasJS.
+            \(Edition.isMaximum ? Self.strictLetterboxExtrasJS : "")
         } catch (e) {}
 
         // --- matchMedia: only intercept device-width/height (the FP vectors); pass everything else through ---
@@ -486,8 +626,272 @@ struct WebViewFactory {
             meta.content = 'same-origin';
             (document.head || document.documentElement).appendChild(meta);
         } catch (e) {}
+
+        // --- OffscreenCanvas 2D farbling (main thread): close the non-Worker OffscreenCanvas readback
+        //     bypass of the canvas block above. Worker-scope OffscreenCanvas still isn't covered — that
+        //     needs wrapping the Worker constructor, which is breakage-prone and deferred. ---
+        try {
+            if (window.OffscreenCanvasRenderingContext2D) {
+                var oGID = OffscreenCanvasRenderingContext2D.prototype.getImageData;
+                OffscreenCanvasRenderingContext2D.prototype.getImageData = mask(function() {
+                    var img = oGID.apply(this, arguments);
+                    try { var d = img.data; for (var i = 0; i < d.length; i += 256) { d[i] = clampByte(d[i] + jitter()); } } catch (e) {}
+                    return img;
+                }, 'getImageData');
+            }
+        } catch (e) {}
+
+        // --- devicePixelRatio + colour depth: collapse scaled / HiDPI displays into the 1x / 2x, 24-bit
+        //     Mac population so an unusual scale factor (1.25, 1.5, 3, …) can't single you out. ---
+        try {
+            var _dpr = window.devicePixelRatio || 1;
+            var _normDpr = _dpr >= 1.5 ? 2 : 1;
+            Object.defineProperty(window, 'devicePixelRatio', { get: mask(function () { return _normDpr; }, 'get devicePixelRatio'), configurable: true });
+        } catch (e) {}
+        defGet(Screen.prototype, 'colorDepth', function () { return 24; });
+        defGet(Screen.prototype, 'pixelDepth', function () { return 24; });
+
+        // --- Timezone: report UTC so the local region can't be read from JS (offset + Intl only; Date's
+        //     local display methods are left intact to avoid breaking legitimate time UIs). This mirrors
+        //     the per-onion-tab hardening, extended to EVERY Maximum tab (covers Maximum + VPN too). ---
+        try {
+            Date.prototype.getTimezoneOffset = mask(function () { return 0; }, 'getTimezoneOffset');
+            if (window.Intl && Intl.DateTimeFormat) {
+                var _resolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+                Intl.DateTimeFormat.prototype.resolvedOptions = mask(function () {
+                    var o = _resolved.call(this);
+                    try { o.timeZone = 'UTC'; } catch (e) {}
+                    return o;
+                }, 'resolvedOptions');
+            }
+        } catch (e) {}
+
+        // --- WebGPU: the adapter / limits surface is high-entropy; make navigator.gpu read as absent
+        //     (like older Safari). Trade-off: WebGPU pages fall back to WebGL / CPU in Maximum. ---
+        try {
+            if ('gpu' in navigator) {
+                Object.defineProperty(navigator, 'gpu', { get: mask(function () { return undefined; }, 'get gpu'), configurable: true });
+            }
+        } catch (e) {}
+
+        // --- Defense-in-depth: APIs Safari doesn't ship anyway (Battery, WebUSB / Serial / HID /
+        //     Bluetooth, NetworkInformation). No-ops on today's WebKit; guarded so a future engine that
+        //     adds one can't silently reopen a high-entropy or IP-adjacent vector. ---
+        try {
+            ['getBattery', 'usb', 'serial', 'hid', 'bluetooth', 'connection'].forEach(function (k) {
+                try { if (k in navigator) { Object.defineProperty(navigator, k, { get: mask(function () { return undefined; }, 'get ' + k), configurable: true }); } } catch (e) {}
+            });
+        } catch (e) {}
+
+        // --- Searxly Maximum hardening: speculative-networking off, uniform locale, and the security
+        //     slider's GPU/WASM cuts. Edition-gated so the base app's Maximum-Privacy farbling is untouched.
+        \(Edition.isMaximum ? Self.strictMaximumHardeningJS : "")
+
+        // --- Native-code masking: register every function shim installed above so their toString reports
+        //     `[native code]` (the getters were already masked inline via defGet / mask). ---
+        try {
+            mask(CanvasRenderingContext2D.prototype.getImageData, 'getImageData');
+            mask(HTMLCanvasElement.prototype.toDataURL, 'toDataURL');
+            if (HTMLCanvasElement.prototype.toBlob) { mask(HTMLCanvasElement.prototype.toBlob, 'toBlob'); }
+            if (window.WebGLRenderingContext) { mask(WebGLRenderingContext.prototype.getParameter, 'getParameter'); mask(WebGLRenderingContext.prototype.readPixels, 'readPixels'); }
+            if (window.WebGL2RenderingContext) { mask(WebGL2RenderingContext.prototype.getParameter, 'getParameter'); mask(WebGL2RenderingContext.prototype.readPixels, 'readPixels'); }
+            if (window.AnalyserNode) { mask(AnalyserNode.prototype.getFloatFrequencyData, 'getFloatFrequencyData'); }
+            if (window.AudioBuffer) { mask(AudioBuffer.prototype.getChannelData, 'getChannelData'); }
+            mask(window.matchMedia, 'matchMedia');
+        } catch (e) {}
     })();
     """
+    }
+
+    /// Font defense (measureText noise + FontFaceSet.check cap) injected into strictPrivacySource —
+    /// Searxly Maximum edition ONLY, so the base app's own Maximum-Privacy farbling is never extended.
+    /// Uses `mask` from the enclosing IIFE (function-scoped, so visible where this is interpolated).
+    private static let strictFontDefenseJS: String = """
+    try {
+                var origMeasure = CanvasRenderingContext2D.prototype.measureText;
+                CanvasRenderingContext2D.prototype.measureText = mask(function() {
+                    var m = origMeasure.apply(this, arguments);
+                    try {
+                        var w = m.width + (Math.random() - 0.5) * 0.4;
+                        Object.defineProperty(m, 'width', { get: mask(function() { return w; }, 'get width'), configurable: true });
+                    } catch (e) {}
+                    return m;
+                }, 'measureText');
+            } catch (e) {}
+
+            try {
+                if (document.fonts && typeof document.fonts.check === 'function') {
+                    var __commonFonts = ['serif','sans-serif','monospace','cursive','fantasy','system-ui',
+                        '-apple-system','blinkmacsystemfont','ui-serif','ui-sans-serif','ui-monospace','ui-rounded',
+                        'helvetica','helvetica neue','arial','times','times new roman','courier','courier new',
+                        'georgia','verdana','menlo','monaco','apple color emoji'];
+                    var __origFontsCheck = document.fonts.check.bind(document.fonts);
+                    function __familyAllowed(spec) {
+                        var s = String(spec).toLowerCase();
+                        for (var i = 0; i < __commonFonts.length; i++) { if (s.indexOf(__commonFonts[i]) >= 0) { return true; } }
+                        try {
+                            var it = document.fonts.values(), r;
+                            while (!(r = it.next()).done) {
+                                var fam = (r.value && r.value.family ? String(r.value.family) : '').toLowerCase().replace(/["']/g, '');
+                                if (fam && s.indexOf(fam) >= 0) { return true; }
+                            }
+                        } catch (e) {}
+                        return false;
+                    }
+                    document.fonts.check = mask(function(spec, text) {
+                        try { return __familyAllowed(spec) ? __origFontsCheck(spec, text) : false; }
+                        catch (e) { return false; }
+                    }, 'check');
+                }
+            } catch (e) {}
+    """
+
+    /// Viewport letterbox extras (documentElement/body clientWidth + visualViewport) injected INSIDE
+    /// strictPrivacySource's screen block — Searxly Maximum edition ONLY. Placed inside that block so it
+    /// can see `__origGetter`, which is block-scoped there under 'use strict'.
+    private static let strictLetterboxExtrasJS: String = """
+    try {
+                var __cwGet = __origGetter(Element.prototype, 'clientWidth');
+                var __chGet = __origGetter(Element.prototype, 'clientHeight');
+                function __isRootEl(el) { return el === document.documentElement || el === document.body; }
+                if (__cwGet) {
+                    Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true,
+                        get: mask(function() { return __isRootEl(this) ? window.innerWidth : __cwGet.call(this); }, 'get clientWidth') });
+                }
+                if (__chGet) {
+                    Object.defineProperty(Element.prototype, 'clientHeight', { configurable: true,
+                        get: mask(function() { return __isRootEl(this) ? window.innerHeight : __chGet.call(this); }, 'get clientHeight') });
+                }
+                if (window.visualViewport) {
+                    defGet(window.visualViewport, 'width',  function() { return window.innerWidth; });
+                    defGet(window.visualViewport, 'height', function() { return window.innerHeight; });
+                }
+            } catch (e) {}
+    """
+
+    /// Searxly Maximum ONLY — appended inside strictPrivacySource's IIFE (so it can use `mask`/`defGet`).
+    /// Closes speculative-networking leaks (dns-prefetch / preconnect / prefetch / prerender open a
+    /// connection or DNS lookup AHEAD of navigation, which can leak a hostname outside the Tor path),
+    /// pins the reported locale to en-US, and — when the security slider is at Safer/Safest — drops the
+    /// GPU + WebAssembly attack surface. Recomputed per webview so a slider change takes effect on rebuild.
+    static var strictMaximumHardeningJS: String {
+        let saferBlock = MaximumSecurity.effective.dropsHighRiskAPIs ? """
+            // Safer/Safest: drop WebGL, WebGPU and WebAssembly — the highest exploit- and entropy-value web
+            // APIs. Sites needing 3D/GPU/WASM degrade; that is the point of raising the slider.
+            try {
+                var __origGetCtx = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = mask(function(type) {
+                    var t = String(type || '').toLowerCase();
+                    if (t.indexOf('webgl') >= 0 || t === 'webgpu') { return null; }
+                    return __origGetCtx.apply(this, arguments);
+                }, 'getContext');
+                try { Object.defineProperty(window, 'WebAssembly', { get: mask(function(){ return undefined; }, 'get WebAssembly'), configurable: true }); } catch (e) {}
+            } catch (e) {}
+        """ : ""
+        return """
+        try {
+            var __dnsMeta = document.createElement('meta');
+            __dnsMeta.httpEquiv = 'x-dns-prefetch-control'; __dnsMeta.content = 'off';
+            (document.head || document.documentElement).appendChild(__dnsMeta);
+            var __specRel = /(^|\\s)(dns-prefetch|preconnect|prefetch|prerender)(\\s|$)/i;
+            function __stripSpec(node) {
+                try {
+                    if (node.tagName === 'LINK' && __specRel.test(node.getAttribute('rel') || '')) {
+                        if (node.parentNode) { node.parentNode.removeChild(node); } return;
+                    }
+                    if (node.querySelectorAll) {
+                        node.querySelectorAll('link[rel]').forEach(function (l) {
+                            if (__specRel.test(l.getAttribute('rel') || '')) { try { l.parentNode && l.parentNode.removeChild(l); } catch (e) {} }
+                        });
+                    }
+                } catch (e) {}
+            }
+            __stripSpec(document);
+            try {
+                var __specMO = new MutationObserver(function (muts) {
+                    for (var i = 0; i < muts.length; i++) {
+                        var an = muts[i].addedNodes || [];
+                        for (var j = 0; j < an.length; j++) { if (an[j].nodeType === 1) { __stripSpec(an[j]); } }
+                    }
+                });
+                __specMO.observe(document.documentElement || document, { childList: true, subtree: true });
+            } catch (e) {}
+        } catch (e) {}
+
+        try {
+            defGet(Navigator.prototype, 'language', function () { return 'en-US'; });
+            Object.defineProperty(Navigator.prototype, 'languages', { get: mask(function () { return ['en-US', 'en']; }, 'get languages'), configurable: true });
+        } catch (e) {}
+
+        // Timing side-channel + fingerprint defense: coarsen the high-resolution timer to 100ms and drop
+        // the SharedArrayBuffer nanosecond-timer primitive — blunts Spectre-class cross-origin reads AND
+        // high-resolution timing fingerprinting (the standard Tor Browser mitigation).
+        try {
+            if (window.performance && performance.now) {
+                var __origPerfNow = performance.now.bind(performance);
+                performance.now = mask(function () { return Math.floor(__origPerfNow() / 100) * 100; }, 'now');
+            }
+            try { Object.defineProperty(window, 'SharedArrayBuffer', { get: mask(function () { return undefined; }, 'get SharedArrayBuffer'), configurable: true }); } catch (e) {}
+            try { Object.defineProperty(window, 'crossOriginIsolated', { get: mask(function () { return false; }, 'get crossOriginIsolated'), configurable: true }); } catch (e) {}
+        } catch (e) {}
+
+        // speechSynthesis voice list leaks the installed TTS voices — a stable fingerprint. Report none.
+        try {
+            if (window.speechSynthesis && speechSynthesis.getVoices) {
+                speechSynthesis.getVoices = mask(function () { return []; }, 'getVoices');
+            }
+        } catch (e) {}
+
+        // Close the Web Worker fingerprinting bypass: a page can move OffscreenCanvas / WebGL / audio reads
+        // into a worker, where the main-thread farbling doesn't reach, and read a CLEAN fingerprint. Wrap
+        // the classic Worker / SharedWorker constructors so the real script is prefixed (via importScripts
+        // from a same-origin blob) with worker-scope farbling. Module workers can't importScripts, so they
+        // fall back — a documented WKWebView limit.
+        try {
+            var __wfarble = \(Self.workerFarblingLiteral);
+            function __wrapWorker(Orig) {
+                if (!Orig) { return Orig; }
+                var Wrapped = function (url, options) {
+                    try {
+                        if (options && options.type === 'module') { return new Orig(url, options); }
+                        var real = (new URL(String(url), location.href)).href;
+                        var shim = __wfarble + ';try{importScripts(' + JSON.stringify(real) + ');}catch(e){}';
+                        var blobUrl = URL.createObjectURL(new Blob([shim], { type: 'application/javascript' }));
+                        return new Orig(blobUrl, options);
+                    } catch (e) { return new Orig(url, options); }
+                };
+                try { Wrapped.prototype = Orig.prototype; } catch (e) {}
+                return mask(Wrapped, 'Worker');
+            }
+            if (window.Worker) { window.Worker = __wrapWorker(window.Worker); }
+            if (window.SharedWorker) { window.SharedWorker = __wrapWorker(window.SharedWorker); }
+        } catch (e) {}
+
+        \(saferBlock)
+        """
+    }
+
+    /// Worker-scope farbling (self-contained — no dependency on the main-thread IIFE's `mask`/`defGet`),
+    /// prepended to classic workers by the Worker wrapper in strictMaximumHardeningJS so OffscreenCanvas /
+    /// WebGL reads and the high-res timer are farbled inside workers too (closing the Worker FP bypass).
+    static let workerFarblingSource: String = """
+    (function(){
+    'use strict';
+    function cb(v){return v<0?0:(v>255?255:v);}
+    function jt(){return (Math.random()<0.5)?-1:1;}
+    try { if (self.performance && self.performance.now) { var pn = self.performance.now.bind(self.performance); self.performance.now = function(){ return Math.floor(pn()/100)*100; }; } } catch(e){}
+    try { Object.defineProperty(self,'SharedArrayBuffer',{get:function(){return undefined;},configurable:true}); } catch(e){}
+    try { if (self.OffscreenCanvasRenderingContext2D) { var g=OffscreenCanvasRenderingContext2D.prototype.getImageData; OffscreenCanvasRenderingContext2D.prototype.getImageData=function(){var img=g.apply(this,arguments);try{var d=img.data;for(var i=0;i<d.length;i+=256){d[i]=cb(d[i]+jt());}}catch(e){}return img;}; } } catch(e){}
+    try { function pg(p){ if(!p)return; var gp=p.getParameter; p.getParameter=function(x){ if(x===37445)return 'Apple Inc.'; if(x===37446)return 'Apple GPU'; return gp.apply(this,arguments); }; var rp=p.readPixels; p.readPixels=function(){ rp.apply(this,arguments); try{var b=arguments[6]; if(b&&b.length){ for(var i=0;i<b.length;i+=503){ b[i]=b[i]^1; } }}catch(e){} }; } if (self.WebGLRenderingContext) pg(self.WebGLRenderingContext.prototype); if (self.WebGL2RenderingContext) pg(self.WebGL2RenderingContext.prototype); } catch(e){}
+    })();
+    """
+
+    /// `workerFarblingSource` as a safely-escaped JS string literal for interpolation into the wrapper.
+    static var workerFarblingLiteral: String {
+        if let data = try? JSONSerialization.data(withJSONObject: workerFarblingSource, options: [.fragmentsAllowed]),
+           let s = String(data: data, encoding: .utf8) { return s }
+        return "\"\""
+    }
 
     /// Local SOCKS5 endpoint for the bundled Tor client. Shared by onion tabs and Maximum-Privacy+Tor
     /// routing so both reach Tor the same way (SOCKS5h — hostnames resolved at the proxy, no DNS leak).
@@ -498,13 +902,31 @@ struct WebViewFactory {
         )
     }
 
+    /// A Tor SOCKS proxy config carrying a fresh per-tab isolation token (Searxly Maximum only). Tor
+    /// treats the SOCKS username/password purely as a stream-isolation key (`IsolateSOCKSAuth`, which is
+    /// Tor's default), so a distinct pair gets a distinct circuit. Giving every tab its own token means
+    /// two tabs open on the SAME site no
+    /// longer share a Tor circuit, so a shared exit can't correlate them as one client — it closes the
+    /// same-origin cross-tab linkage that per-destination isolation alone leaves open. The token is an
+    /// opaque nonce, never a secret, and is fixed for the tab's lifetime (New Identity still rotates it).
+    static func makeTorProxyConfiguration() -> ProxyConfiguration {
+        let config = ProxyConfiguration(socksv5Proxy: torSocksEndpoint())
+        // Per-tab circuit isolation is a Searxly Maximum edition feature. The base app's onion/Tor tabs
+        // use a plain, credential-less proxy (shared circuit per destination) exactly as before.
+        if Edition.isMaximum {
+            let token = UUID().uuidString
+            config.applyCredential(username: token, password: token)
+        }
+        return config
+    }
+
     /// Routes a tab through Tor's local SOCKS proxy and applies the onion IP-leak hardening (WebRTC /
     /// media-device / geolocation neutering). Used for Maximum Privacy + Tor so standard and private
     /// tabs traverse Tor exactly like onion tabs, hiding the real IP. Forces a non-persistent store.
     @MainActor
     static func applyTorRouting(to configuration: WKWebViewConfiguration) {
         let store = WKWebsiteDataStore.nonPersistent()
-        store.proxyConfigurations = [ProxyConfiguration(socksv5Proxy: torSocksEndpoint())]
+        store.proxyConfigurations = [Self.makeTorProxyConfiguration()]
         configuration.websiteDataStore = store
         configuration.userContentController.addUserScript(
             WKUserScript(source: onionHardeningSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)

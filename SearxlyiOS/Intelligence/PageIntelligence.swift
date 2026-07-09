@@ -47,16 +47,55 @@ enum PageIntelligence {
         switch SystemLanguageModel.default.availability {
         case .available:
             return .available
-        case .unavailable(.appleIntelligenceNotEnabled):
-            return .notEnabled
-        case .unavailable(.modelNotReady):
-            return .downloading
-        case .unavailable:
+        case .unavailable(let reason):
+            // Defensive string match — the exact UnavailableReason case names have drifted across
+            // SDK seeds, and a hard `case .unavailable(.modelNotReady)` that no longer matches would
+            // silently fall through to "unsupported" and hide the feature on a perfectly good device.
+            // (This mirrors the macOS AppleIntelligenceProvider probe, which is the proven-working one.)
+            let r = String(describing: reason).lowercased()
+            if r.contains("notenabled") || r.contains("notturnedon") { return .notEnabled }
+            if r.contains("notready") || r.contains("downloading") || r.contains("preparing") { return .downloading }
             return .unsupported
         }
         #else
         return .unsupported
         #endif
+    }
+
+    /// Nudges the on-device model app-wide: registers demand so iOS downloads/loads the assets, and
+    /// warms the first inference. Called at launch (and when the SERP AI slot appears) so the model
+    /// becomes ready wherever the user is — not only if they happen to open Settings ▸ Intelligence,
+    /// which was the ONLY thing requesting it before (so a still-downloading model stayed hidden
+    /// everywhere, forever). No-op when the model is off or the device is ineligible.
+    static func prewarm() {
+        #if canImport(FoundationModels)
+        // Key off the REAL system availability (not the DEBUG mock), so this never pokes
+        // FoundationModels in the simulator where there is no model.
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            LanguageModelSession().prewarm()
+        case .unavailable(let reason):
+            let r = String(describing: reason).lowercased()
+            if r.contains("notready") || r.contains("downloading") || r.contains("preparing") {
+                LanguageModelSession().prewarm()   // register demand → nudge the asset download
+            }
+        }
+        #endif
+    }
+
+    /// A short, honest message for a generation error — Apple's on-device model refuses sensitive
+    /// content (guardrails) and caps context, and a browser summarizing the real web hits both. Better
+    /// to say what happened than to show a blank card.
+    static func friendlyError(_ error: Error) -> String {
+        let d = String(describing: error).lowercased()
+        if d.contains("guardrail") || d.contains("safety") || d.contains("unsafe") {
+            return L("The on-device model declined this content (Apple Intelligence safety filter).")
+        }
+        if d.contains("exceededcontext") || d.contains("context") || d.contains("token") || d.contains("too large") {
+            return L("This page is too long for the on-device model.")
+        }
+        if d.contains("cancel") { return L("Cancelled.") }
+        return error.localizedDescription
     }
 
     /// The exact reason string from FoundationModels — surfaced in the Intelligence pane so
@@ -85,6 +124,13 @@ enum PageIntelligence {
 
     static var isAvailable: Bool { availability == .available }
 
+    /// The SERP shows its AI Overview slot when the model is ready OR still downloading — so a
+    /// not-yet-ready model surfaces a "preparing" state (and gets prewarmed) instead of nothing.
+    /// Hidden when Apple Intelligence is off or the device is ineligible.
+    static var showsOverviewSlot: Bool {
+        availability == .available || availability == .downloading
+    }
+
     /// Page text budget: the on-device model has a small context window (~4k tokens), so the
     /// page's visible text is clamped — enough for articles, honest about very long pages.
     private static let maxChars = 9_000
@@ -107,18 +153,21 @@ enum PageIntelligence {
             )
         }
         #endif
+        let prompt = "Page title: \(title)\n\nPage text:\n\(text)"
         return AsyncThrowingStream { continuation in
             #if canImport(FoundationModels)
-            let task = Task {
+            // Matches the proven macOS provider's streaming shape (a normal Task; under default MainActor
+            // isolation the model call suspends off the main thread anyway). No mid-inference cancellation
+            // — cancelling FoundationModels mid-flight is the documented crash risk; the sheet ignores
+            // late output via its own task instead.
+            Task {
                 do {
                     let session = LanguageModelSession(instructions: """
                     You summarize web pages. Reply with a tight summary of the page's substance: \
                     2–4 short paragraphs or up to 6 bullet points, no preamble, no meta-commentary. \
                     Match the language of the page text.
                     """)
-                    let prompt = "Page title: \(title)\n\nPage text:\n\(text)"
-                    let stream = session.streamResponse(to: prompt)
-                    for try await partial in stream {
+                    for try await partial in session.streamResponse(to: prompt) {
                         continuation.yield(partial.content)
                     }
                     continuation.finish()
@@ -126,7 +175,6 @@ enum PageIntelligence {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
             #else
             continuation.finish(throwing: NSError(
                 domain: "Searxly.Intelligence", code: 1,

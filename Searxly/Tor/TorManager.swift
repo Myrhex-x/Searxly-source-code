@@ -58,6 +58,10 @@ final class TorManager {
     var isRunning: Bool { status == .running }
     var bundledVersion: String { TorRuntimeConfig.bundledVersion }
 
+    /// Set once the bundled Tor runtime has passed its supply-chain signature check this session
+    /// (the app bundle can't change while running, so one verification holds). See RuntimeIntegrity.
+    private var runtimeIntegrityVerified = false
+
     private init() {}
 
     // MARK: - Bundle paths (Resources/tor-runtime/, defensive Bundle.main lookups)
@@ -65,6 +69,21 @@ final class TorManager {
     var bundledTorBinaryPath: String? { bundledResource(named: "tor") }
     var bundledGeoIPPath: String? { bundledResource(named: "geoip") }
     var bundledGeoIP6Path: String? { bundledResource(named: "geoip6") }
+
+    /// Absolute path to a bundled pluggable-transport executable (e.g. "lyrebird" for obfs4,
+    /// "snowflake-client"), or nil if this runtime wasn't fetched with PT support. Lives under
+    /// tor-runtime/pluggable_transports/ — see scripts/fetch-tor-runtime.sh.
+    func bundledPluggableTransportPath(named name: String) -> String? {
+        guard let res = Bundle.main.resourceURL else { return nil }
+        let p = res.appendingPathComponent("tor-runtime/pluggable_transports/\(name)").path
+        return FileManager.default.fileExists(atPath: p) ? p : nil
+    }
+
+    /// True when the runtime was fetched with pluggable-transport binaries (so bridges can be used).
+    var pluggableTransportsAvailable: Bool {
+        bundledPluggableTransportPath(named: "lyrebird") != nil
+            || bundledPluggableTransportPath(named: "snowflake-client") != nil
+    }
 
     private func bundledResource(named name: String) -> String? {
         if let url = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: "tor-runtime") {
@@ -99,6 +118,24 @@ final class TorManager {
             return false
         }
 
+        // Supply-chain check (Searxly Maximum edition ONLY): never exec a Tor binary that isn't the one
+        // we shipped. Verified once per session (the bundle can't change while we run); fails closed on
+        // tamper. The base app is left unchanged — it starts Tor exactly as before.
+        if Edition.isMaximum && !runtimeIntegrityVerified {
+            let report = RuntimeIntegrity.verifyTorRuntime()
+            guard report.ok else {
+                setError("Tor runtime failed verification — the bundled Tor binary isn’t the one Searxly shipped (\(report.failures.joined(separator: "; "))). Tor won’t start. Reinstall Searxly from searxly.app.")
+                log("⛔️ Tor runtime integrity FAILED: \(report.failures.joined(separator: "; "))")
+                return false
+            }
+            runtimeIntegrityVerified = true
+            if let reason = report.skippedReason {
+                log("ℹ️ Tor runtime integrity check skipped — \(reason).")
+            } else {
+                log("🔒 Tor runtime verified — signed by Searxly’s team (\(report.checked.joined(separator: ", "))).")
+            }
+        }
+
         isBusy = true
         lastError = nil
         status = .bootstrapping(0)
@@ -110,11 +147,26 @@ final class TorManager {
             return false
         }
 
+        // Bridges / pluggable transports (obfs4, Snowflake) for censored networks. A Searxly Maximum
+        // edition feature — the base app always connects directly (empty transport line), regardless of
+        // any stale preference. See TorBridgeSettings; the helper writes the matching torrc lines.
+        let bridges = TorBridgeSettings.shared
+        let transportPluginLine = Edition.isMaximum ? bridges.transportPluginLine() : ""
+        if Edition.isMaximum && bridges.effectiveIsEnabled {
+            if transportPluginLine.isEmpty {
+                log("⚠️ \(bridges.effectiveTransport.displayName) selected but its transport binary isn't bundled — connecting directly. Re-run scripts/fetch-tor-runtime.sh.")
+            } else {
+                log("🌉 Using \(bridges.effectiveTransport.displayName) to reach Tor.")
+            }
+        }
+
         let (pid, err): (Int32, String) = await proxy.startTorAsync(
             torBinaryPath: torPath,
             geoipPath: bundledGeoIPPath ?? "",
             geoip6Path: bundledGeoIP6Path ?? "",
-            socksPort: Int32(socksPort)
+            socksPort: Int32(socksPort),
+            transportPluginLine: transportPluginLine,
+            bridgeLines: transportPluginLine.isEmpty ? "" : bridges.bridgeLinesJoined()
         )
 
         if pid <= 0 {
@@ -125,18 +177,43 @@ final class TorManager {
         log("   Tor launched (pid \(pid)). Bootstrapping a circuit (first run can take 10–30s)…")
 
         let ok = await waitForBootstrap(maxAttempts: 60, delaySeconds: 1)
-        isBusy = false
 
         if ok {
+            isBusy = false
             status = .running
             lastError = nil
             log("✅ Tor connected.")
             await refreshCircuit()
             return true
-        } else {
-            setError("Tor started but did not finish bootstrapping. See ~/Library/Application Support/Searxly/tor/tor.log.")
-            return false
         }
+
+        // Direct connection didn't complete. On a censored network, Snowflake often gets through where a
+        // direct connection can't — so retry once through it automatically (unless the user picked their
+        // own bridge, or Snowflake isn't bundled / is disabled). Preserves the user's saved setting via a
+        // session-only override.
+        if shouldAutoFallbackToSnowflake() {
+            log("🌉 Tor couldn’t connect directly (looks blocked) — retrying through Snowflake…")
+            TorBridgeSettings.shared.autoFallbackTransport = .snowflake
+            isBusy = false
+            await stop()               // reap the stuck process so the new torrc (Snowflake) is applied
+            return await start()       // one retry; shouldAutoFallback… is now false, so it can't loop
+        }
+
+        isBusy = false
+        setError("Tor started but did not finish bootstrapping. See ~/Library/Application Support/Searxly/tor/tor.log.")
+        return false
+    }
+
+    /// Eligible to auto-switch to Snowflake after a failed DIRECT connection: the feature is on, we
+    /// haven't already fallen back this session, we were connecting directly (not on a user-chosen
+    /// bridge), and the Snowflake binary is actually bundled.
+    private func shouldAutoFallbackToSnowflake() -> Bool {
+        guard Edition.isMaximum else { return false }   // Maximum-edition feature; base app unaffected.
+        let b = TorBridgeSettings.shared
+        return b.autoFallbackToSnowflake
+            && b.autoFallbackTransport == nil
+            && b.effectiveTransport == .none
+            && b.snowflakeAvailable
     }
 
     func stop() async {
@@ -149,6 +226,15 @@ final class TorManager {
         status = .stopped
         circuit = []
         log("   Tor stopped.")
+    }
+
+    /// Stops Tor and starts it again so a changed torrc — e.g. new bridge / transport settings —
+    /// takes effect. Only acts when Tor is currently running; if it's stopped, the next `start()`
+    /// already picks up the new config, so there's nothing to do.
+    func restartForConfigChange() async {
+        guard status == .running else { return }
+        await stop()
+        _ = await start()
     }
 
     func clearLogs() { logs.removeAll() }
@@ -196,6 +282,9 @@ final class TorManager {
     // MARK: - Bootstrap polling
 
     private func waitForBootstrap(maxAttempts: Int, delaySeconds: UInt64) async -> Bool {
+        var bestPct: Int32 = -1
+        var stalledFor = 0
+        let stallLimit = 30   // ~30s with little/no progress ⇒ give up early (censored-network signature)
         for _ in 0..<maxAttempts {
             guard let proxy = HelperClient.shared.proxy() else { return false }
             let pct = await proxy.torBootstrapProgressAsync()
@@ -205,6 +294,15 @@ final class TorManager {
             }
             if pct >= 0 {
                 status = .bootstrapping(Int(pct))
+            }
+            // Track forward progress; a bootstrap that's advancing (even slowly) is left to finish, but
+            // one stuck near the start is the fingerprint of a blocked network — bail so Snowflake
+            // fallback can take over well before the full timeout. Maximum edition only, so the base
+            // app keeps its original full-timeout wait.
+            if pct > bestPct { bestPct = pct; stalledFor = 0 } else { stalledFor += 1 }
+            if Edition.isMaximum && stalledFor >= stallLimit && bestPct < 50 {
+                log("⏱ Tor bootstrap stalled at \(max(bestPct, 0))% — ending the wait early.")
+                return false
             }
             try? await Task.sleep(nanoseconds: delaySeconds * 1_000_000_000)
         }
@@ -217,6 +315,9 @@ final class TorManager {
         lastError = msg
         status = .error(msg)
         log("❌ " + msg)
+        // Persist at .error level (unlike log()'s .info, which the system drops) so a Tor start
+        // failure is retrievable after the fact via `log show`, not just live streaming.
+        Log.tor.error("Tor failed: \(msg, privacy: .public)")
     }
 
     private func log(_ line: String) {

@@ -1,0 +1,39 @@
+Searxly
+Copyright © 2026 Myrhex — https://github.com/Searxly/Searxly-source-code
+
+This product bundles and/or distributes third-party software. The Searxly
+application code is licensed under the PolyForm Noncommercial License 1.0.0
+(see LICENSE). The third-party components listed below are NOT covered by that
+license — they retain their own licenses, which govern their use, and in the
+event of any conflict those licenses control for those components.
+
+================================================================================
+SearXNG  —  GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)
+================================================================================
+
+Searxly bundles the SearXNG metasearch engine as a self-contained Python runtime
+(shipped inside the macOS app at Contents/Resources/searxng-runtime) and runs it
+as a separate local process on 127.0.0.1. Searxly also distributes a modified
+SearXNG theme and configuration overlay in the LocalSearxng/ directory of this
+repository.
+
+  Component : SearXNG metasearch engine
+  Copyright : © SearXNG contributors (see the project's AUTHORS)
+  License   : AGPL-3.0-or-later
+  Upstream  : https://github.com/searxng/searxng
+  Version   : 2026.6.23+e371371 (as bundled in this release)
+
+Searxly's modifications to SearXNG (the AGPL-covered parts):
+  - LocalSearxng/custom/  — theme: Jinja template overrides + searxly.css
+  - LocalSearxng/searxng/ — settings.yml.example and limiter.toml overlays
+  - Runtime configuration patching performed by the app at setup time
+    (see Searxly/Services/LocalSearxngManager+ConfigPatching.swift)
+
+These modifications are themselves licensed under AGPL-3.0-or-later. See
+LocalSearxng/LICENSE for the full AGPL text, and THIRD-PARTY-LICENSES.md for the
+written offer of Corresponding Source and further detail.
+
+Other bundled components (the Python interpreter and PyPI packages such as Flask,
+httpx, Babel, and others) retain their respective licenses; each ships its own
+license text inside the runtime under
+Contents/Resources/searxng-runtime/python/lib/python3.12/site-packages/*.dist-info/.

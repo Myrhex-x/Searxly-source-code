@@ -220,7 +220,11 @@ final class PrivacyGate {
         let host = url?.host?.lowercased() ?? ""
         let isLoopback = host == "localhost" || host == "127.0.0.1" || host == "::1"
         if isLoopback {
-            if !localSearchAllowedFast { throw PrivacyGateError.blocked }
+            if !localSearchAllowedFast {
+                NetworkEgressLedger.record(host: url?.host, lane: .blocked, kind: "search")
+                throw PrivacyGateError.blocked
+            }
+            NetworkEgressLedger.record(host: url?.host, lane: .loopback, kind: "search")
         } else {
             try assertEgressAllowed()
         }

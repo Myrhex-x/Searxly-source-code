@@ -22,11 +22,6 @@ extension BrowserState {
         bookmarks = data.bookmarks
         customTabCategories = data.customTabCategories
 
-        // Phase 0: aiPreferences now lives in AppData (encrypted when user has encryption on).
-        // The LocalIntelligenceManager currently seeds from UserDefaults for the master flag during scaffolding;
-        // a future micro-patch will sync the full AIPreferences struct from here into the manager.
-        _ = data.aiPreferences   // ensures the field is exercised on every load (safe, no-op today)
-
         if let savedIDString = data.currentInstanceID,
            let savedID = UUID(uuidString: savedIDString),
            searxInstances.contains(where: { $0.id == savedID }) {
@@ -477,8 +472,13 @@ extension BrowserState {
             tab.pauseAllMediaForClose()
         }
 
-        // Save a snapshot for "Reopen Closed Tab" (only web tabs with a URL are useful to restore)
-        if tab.kind == .web, let url = tab.currentURL, !url.absoluteString.isEmpty {
+        // Release any security-scoped access this tab held for a local file/folder ("Open File…").
+        tab.releaseSecurityScopedAccess()
+
+        // Save a snapshot for "Reopen Closed Tab" (only web tabs with a URL are useful to restore).
+        // Local files are excluded: their sandbox grant is gone once closed, so a restored file tab
+        // couldn't read its file — offering it for reopen would just resurrect a broken page.
+        if tab.kind == .web, let url = tab.currentURL, !url.absoluteString.isEmpty, !url.isFileURL {
             let snapshot = TabSnapshot(from: tab)
             recentlyClosedSnapshots.insert(snapshot, at: 0)
             if recentlyClosedSnapshots.count > 15 {

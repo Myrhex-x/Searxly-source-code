@@ -18,30 +18,31 @@ enum TabContent: Equatable { case home, results, web }
 enum SearchPhase { case idle, loading, loaded, failed(String) }
 
 enum SearchScope: String, CaseIterable, Identifiable {
-    case web, images, videos, news
+    // Order = the scope bar order: News sits right next to All (the general tab).
+    case web, news, images, videos
     var id: String { rawValue }
     @MainActor var label: String {
         switch self {
-        case .web: L("Web")
+        case .web: L("All")
+        case .news: L("News")
         case .images: L("Images")
         case .videos: L("Videos")
-        case .news: L("News")
         }
     }
     var icon: String {
         switch self {
         case .web: "magnifyingglass"
+        case .news: "newspaper"
         case .images: "photo"
         case .videos: "play.rectangle"
-        case .news: "newspaper"
         }
     }
     var categories: String {
         switch self {
         case .web: "general"
+        case .news: "news"
         case .images: "images"
         case .videos: "videos"
-        case .news: "news"
         }
     }
 }
@@ -64,8 +65,15 @@ final class BrowserModel: Identifiable {
     // Native SERP state
     var searchQuery: String = ""
     var results: [SearXNGResult] = []
+    /// SERP AI Overview state, owned HERE (stable per tab) rather than in the card's @State — so it
+    /// survives the results `List` recycling the card mid-generation. See AIOverviewModel.
+    let aiOverview = AIOverviewModel()
     /// SearXNG's related-search suggestions for the current query (AI-Overview follow-ups).
     private(set) var searchSuggestions: [String] = []
+    /// Fresh news for the current All query, resolved in the background to power a Google-style
+    /// "Top stories" module among the general results (empty unless the query is genuinely newsy).
+    private(set) var allTabNews: [SearXNGResult] = []
+    @ObservationIgnored private var allTabNewsTask: Task<Void, Never>?
     var searchPhase: SearchPhase = .idle
     var scope: SearchScope = .web
     var isLoadingMore = false
@@ -291,6 +299,21 @@ final class BrowserModel: Identifiable {
         }
     }
 
+    /// Recovers a tab whose WebContent process was terminated (memory pressure or a page bug) by
+    /// reloading the current item in place — otherwise the tab is left blank. Rate-limited so a page
+    /// that reliably kills WebContent can't spin us in a reload loop.
+    @ObservationIgnored private var lastCrashRecovery: Date = .distantPast
+    func recoverFromWebContentCrash() {
+        guard content == .web else { return }
+        guard Date.now.timeIntervalSince(lastCrashRecovery) > 5 else { return }
+        lastCrashRecovery = .now
+        if webView.url != nil {
+            webView.reload()
+        } else if let item = webView.backForwardList.currentItem {
+            webView.go(to: item)
+        }
+    }
+
     // MARK: - Native search
 
     func runSearch(_ query: String, scope: SearchScope? = nil) {
@@ -311,6 +334,23 @@ final class BrowserModel: Identifiable {
         isLoadingMore = false
         searchTask?.cancel()
         searchTask = Task { await performSearch(reset: true) }
+
+        // A Google-style "Top stories" module among the All results: resolve fresh news for the query
+        // in the background. Only on the All tab, never in private tabs (it's an extra instance call).
+        allTabNewsTask?.cancel()
+        allTabNews = []
+        if self.scope == .web, !isPrivate { beginAllTabNews(query: q) }
+    }
+
+    /// Resolves fresh news for the All query in the background. Shares the session SERP cache with the
+    /// News tab (so opening News afterward is instant). Silent on failure — the module just won't show.
+    private func beginAllTabNews(query: String) {
+        let q = query
+        allTabNewsTask = Task { @MainActor in
+            guard let (hits, _) = try? await Self.fetchHits(q, categories: "news", page: 1), !hits.isEmpty else { return }
+            guard !Task.isCancelled, self.scope == .web, self.searchQuery == q else { return }
+            self.allTabNews = SearchResultProcessor.process(raw: hits, query: q, category: "news", append: false)
+        }
     }
 
     /// Switch Web ⇄ Images for the current query.
@@ -643,6 +683,15 @@ final class BrowserModel: Identifiable {
         guard let url = hibernatedURL else { return }
         hibernatedURL = nil
         load(url)
+    }
+
+    /// Restore a background tab WITHOUT loading it: the URL is parked (and revived on first activation),
+    /// so restoring a session of many tabs doesn't fire many page loads at launch — only the active tab
+    /// loads. This is the big launch-speed win for people who keep lots of tabs open.
+    func parkForRestore(_ url: URL) {
+        hibernatedURL = url
+        urlText = url.absoluteString
+        content = .web
     }
 
     // MARK: - External apps & HTTPS-Only fallback (driven by WebNavigationDelegate)

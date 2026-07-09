@@ -96,16 +96,23 @@ struct OnboardingSecurityStep: View {
     @Bindable private var tor = TorManager.shared
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Searxly Maximum has no ladder — only the Maximum level is offered (and it's pre-selected).
+    private var levelsToShow: [OnboardingPrivacyLevel] {
+        Edition.isMaximum ? [.maximum] : OnboardingPrivacyLevel.allCases
+    }
+
     var body: some View {
         VStack(alignment: .center, spacing: 18) {
             OnboardingStepHero(
                 icon: "slider.horizontal.3",
-                title: "Choose your protection level",
-                subtitle: "Each level builds on the one before. Encrypted is right for most people; Maximum is for professionals who accept that some sites may break."
+                title: Edition.isMaximum ? "Your protection level" : "Choose your protection level",
+                subtitle: Edition.isMaximum
+                    ? "Searxly Maximum runs at the highest level, always. Your IP is hidden behind Tor, your fingerprint is scrambled, and your data is encrypted on this Mac."
+                    : "Each level builds on the one before. Encrypted is right for most people; Maximum is for professionals who accept that some sites may break."
             )
 
             VStack(spacing: 11) {
-                ForEach(OnboardingPrivacyLevel.allCases) { level in
+                ForEach(levelsToShow) { level in
                     levelCard(level)
                 }
             }

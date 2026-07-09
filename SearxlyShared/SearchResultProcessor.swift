@@ -48,6 +48,12 @@ enum SearchResultProcessor {
         // Grokipedia-first SERP: single combined pass (promote Grokipedia, suppress Wikipedia).
         processed = SERPSourcePolicy.applyAll(processed, query: query)
 
+        if isNews {
+            // Parse each publish date exactly once here so the news feed, cards, ranker, and clustering
+            // never re-parse (up to 5 DateFormatters + regex) per access downstream.
+            processed = processed.map { var r = $0; r.primeNewsDate(); return r }
+        }
+
         return processed
     }
 

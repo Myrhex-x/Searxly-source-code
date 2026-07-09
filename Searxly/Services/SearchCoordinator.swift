@@ -46,13 +46,6 @@ extension BrowserState {
             newsTimeRange = nil
             newsSortByRecency = false
 
-            let lower = trimmed.lowercased()
-            if !LocalIntelligenceManager.shared.toolsEnabled && LocalIntelligenceManager.shared.canUseFeatures &&
-               (lower.hasPrefix("search") || lower.hasPrefix("find ") || lower.contains("?") ||
-                lower.hasPrefix("what ") || lower.hasPrefix("how ") || lower.hasPrefix("who ")) {
-                showEnableAIToolsPrompt = true
-            }
-
             if searxInstances.isEmpty {
                 searchErrorMessage = "No private SearXNG instance configured. Add one in Settings → SearXNG Instances to enable search. (Direct URLs still work.)"
                 searchResults = []
@@ -73,6 +66,9 @@ extension BrowserState {
         SpeculativeSearchPrefetcher.shared.invalidate()
         cancelKnowledgePanelTask()
         knowledgePanelState = .hidden
+        cancelLocalPackTask()
+        localPackDetected = nil
+        localPackState = .hidden
         searchResults = []
         searchErrorMessage = nil
         lastSearchQuery = ""
@@ -83,7 +79,6 @@ extension BrowserState {
         isLoadingMoreResults = false
         canLoadMoreResults = true
         consecutiveEmptyLoadMorePages = 0
-        showEnableAIToolsPrompt = false
         highlightedResultURL = nil
         lastSearchInstanceURL = nil
         newsTimeRange = nil
@@ -451,8 +446,9 @@ extension BrowserState {
         // query, not the results), so the card is ready by the time results land instead of starting
         // afterwards. The result is committed once the search settles — see commitKnowledgePanelIfReady.
         beginKnowledgePanelResolution()
+        beginLocalPackResolution()
 
-        let effectiveQuery = await maybeRewriteQuery(query)
+        let effectiveQuery = query
         lastEffectiveSearchQuery = effectiveQuery
 
         // In the All tab, resolve fresh news in parallel so a "Top stories" module can appear among the
@@ -529,6 +525,7 @@ extension BrowserState {
         }
         isLoadingSearch = false
         commitKnowledgePanelIfReady()
+        commitLocalPackIfReady()
         // Arm live auto-refresh if we landed on the news tab in Latest mode.
         syncNewsAutoRefresh()
     }
@@ -607,6 +604,115 @@ extension BrowserState {
         }
     }
 
+    // MARK: - Local pack
+
+    /// Whether the local pack can appear at all right now: a query on the All tab, the gateway configured,
+    /// and NOT Maximum Privacy (the map is drawn by Apple, so Maximum blocks the whole feature).
+    private var localPackEligible: Bool {
+        SearxlyGateway.isConfigured
+            && currentSearchCategory == nil
+            && PrivacyManager.shared.appPrivacyMode != .maximum
+            && !lastSearchQuery.isEmpty
+    }
+
+    func cancelLocalPackTask() {
+        localPackTask?.cancel()
+        localPackTask = nil
+        localPackResolved = nil
+    }
+
+    /// Re-evaluate the local pack for the current search — used when the feature is toggled on while
+    /// results are already on screen.
+    func refreshLocalPack() {
+        beginLocalPackResolution()
+    }
+
+    /// Evaluates the local pack for `lastSearchQuery`. When the feature is ON, resolves places in parallel
+    /// with the search (committed later by `commitLocalPackIfReady`). When it's OFF, records the detected
+    /// query so an opt-in prompt can be offered once results land. Hidden / no-op when ineligible.
+    func beginLocalPackResolution() {
+        cancelLocalPackTask()
+        localPackDetected = nil
+
+        guard localPackEligible, let detected = LocalPackQueryDetector.detect(lastSearchQuery) else {
+            localPackState = .hidden
+            return
+        }
+        localPackDetected = detected
+
+        guard localPackEnabled else {
+            // Off → fetch nothing; the opt-in prompt is offered in commit once results are in.
+            localPackState = .hidden
+            return
+        }
+
+        let query = lastSearchQuery
+        localPackState = .loading
+        localPackTask = Task {
+            let data = await LocalPlacesResolver.resolve(query: query, detected: detected)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard !Task.isCancelled, self.lastSearchQuery == query else { return }
+                self.localPackResolved = (query, data)
+                self.commitLocalPackIfReady()
+            }
+        }
+    }
+
+    /// Settles the local pack once the search has real results. Enabled + resolved → the pack; off → the
+    /// opt-in prompt (unless dismissed this session); otherwise hidden. Mirrors the knowledge panel's
+    /// "commit only when both the fetch and the search have landed" gating.
+    func commitLocalPackIfReady() {
+        guard !isLoadingSearch else { return }
+
+        guard localPackEligible,
+              !searchResults.isEmpty,
+              let detected = localPackDetected,
+              LocalPackQueryDetector.detect(lastSearchQuery) == detected else {
+            localPackState = .hidden
+            return
+        }
+
+        if localPackEnabled {
+            // Wait for the resolution to land (the task calls back here when it finishes).
+            guard let resolved = localPackResolved, resolved.query == lastSearchQuery else { return }
+            localPackState = resolved.data.map(LocalPackDisplayState.ready) ?? .hidden
+        } else {
+            localPackState = localPackPromptDismissed ? .hidden : .prompt(detected)
+        }
+    }
+
+    /// Enables the local pack from the SERP opt-in prompt, then resolves + shows it for the current query.
+    /// Refuses in Maximum Privacy (defensive — the prompt isn't offered there in the first place).
+    func enableLocalPackFromPrompt() {
+        guard PrivacyManager.shared.appPrivacyMode != .maximum else { return }
+        localPackEnabled = true
+        Persistence.setLocalPackEnabled(true)
+        beginLocalPackResolution()
+    }
+
+    /// Dismisses the opt-in prompt and suppresses it for the rest of the session (the user can still turn
+    /// the feature on anytime in Settings → Search).
+    func dismissLocalPackPrompt() {
+        localPackPromptDismissed = true
+        localPackState = .hidden
+    }
+
+    func setLocalPackEnabled(_ enabled: Bool) {
+        // Never enable while Maximum Privacy is active (the map picture is served by Apple).
+        if enabled && PrivacyManager.shared.appPrivacyMode == .maximum { return }
+        guard enabled != localPackEnabled else { return }
+        localPackEnabled = enabled
+        Persistence.setLocalPackEnabled(enabled)
+        if !enabled {
+            cancelLocalPackTask()
+            localPackDetected = nil
+            localPackState = .hidden
+        } else if !searchResults.isEmpty {
+            refreshLocalPack()
+        }
+    }
+
     // MARK: - URL detection (used here and in BrowserState+SiteNavigation)
 
     func smartURL(from text: String) -> URL? {
@@ -630,36 +736,12 @@ extension BrowserState {
         return nil
     }
 
-    // MARK: - Local AI hooks
-
-    func maybeRewriteQuery(_ raw: String) async -> String {
-        await LocalIntelligenceManager.shared.rewriteIfEnabled(original: raw)
-    }
-
     func highlightResult(url: String) {
         highlightedResultURL = url
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(1450))
             if highlightedResultURL == url { highlightedResultURL = nil }
         }
-    }
-
-    func openLocalAIChat() {
-        guard AIFeatures.programEnabled else { return }
-        LocalIntelligenceManager.shared.startOrContinueChat()
-        LocalIntelligenceManager.shared.warmUpIfNeeded()
-
-        if LocalIntelligenceManager.shared.preferences.masterEnabled &&
-           LocalIntelligenceManager.shared.preferences.ragEnabled {
-            LocalIntelligenceManager.shared.rebuildRAGIndex(history: history, bookmarks: bookmarks)
-        }
-
-        showingLocalAIChat = true
-    }
-
-    func clearAIState() {
-        showingLocalAIChat = false
-        LocalIntelligenceManager.shared.clearCurrentChatTranscript()
     }
 
     func searchMyHistory(query: String) -> [HistoryItem] {

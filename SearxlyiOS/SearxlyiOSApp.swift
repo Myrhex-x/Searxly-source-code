@@ -15,6 +15,9 @@ import WebKit
 
 @main
 struct SearxlyiOSApp: App {
+    // Catches home-screen Quick Actions (long-press the app icon) and routes them into the browser.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         // Start compiling the uBlock filter lists immediately — WebKit caches the compiled
         // rules, so this is expensive exactly once per filter-list version.
@@ -34,6 +37,9 @@ struct SearxlyiOSApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                // Keep the Spotlight bookmark index fresh — deferred to first appear so the
+                // initial rebuild never competes with launch / first paint.
+                .task { SpotlightIndexer.reindexBookmarks() }
         }
     }
 }
