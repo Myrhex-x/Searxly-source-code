@@ -1037,7 +1037,7 @@
 		};
 		BFB000010000000000000001 /* XCRemoteSwiftPackageReference "bulwark" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/Myrhex-x/bulwark";
+			repositoryURL = "https://github.com/searxly/bulwark";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 0.3.0;
