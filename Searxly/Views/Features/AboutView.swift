@@ -43,7 +43,7 @@ struct AboutView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
 
-                Link("View on GitHub", destination: URL(string: "https://github.com/Myrhex-x/Searxly")!)
+                Link("View on GitHub", destination: URL(string: "https://github.com/searxly/Searxly")!)
                     .font(.callout)
             }
 
@@ -58,7 +58,7 @@ struct AboutView: View {
                 Text("•")
                     .foregroundStyle(.tertiary)
 
-                Link("Report an Issue", destination: URL(string: "https://github.com/Myrhex-x/Searxly/issues")!)
+                Link("Report an Issue", destination: URL(string: "https://github.com/searxly/Searxly/issues")!)
                     .buttonStyle(.link)
             }
             .font(.caption)

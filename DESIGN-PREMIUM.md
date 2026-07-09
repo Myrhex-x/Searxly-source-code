@@ -499,7 +499,7 @@ Optional future (non-goal for this effort): Persist one design preference flag i
 - Apple Human Interface Guidelines: Liquid Glass / Materials (macOS 15+)
 - Existing codebase: `OnboardingView.swift:801` (StarfieldBackground as source of truth for cosmic motif), `PrivacyManager.swift`, `WebViewFactory.swift` (SearchSuggestionsEngine removed)
 - Prior art: Arc browser (cohesive tabs + address), Raycast (premium dark + instant feel), refined native tools (Craft, Things)
-- GitHub project: https://github.com/Myrhex-x/Searxly
+- GitHub project: https://github.com/searxly/Searxly
 - User request: "S E A R X L Y" SPACEX-style logo top-center on home address bar area
 
 ---

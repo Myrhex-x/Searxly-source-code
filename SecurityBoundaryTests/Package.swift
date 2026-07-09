@@ -11,7 +11,7 @@ let package = Package(
     dependencies: [
         // Pinned to the current 0.3.0 commit by SHA so it resolves on a clean machine / CI. (A revision
         // pin avoids the version-fingerprint conflict from the tag having been re-pointed upstream.)
-        .package(url: "https://github.com/Myrhex-x/bulwark",
+        .package(url: "https://github.com/searxly/bulwark",
                  revision: "34c754bb2356687c9bcf7675550203031b17f33d"),
     ],
     targets: [

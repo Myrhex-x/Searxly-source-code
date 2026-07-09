@@ -33,7 +33,7 @@ enum WebPageFetcher {
 
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
-        request.setValue("Searxly/1.0 (macOS; +https://github.com/Myrhex-x/Searxly)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Searxly/1.0 (macOS; +https://github.com/searxly/Searxly)", forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5", forHTTPHeaderField: "Accept")
 
         do {
