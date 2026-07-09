@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Modified version of SearXNG's limiter config (https://github.com/searxng/searxng); see LocalSearxng/LICENSE.
 # Permissive limiter config for local private development.
 # Works together with server.limiter=false (in settings.yml) and
 # SEARXNG_LIMITER=false (env var passed by SearxlyHelper at launch).

@@ -10,7 +10,7 @@ This repository provides **source code only**. Official pre-built, code-signed, 
 
 If you identify a security vulnerability:
 
-1. **Preferred**: Use GitHub's private [Security Advisory](https://github.com/Myrhex-x/Searxly-source-code/security/advisories/new) feature to report it confidentially.
+1. **Preferred**: Use GitHub's private [Security Advisory](https://github.com/Searxly/Searxly-source-code/security/advisories/new) feature to report it confidentially.
 2. Alternatively, open a GitHub issue with the `security` label (or contact the maintainer via the official project X account for sensitive matters).
 
 Please include as much detail as possible (steps to reproduce, affected code paths, potential impact). Do not disclose publicly until a fix or mitigation is available.

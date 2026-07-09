@@ -1,5 +1,11 @@
 # Local SearXNG Resources (Bundled with Searxly)
 
+> **License: AGPL-3.0-or-later.** Everything in this `LocalSearxng/` folder is part
+> of, or a modified version of, **SearXNG** (https://github.com/searxng/searxng) and
+> is licensed under the GNU Affero General Public License v3.0 or later — **not** the
+> Searxly application's PolyForm Noncommercial license. Full text: [`LICENSE`](LICENSE).
+> See the repo-root [`NOTICE`](../NOTICE) and [`THIRD-PARTY-LICENSES.md`](../THIRD-PARTY-LICENSES.md).
+
 This folder is the **single source of truth** for the files that Searxly bundles into the app and copies to `~/searxng-local/` on first automatic (or manual) setup of the user's private local SearXNG instance.
 
 SearXNG runs as a **bundled native Python process** — no Docker, no downloads. The signed Python runtime ships inside the app at `Resources/searxng-runtime/`, and the unsandboxed `SearxlyHelper` XPC service spawns and supervises it (`python -m searx.webapp`) on behalf of the sandboxed main app.

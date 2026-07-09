@@ -34,11 +34,31 @@ The Xcode project still *references* these omitted files, so a fresh clone will 
 
 ## License
 
-**Source-available — noncommercial.** Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+Searxly is distributed under **two** licenses, because it bundles a third-party
+search engine:
 
-You may view, run, modify, and share Searxly for **noncommercial** purposes only (personal use, study, hobby projects, research, nonprofits, etc.). **Commercial use is not permitted.** This is a source-available license, not an OSI "open source" license.
+- **The Searxly application** (the SwiftUI/WebKit app, its Swift source, and brand
+  assets) is **source-available — noncommercial**, under the
+  [PolyForm Noncommercial License 1.0.0](LICENSE). You may view, run, modify, and
+  share it for **noncommercial** purposes only (personal use, study, hobby
+  projects, research, nonprofits, etc.). **Commercial use is not permitted.** This
+  is a source-available license, not an OSI "open source" license.
 
-Copyright © 2026 Myrhex-x. All rights reserved except as granted by the license. The **"Searxly" name, logo, and brand** are *not* licensed for reuse, and the `$SEARXLY` token is unaffected by this license. For commercial licensing, contact the maintainer via the official **@Searxly** account on X.
+- **The bundled SearXNG engine and Searxly's modifications to it** — the theme and
+  configuration overlay in [`LocalSearxng/`](LocalSearxng/) — are licensed under the
+  **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)**, the same
+  license as upstream [SearXNG](https://github.com/searxng/searxng). The PolyForm
+  noncommercial terms above do **not** apply to these AGPL components; you retain
+  full AGPL rights over them. See [`NOTICE`](NOTICE) and
+  [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) for attribution, the AGPL
+  full text ([`LocalSearxng/LICENSE`](LocalSearxng/LICENSE)), and the written offer
+  of Corresponding Source.
+
+Copyright © 2026 Myrhex-x. All rights reserved except as granted by the licenses
+above. The **"Searxly" name, logo, and brand** are *not* licensed for reuse, and
+the `$SEARXLY` token is unaffected by these licenses. For commercial licensing of
+the Searxly application, contact the maintainer via the official **@Searxly**
+account on X.
 
 ## Community & Support
 
