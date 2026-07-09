@@ -16,6 +16,7 @@ enum PrivacyDisclosures {
     enum DisclosureID: String {
         case bangShortcuts = "bangShortcuts"
         case knowledgePanel = "knowledgePanel"
+        case localPack = "localPack"
     }
 
     private static func flagKey(_ id: DisclosureID) -> String { "privacyDisclosureShown.\(id.rawValue)" }

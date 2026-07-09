@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:www.searxly.app</string>
+	</array>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+	<array>
+		<string>/Library/Preferences/com.apple.networkd.plist</string>
+	</array>
+	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
+		<string>com.apple.runningboard</string>
+		<string>com.apple.pboard</string>
+		<string>com.apple.lsd</string>
+		<string>com.apple.launchservices</string>
+		<string>com.apple.coreservices</string>
+		<string>com.apple.CoreServices.coreservicesd</string>
+		<string>com.apple.audio.AudioComponentRegistrar</string>
+		<string>com.apple.coremedia</string>
+		<string>com.apple.audio.audiohald</string>
+		<string>com.apple.media</string>
+		<string>com.apple.avfoundation</string>
+		<string>com.apple.mediaplayer</string>
+		<string>com.apple.audio.toolbox</string>
+		<string>com.apple.coreaudio</string>
+		<string>com.apple.CARenderServer</string>
+		<string>com.apple.mediaremoted</string>
+		<string>com.apple.tccd</string>
+		<string>com.apple.tccd.system</string>
+		<string>com.apple.iconservices</string>
+		<string>com.apple.iconservices.store</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.myrhex.SearxlyMaximum</string>
+	</array>
+</dict>
+</plist>

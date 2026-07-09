@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import WidgetKit
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
@@ -26,8 +27,18 @@ struct RootView: View {
         // Searxly is strictly monochrome — override the system blue/green accent everywhere
         // (toggles, links, selection) with the adaptive black/white brand color.
         .tint(Brand.text)
+        // Ready the on-device Apple Intelligence model — but a couple of seconds AFTER launch, so
+        // prewarming the model doesn't compete with first paint / tab restore (it was slowing launch).
+        .task {
+            try? await Task.sleep(for: .seconds(2))
+            PageIntelligence.prewarm()
+        }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { AppLockManager.shared.lock() }
+            if phase == .background {
+                AppLockManager.shared.lock()
+                // Coalesced once-per-background: refresh the "trackers blocked" Home Screen widget.
+                WidgetCenter.shared.reloadAllTimelines()
+            }
         }
     }
 }
@@ -44,10 +55,10 @@ private struct LockShieldView: View {
             VStack(spacing: 28) {
                 VStack(spacing: 10) {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 30, weight: .medium))
+                        .scaledFont(size: 30, weight: .medium)
                         .foregroundStyle(Brand.textSecondary)
                     Text("Searxly")
-                        .font(.system(size: 26, weight: .semibold))
+                        .scaledFont(size: 26, weight: .semibold)
                         .foregroundStyle(Brand.text)
                 }
 
@@ -56,7 +67,7 @@ private struct LockShieldView: View {
                         Task { await AppLockManager.shared.unlock() }
                     } label: {
                         Text("Unlock with \(AppLockManager.shared.biometryLabel)")
-                            .font(.system(size: 15, weight: .medium))
+                            .scaledFont(size: 15, weight: .medium)
                             .foregroundStyle(Brand.bg)
                             .padding(.horizontal, 22)
                             .padding(.vertical, 11)

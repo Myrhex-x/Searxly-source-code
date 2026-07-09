@@ -71,25 +71,6 @@ final class DeveloperSettings {
         set { UserDefaults.standard.set(newValue, forKey: "developerVerboseSecurityLogging") }
     }
 
-    // MARK: - Local AI (Phase 0+)
-    /// Verbose logging for on-device AI (rewrite, synthesis, chat, RAG retrieval, load/unload).
-    /// Off by default even in developer mode to keep console clean.
-    /// Backed by a stored property (with didSet persistence) so SwiftUI @Observable observation + Toggle bindings work reliably.
-    var verboseAILogging: Bool = UserDefaults.standard.bool(forKey: "developerVerboseAI") {
-        didSet {
-            UserDefaults.standard.set(verboseAILogging, forKey: "developerVerboseAI")
-        }
-    }
-
-    /// When true, the LocalIntelligenceManager reports fake "available" even on machines without Apple Intelligence.
-    /// Useful for UI development of the settings pane and sheets without real hardware.
-    /// Now wired in AppleIntelligenceProvider.probeAvailability() (was previously declared but never consulted).
-    var mockAppleIntelligenceAvailability: Bool = UserDefaults.standard.bool(forKey: "developerMockAI") {
-        didSet {
-            UserDefaults.standard.set(mockAppleIntelligenceAvailability, forKey: "developerMockAI")
-        }
-    }
-
     // MARK: - WebKit Debugging
 
     /// When enabled, Web Inspector (right-click → Inspect Element) becomes available.

@@ -75,14 +75,14 @@ enum WalletConfig {
     /// param as the standard fee; swaps involving SEARXLY stay free regardless. See
     /// `WalletManager.isSearxlyHolder`.
     nonisolated static let holderSwapFeeBps: Int = 30
-    /// Treasury that receives ALL Searxly revenue — swap fees, AI passes, and VPN passes all route here
-    /// (`SearxlyAIConfig.treasury` and `ManagedVPNConfig.treasury` both read this constant), on every
+    /// Treasury that receives ALL Searxly revenue — swap fees and VPN passes all route here
+    /// (`ManagedVPNConfig.treasury` reads this constant), on every
     /// supported EVM chain. EIP-55 checksummed. Change here to rotate the treasury.
     ///
-    /// ⚠️ AI-pass and VPN payments are ALSO verified SERVER-SIDE (the AI gateway and the VPN control
-    /// plane each check the USDC payment landed at the treasury). Those services hold their own copy of
-    /// this address — they MUST be updated to match, or users will pay the new address but be denied the
-    /// pass/VPN. The 0x swap fee is client-specified (redirects immediately); native v4 swaps take no fee.
+    /// ⚠️ VPN payments are ALSO verified SERVER-SIDE (the VPN control plane checks the USDC payment
+    /// landed at the treasury). That service holds its own copy of this address — it MUST be updated to
+    /// match, or users will pay the new address but be denied the VPN.
+    /// The 0x swap fee is client-specified (redirects immediately); native v4 swaps take no fee.
     static let swapFeeRecipient      = "0x2aFC245264E51B50994F2579e903eCc466395aF0"
     /// On-ramp widget (no card data ever touches Searxly; the provider's own UI handles it).
     static func onrampURL(address: String) -> String {

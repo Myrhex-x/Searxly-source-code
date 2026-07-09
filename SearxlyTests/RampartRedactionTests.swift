@@ -198,19 +198,6 @@ final class RampartRedactionTests: XCTestCase {
         XCTAssertEqual(guardSession.reveal(protectedText), "Reach me at a.b@c.com today")
     }
 
-    // MARK: - Cloud egress gate
-
-    func testRemoteEgressGate() {
-        // Loopback endpoints (local Ollama / dev) must NOT be treated as egress → no redaction.
-        for local in ["http://127.0.0.1:11434/v1", "http://localhost:11434/v1", "http://[::1]:8080/v1"] {
-            XCTAssertFalse(CloudIntelligenceProvider.isRemoteEgress(URL(string: local)!), local)
-        }
-        // Anything off-device is egress → redaction applies.
-        for remote in ["https://api.searxly.ai/v1", "https://example.com", "http://192.168.1.50:11434/v1"] {
-            XCTAssertTrue(CloudIntelligenceProvider.isRemoteEgress(URL(string: remote)!), remote)
-        }
-    }
-
     // MARK: - Tokenizer (synthetic vocab)
 
     private func miniTokenizer() -> RampartTokenizer {

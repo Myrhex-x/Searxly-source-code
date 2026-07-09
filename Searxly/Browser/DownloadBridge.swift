@@ -73,6 +73,7 @@ final class DownloadBridge {
 final class DownloadProxy: NSObject, WKDownloadDelegate {
     private let onFinish: () -> Void
     private var itemID: UUID?
+    private var destinationURL: URL?
     private var progressObservation: NSKeyValueObservation?
 
     init(onFinish: @escaping () -> Void) {
@@ -85,6 +86,7 @@ final class DownloadProxy: NSObject, WKDownloadDelegate {
                   suggestedFilename: String,
                   completionHandler: @escaping (URL?) -> Void) {
         let destination = DownloadBridge.uniqueDownloadsURL(for: suggestedFilename)
+        self.destinationURL = destination
 
         // Delegate callbacks are delivered on the main thread, so the store mutation runs inline. We
         // read the new item id back out as a local so the progress closure can capture *that* (a
@@ -121,13 +123,20 @@ final class DownloadProxy: NSObject, WKDownloadDelegate {
     private func complete(success: Bool, error: String?) {
         progressObservation?.invalidate()
         progressObservation = nil
-        MainActor.assumeIsolated {
+        let finishedURL = destinationURL
+        let stripProvenance: Bool = MainActor.assumeIsolated {
             if let id = itemID {
                 DownloadsManager.shared.completeDownload(id: id, success: success, error: error)
             }
             onFinish()
+            return AntiForensics.stripsDownloadProvenance
         }
         if success {
+            // Scrub the source-URL "Where from" tag off the file in the no-trace modes (off-main — it's
+            // filesystem I/O and nothing waits on it).
+            if stripProvenance, let url = finishedURL {
+                Task.detached { AntiForensics.stripProvenance(from: url) }
+            }
             Log.web.info("Download finished")
         } else {
             Log.web.error("Download failed: \(error ?? "unknown", privacy: .public)")

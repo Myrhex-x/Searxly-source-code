@@ -40,6 +40,15 @@ extension BrowserState {
             return
         }
 
+        // Local files can't be loaded through load(URLRequest:) — WKWebView refuses file:// URLs sent
+        // that way and requires loadFileURL(_:allowingReadAccessTo:). Route them there, granting read
+        // access to the containing folder so relative assets (CSS/JS/images) resolve. This covers file
+        // URLs from any source: the address bar, bookmarks, a restored session, or "Open With Searxly".
+        if url.isFileURL {
+            loadLocalFileInWebView(url, readAccessURL: url.deletingLastPathComponent(), recordInHistory: recordInHistory)
+            return
+        }
+
         if recordInHistory {
             pushCurrentBrowseStateToBackStack()
         }
@@ -91,6 +100,37 @@ extension BrowserState {
             self.activeWebView.load(URLRequest(url: url))
 
             // Early stabilization poke (the big work is done by didCommit/didFinish + Container).
+            self.activeWebView.evaluateJavaScript("""
+            (function(){ try { window.dispatchEvent(new Event('resize')); void document.documentElement.offsetWidth; } catch(e){} })();
+            """, completionHandler: nil)
+        }
+    }
+
+    /// Loads a local `file://` page into the active tab via WKWebView's `loadFileURL(_:allowingReadAccessTo:)`
+    /// (the only API that works for local files). `readAccessURL` is the folder WebKit may read from — the
+    /// file's directory — so same-folder assets load. Sandbox access to that path must already be held
+    /// (via "Open File…", ~/Downloads, or an "Open With Searxly" launch) or the read fails. File URLs are
+    /// deliberately kept out of history/suggestions: the sandbox grant is transient, so a recorded path
+    /// usually can't be reopened later and would only pollute address-bar suggestions.
+    func loadLocalFileInWebView(_ url: URL, readAccessURL: URL, recordInHistory: Bool) {
+        if recordInHistory {
+            pushCurrentBrowseStateToBackStack()
+        }
+
+        showingWebContent = true
+
+        if let tab = selectedTab {
+            tab.currentURL = url
+            tab.title = url.lastPathComponent.isEmpty ? "Local File" : url.lastPathComponent
+        }
+
+        saveCurrentSession()
+
+        // Same one-tick defer + resize poke as loadInWebView so the container has its real size before
+        // first paint (see the detailed rationale there).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+            guard let self else { return }
+            self.activeWebView.loadFileURL(url, allowingReadAccessTo: readAccessURL)
             self.activeWebView.evaluateJavaScript("""
             (function(){ try { window.dispatchEvent(new Event('resize')); void document.documentElement.offsetWidth; } catch(e){} })();
             """, completionHandler: nil)
@@ -306,6 +346,11 @@ extension BrowserState {
         searchPageNo = snapshot.searchPageNo
         canLoadMoreResults = snapshot.canLoadMoreResults
         knowledgePanelState = snapshot.knowledgePanelState
+        // The local pack isn't snapshotted (it re-resolves on a fresh search); clear it on restore so a
+        // back/forward navigation never shows a pack from a different query.
+        cancelLocalPackTask()
+        localPackDetected = nil
+        localPackState = .hidden
         isLoadingSearch = false
         isLoadingMoreResults = false
         consecutiveEmptyLoadMorePages = 0
@@ -452,6 +497,18 @@ extension BrowserState {
         saveCurrentSession()
     }
 
+    /// Searxly Maximum "New Identity": drop every tab and its in-RAM state, and rotate all Tor circuits —
+    /// a fresh, unlinkable session on demand (à la Tor Browser). Maximum tabs are already RAM-only, so
+    /// closing them releases their data; the extra data-clear + NEWNYM cover any shared state and the live
+    /// circuits, so the next session can't be tied to the old one by path or leftover storage.
+    func newIdentity() {
+        closeAllTabs()
+        let store = WKWebsiteDataStore.default()
+        store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                         modifiedSince: Date(timeIntervalSince1970: 0)) { }
+        Task { _ = await TorManager.shared.newCircuit() }
+    }
+
     func bookmarkCurrentPage() {
         guard let urlStr = activeWebView.url?.absoluteString else { return }
 
@@ -527,26 +584,6 @@ extension BrowserState {
         guard !UserDefaults.standard.bool(forKey: autoShownKey) else { return }
         UserDefaults.standard.set(true, forKey: autoShownKey)
         UserDefaults.standard.set(true, forKey: "bookmarksBarVisible")
-    }
-
-    /// Summarize the current page with Searxly AI — extracts VISIBLE text (the same injection-resistant
-    /// extractor the right-click menu uses) and routes it to the quick-answer popup. Replaces the removed
-    /// reader mode as the ☰-menu page action.
-    func summarizeCurrentPageAction() {
-        guard AIFeatures.programEnabled else { return }
-        let wv = activeWebView
-        wv.evaluateJavaScript(SearxlyWebView.visibleTextExtractionScript) { [weak self] result, _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                let dict = result as? [String: Any]
-                let text = (dict?["text"] as? String) ?? ""
-                let title = (dict?["title"] as? String) ?? (wv.title ?? "")
-                let urlStr = (dict?["url"] as? String) ?? (wv.url?.absoluteString ?? "")
-                self.handleAskAISelection(text: text,
-                                          actionRaw: AIChatSeed.Action.summarizePage.rawValue,
-                                          title: title, url: urlStr)
-            }
-        }
     }
 
     /// Toggles Reader mode: extracts the current page's article (readability-lite, fully on-device)

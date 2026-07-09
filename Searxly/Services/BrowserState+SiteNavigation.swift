@@ -6,9 +6,11 @@
 //  Extracted from SearchCoordinator.swift.
 //
 
+import AppKit
 import Foundation
 import os
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 extension BrowserState {
@@ -80,6 +82,85 @@ extension BrowserState {
         Task { @MainActor in
             performSearchOrLoadInWebKit()
         }
+    }
+
+    // MARK: - Local file opening ("Open File…", ⌘O)
+
+    /// Presents an open panel so the user can view a local HTML file — or a whole web-project folder — in
+    /// a new tab. This is the only sandbox-legal way in: a file:// path typed in the address bar grants no
+    /// read access, but a file/folder chosen here comes with a security-scoped grant we hold for the tab's
+    /// lifetime. Picking a **folder** is the recommended path for real projects — its index.html opens and
+    /// every sibling asset (CSS/JS/images) is readable. Picking a single file also works, though same-folder
+    /// assets it references may not load under the App Sandbox (the grant covers only the chosen file).
+    func openLocalFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Open File"
+        panel.message = "Choose an HTML file to open — or a folder (its index.html opens, with all its assets)."
+        panel.prompt = "Open"
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowedContentTypes = [.html]
+
+        guard panel.runModal() == .OK, let picked = panel.url else { return }
+
+        // Hold the sandbox grant while we inspect the pick (the index.html lookup reads the folder).
+        // The tab below takes its own long-lived grant; this local one is balanced by the defer.
+        let didStart = picked.startAccessingSecurityScopedResource()
+        defer { if didStart { picked.stopAccessingSecurityScopedResource() } }
+
+        // Resolve the file to load and the folder WebKit may read from:
+        //  • folder picked → open its index.html (or first *.html); read access = the folder.
+        //  • file picked   → open it directly; read access = its parent folder.
+        let isDirectory = (try? picked.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+        let fileToLoad: URL
+        let readAccessURL: URL
+        if isDirectory {
+            guard let entry = Self.firstHTMLFile(in: picked) else {
+                Self.presentNoHTMLFileAlert(for: picked)
+                return
+            }
+            fileToLoad = entry
+            readAccessURL = picked
+        } else {
+            fileToLoad = picked
+            readAccessURL = picked.deletingLastPathComponent()
+        }
+
+        // Fresh foreground tab that holds the security scope (on the URL the panel actually granted) for
+        // its whole lifetime, then loads the local page.
+        clearNativeSearch()
+        let tab = BrowserTab(kind: .web)
+        tab.retainSecurityScopedAccess(to: picked)
+        tabs.append(tab)
+        selectedTabID = tab.id
+        showingWebContent = true
+        searchText = fileToLoad.absoluteString
+        loadLocalFileInWebView(fileToLoad, readAccessURL: readAccessURL, recordInHistory: false)
+    }
+
+    /// Finds the entry HTML file in a picked folder: index.html / index.htm if present, otherwise the
+    /// first *.html/*.htm file (shallow, alphabetical for determinism). nil if the folder has none.
+    private static func firstHTMLFile(in directory: URL) -> URL? {
+        let fm = FileManager.default
+        for name in ["index.html", "index.htm"] {
+            let candidate = directory.appendingPathComponent(name)
+            if fm.fileExists(atPath: candidate.path) { return candidate }
+        }
+        let contents = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return contents
+            .filter { ["html", "htm"].contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
+            .first
+    }
+
+    private static func presentNoHTMLFileAlert(for folder: URL) {
+        let alert = NSAlert()
+        alert.messageText = "No HTML file found"
+        alert.informativeText = "“\(folder.lastPathComponent)” doesn’t contain an index.html (or any .html file) to open."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     // MARK: - Agentic site resolution
@@ -378,8 +459,26 @@ extension BrowserState {
     func noteOnionLocation(_ onionURL: URL, forPageHost host: String) {
         guard selectedTab?.privacyMode != .onion, onionURL.isOnionService else { return }
         guard let oh = onionURL.host?.lowercased(), !Self.deadOnionHosts.contains(oh) else { return }
-        onionLocationOffer = OnionLocationOffer(pageHost: host.lowercased(), onionURL: onionURL)
+        let pageHost = host.lowercased()
+
+        // Auto-upgrade: switch straight to the .onion mirror instead of just offering it (onion
+        // services are end-to-end encrypted with no exit node). Default-on in Maximum. Guard against
+        // loops by upgrading each page host at most once per session, and only when Tor is enabled
+        // (otherwise the "Enable Tor?" prompt would fire unexpectedly on a normal page load).
+        if OnionPreferences.autoUpgrade, TorManager.shared.isEnabled,
+           !Self.autoUpgradedHostsThisSession.contains(pageHost) {
+            Self.autoUpgradedHostsThisSession.insert(pageHost)
+            onionLocationOffer = nil
+            performOpenOnionURL(onionURL)
+            return
+        }
+
+        onionLocationOffer = OnionLocationOffer(pageHost: pageHost, onionURL: onionURL)
     }
+
+    /// Page hosts already auto-upgraded to their .onion this session, so we don't re-trigger a new
+    /// onion tab every time the clearnet page reloads. Process-lifetime; not persisted.
+    private static var autoUpgradedHostsThisSession: Set<String> = []
 
     /// Opens the offered `.onion` mirror in a Tor-routed onion tab.
     func acceptOnionLocationOffer() {

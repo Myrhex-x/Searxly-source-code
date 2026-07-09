@@ -21,6 +21,12 @@ struct SearxlyLogo: View {
     var animated: Bool = false
     var showShine: Bool = false
     var showTagline: Bool = true
+    /// Tint for the hero "sunlight" glow behind the wordmark. Defaults to white (standard edition);
+    /// Searxly Maximum passes its orange so the paid edition's home hero glows orange, not white.
+    var glowTint: Color = .white
+    /// Multiplier on the hero glow's intensity. Defaults to 1.0 (unchanged); Maximum bumps it so its
+    /// orange glow reads as clearly as the white one it replaces.
+    var glowStrength: Double = 1.0
 
     private let letters = Array("SEARXLY")
 
@@ -172,8 +178,8 @@ struct SearxlyLogo: View {
             .fill(
                 RadialGradient(
                     colors: [
-                        Color.white.opacity(glowCoreOpacity),
-                        Color.white.opacity(glowMidOpacity),
+                        glowTint.opacity(glowCoreOpacity),
+                        glowTint.opacity(glowMidOpacity),
                         .clear
                     ],
                     center: .center,
@@ -206,13 +212,13 @@ struct SearxlyLogo: View {
     }
 
     private var glowCoreOpacity: Double {
-        let base = colorScheme == .dark ? 0.16 : 0.22
-        return isHovering ? min(base * 1.55, 0.38) : base
+        let base = (colorScheme == .dark ? 0.16 : 0.22) * glowStrength
+        return isHovering ? min(base * 1.55, 0.5) : min(base, 0.44)
     }
 
     private var glowMidOpacity: Double {
-        let base = colorScheme == .dark ? 0.05 : 0.08
-        return isHovering ? min(base * 1.8, 0.16) : base
+        let base = (colorScheme == .dark ? 0.05 : 0.08) * glowStrength
+        return isHovering ? min(base * 1.8, 0.22) : min(base, 0.2)
     }
 
     @ViewBuilder

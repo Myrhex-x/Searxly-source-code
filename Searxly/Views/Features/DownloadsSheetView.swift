@@ -37,7 +37,10 @@ struct DownloadsSheetView: View {
                             }
                             .help("Show in Finder")
                             Button("Open") {
-                                NSWorkspace.shared.open(url)
+                                // Searxly Maximum warns first — opening a downloaded file can leave Tor.
+                                if AntiForensics.confirmOpenDownloadedFile(url) {
+                                    NSWorkspace.shared.open(url)
+                                }
                             }
                         }
                     }

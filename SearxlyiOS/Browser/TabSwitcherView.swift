@@ -115,12 +115,12 @@ struct TabSwitcherView: View {
     private var privateLockBanner: some View {
         Button { Task { await tabs.revealPrivateTabs() } } label: {
             HStack(spacing: 9) {
-                Image(systemName: "hand.raised.fill").font(.system(size: 13, weight: .semibold))
+                Image(systemName: "hand.raised.fill").scaledFont(size: 13, weight: .semibold)
                 Text(L("Private tabs are locked"))
-                    .font(.system(size: 14, weight: .medium))
+                    .scaledFont(size: 14, weight: .medium)
                 Spacer()
-                Text(L("Unlock")).font(.system(size: 13, weight: .semibold))
-                Image(systemName: "faceid").font(.system(size: 14))
+                Text(L("Unlock")).scaledFont(size: 13, weight: .semibold)
+                Image(systemName: "faceid").scaledFont(size: 14)
             }
             .foregroundStyle(Brand.text)
             .padding(.horizontal, 15).padding(.vertical, 12)
@@ -157,7 +157,7 @@ private struct TabCard: View {
                         ZStack {
                             Rectangle().fill(.ultraThinMaterial)
                             Image(systemName: "lock.fill")
-                                .font(.system(size: 22, weight: .medium))
+                                .scaledFont(size: 22, weight: .medium)
                                 .foregroundStyle(Brand.textSecondary)
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -174,12 +174,12 @@ private struct TabCard: View {
                 icon
                 if tab.isPrivate {
                     Image(systemName: "hand.raised.fill")
-                        .font(.system(size: 10, weight: .semibold))
+                        .scaledFont(size: 10, weight: .semibold)
                         .foregroundStyle(Brand.textTertiary)
                         .accessibilityLabel("Private tab")
                 }
                 Text(locked ? L("Private Tab") : title)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .scaledFont(size: 12.5, weight: .medium)
                     .foregroundStyle(Brand.textSecondary)
                     .lineLimit(1)
             }
@@ -226,7 +226,7 @@ private struct TabCard: View {
             ZStack {
                 Brand.surface
                 Image(systemName: placeholderGlyph)
-                    .font(.system(size: 26, weight: .light))
+                    .scaledFont(size: 26, weight: .light)
                     .foregroundStyle(Brand.textTertiary)
             }
         }
@@ -235,7 +235,7 @@ private struct TabCard: View {
     private var closeBadge: some View {
         Button(action: onClose) {
             Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .bold))
+                .scaledFont(size: 10, weight: .bold)
                 .foregroundStyle(Brand.text)
                 .frame(width: 24, height: 24)
                 .background(.thinMaterial, in: Circle())
@@ -252,11 +252,11 @@ private struct TabCard: View {
                         size: 16)
         case .home:
             Image(systemName: "house")
-                .font(.system(size: 11, weight: .semibold))
+                .scaledFont(size: 11, weight: .semibold)
                 .foregroundStyle(Brand.textTertiary)
         case .results:
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .semibold))
+                .scaledFont(size: 11, weight: .semibold)
                 .foregroundStyle(Brand.textTertiary)
         }
     }

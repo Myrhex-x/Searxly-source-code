@@ -7,6 +7,73 @@
 //
 
 import SwiftUI
+import AppKit
+
+/// Process-wide, per-HOST favicon cache. A news feed / SERP renders dozens of favicons that mostly share a
+/// handful of outlets (many BBC / Reuters / … stories), and most news sites 301 their `/favicon.ico`, so
+/// each view otherwise fired ~2 dead requests before reaching the resolver — repeated for every card. This
+/// resolves a host's icon ONCE, keeps the decoded image in memory, negative-caches hosts with no icon (→
+/// instant monogram, zero requests), and coalesces concurrent loads for the same host into a single fetch.
+@MainActor
+final class FaviconCache {
+    static let shared = FaviconCache()
+    private init() {}
+
+    private var images: [String: NSImage] = [:]
+    private var negative: Set<String> = []
+    private var inFlight: [String: Task<NSImage?, Never>] = [:]
+
+    /// Already-resolved icon for `host`, if any (synchronous — lets a known outlet paint on the first frame).
+    func cachedImage(host: String) -> NSImage? { images[host] }
+
+    /// True when `host` is known to have no obtainable favicon — callers show the monogram with no request.
+    func isNegative(host: String) -> Bool { negative.contains(host) }
+
+    /// Resolves and caches the favicon for `host`, walking `candidates` in order. Concurrent callers for the
+    /// same host share one load. Returns nil when none resolve (the host is then negative-cached).
+    func image(host: String, candidates: [URL]) async -> NSImage? {
+        if let img = images[host] { return img }
+        if negative.contains(host) { return nil }
+        if let existing = inFlight[host] { return await existing.value }
+        guard !candidates.isEmpty else { negative.insert(host); return nil }
+
+        let task = Task<NSImage?, Never> { await Self.loadFirst(candidates) }
+        inFlight[host] = task
+        let image = await task.value
+        inFlight.removeValue(forKey: host)
+        if let image {
+            images[host] = image
+        } else {
+            negative.insert(host)
+        }
+        return image
+    }
+
+    /// Frees the cached icons (memory pressure / wipe). They simply re-resolve when next shown.
+    func purge() {
+        images.removeAll()
+        negative.removeAll()
+        inFlight.values.forEach { $0.cancel() }
+        inFlight.removeAll()
+    }
+
+    /// Walks candidate URLs off the main actor, returning the first that decodes to a valid image. Uses the
+    /// shared URLSession (same plain, non-Tor path AsyncImage used) — callers gate this to non-Maximum modes.
+    nonisolated private static func loadFirst(_ candidates: [URL]) async -> NSImage? {
+        for url in candidates {
+            if Task.isCancelled { return nil }
+            var request = URLRequest(url: url)
+            request.setValue("Searxly/1.0 (macOS)", forHTTPHeaderField: "User-Agent")
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode),
+                  let image = NSImage(data: data),
+                  image.size.width > 0, image.size.height > 0 else { continue }
+            return image
+        }
+        return nil
+    }
+}
 
 struct FaviconView: View {
     let pageURL: String
@@ -18,8 +85,23 @@ struct FaviconView: View {
     /// network requests that could leak visited domains.
     var loadRemote: Bool = true
 
-    @State private var loadFailed = false
-    @State private var currentFaviconURL: URL?
+    @State private var image: NSImage?
+
+    init(pageURL: String, size: CGFloat = 28, cornerRadius: CGFloat = 6, loadRemote: Bool = true) {
+        self.pageURL = pageURL
+        self.size = size
+        self.cornerRadius = cornerRadius
+        self.loadRemote = loadRemote
+        // Seed from the per-host cache so a known outlet paints its icon on the FIRST frame — no monogram
+        // flash while scrolling a feed full of repeated sources. (View inits run on the main actor.)
+        let host = URL(string: pageURL)?.host?.lowercased().replacingOccurrences(of: "www.", with: "")
+        if let host, loadRemote, PrivacyManager.shared.appPrivacyMode != .maximum,
+           let cached = FaviconCache.shared.cachedImage(host: host) {
+            _image = State(initialValue: cached)
+        } else {
+            _image = State(initialValue: nil)
+        }
+    }
 
     private var host: String? {
         guard let url = URL(string: pageURL) else { return nil }
@@ -29,11 +111,10 @@ struct FaviconView: View {
     /// Whether remote favicon requests are permitted right now. Requires the caller to opt in
     /// (`loadRemote`, already false for private tabs) AND the app to be outside Maximum Privacy.
     ///
-    /// In Maximum Privacy we never issue a favicon request — favicon loads go through SwiftUI
-    /// `AsyncImage` (URLSession under the hood), which is NOT routed through Tor and is NOT covered by
-    /// the PrivacyGate kill switch, so a request would egress the visited domain from the user's REAL IP
-    /// (and, on the fallback, tell a third party which domain we looked up). Maximum mode therefore shows
-    /// the monogram instead — "find it locally or don't render it".
+    /// In Maximum Privacy we never issue a favicon request — favicon loads use a plain URLSession, which is
+    /// NOT routed through Tor and NOT covered by the PrivacyGate kill switch, so a request would egress the
+    /// visited domain from the user's REAL IP (and, on the fallback, tell a third party which domain we
+    /// looked up). Maximum mode therefore shows the monogram instead — "find it locally or don't render it".
     private var allowsRemoteFavicons: Bool {
         loadRemote && PrivacyManager.shared.appPrivacyMode != .maximum
     }
@@ -43,8 +124,7 @@ struct FaviconView: View {
     ///  2. A DuckDuckGo icon-service fallback (`icons.duckduckgo.com`), used ONLY when the direct attempts
     ///     fail. This IS a third-party request, so — like every remote favicon request — it is suppressed
     ///     entirely in Maximum Privacy (guarded by `allowsRemoteFavicons`).
-    /// On any failure the AsyncImage phase triggers `tryNextFaviconSource`, which advances through the
-    /// list until success or exhaustion (then the monogram).
+    /// The cache walks these in order until one decodes, then remembers the result per host.
     private var faviconURLs: [URL] {
         guard allowsRemoteFavicons, let host else { return [] }
         let h = host.replacingOccurrences(of: "www.", with: "")
@@ -97,45 +177,43 @@ struct FaviconView: View {
         ZStack {
             if !hasValidPageURL {
                 placeholderIcon(systemName: "globe")
-            } else if allowsRemoteFavicons && !loadFailed, let faviconURL = currentFaviconURL ?? faviconURLs.first {
-                AsyncImage(url: faviconURL, transaction: Transaction(animation: .easeInOut(duration: 0.2))) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: size, height: size)
-                            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                            .onAppear {
-                                loadFailed = false
-                                currentFaviconURL = faviconURL
-                            }
-
-                    case .failure:
-                        Color.clear
-                            .onAppear {
-                                tryNextFaviconSource()
-                            }
-
-                    case .empty:
-                        monogram
-
-                    @unknown default:
-                        monogram
-                    }
-                }
+            } else if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .transition(.opacity)
             } else {
                 monogram
             }
         }
         .frame(width: size, height: size)
-        .id(pageURL)
-        .onChange(of: pageURL) { _, _ in
-            resetFaviconState()
+        // `.task(id:)` re-runs (auto-cancelling the prior load) whenever the row is recycled to a new URL.
+        .task(id: pageURL) {
+            await loadFavicon()
         }
-        .onAppear {
-            resetFaviconState()
+    }
+
+    /// Resolves the favicon via the shared per-host cache. Instant for an already-seen outlet; a single
+    /// coalesced fetch otherwise. Respects every privacy gate (Maximum mode, `.onion`, `loadRemote`).
+    private func loadFavicon() async {
+        guard allowsRemoteFavicons, let host, !host.hasSuffix(".onion") else {
+            image = nil
+            return
         }
+        if let cached = FaviconCache.shared.cachedImage(host: host) {
+            image = cached
+            return
+        }
+        if FaviconCache.shared.isNegative(host: host) {
+            image = nil
+            return
+        }
+        let resolved = await FaviconCache.shared.image(host: host, candidates: faviconURLs)
+        // `.task(id:)` cancels on URL change / disappear, so only apply while this load is still current.
+        guard !Task.isCancelled else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { image = resolved }
     }
 
     private func placeholderIcon(systemName: String) -> some View {
@@ -146,31 +224,6 @@ struct FaviconView: View {
                 .font(.system(size: size * 0.46, weight: .medium))
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private func tryNextFaviconSource() {
-        let all = faviconURLs
-        guard !all.isEmpty else { loadFailed = true; return }
-
-        // Treat a nil current as "we were showing the first URL" (index 0). Previously, a nil current —
-        // which is the state during the very first attempt — fell through to `loadFailed = true`, so a
-        // failing first source (most news sites 301 their /favicon.ico) gave up instantly and never
-        // reached the working resolver. Advancing from index 0 fixes that.
-        let currentIndex = currentFaviconURL.flatMap { all.firstIndex(of: $0) } ?? 0
-        let next = currentIndex + 1
-        if next < all.count {
-            currentFaviconURL = all[next]
-            loadFailed = false
-        } else {
-            loadFailed = true
-        }
-    }
-
-    private func resetFaviconState() {
-        loadFailed = false
-        // Seed with the first candidate so the fallback chain and the AsyncImage identity are correct
-        // from the first render (nil left the advance logic unable to find "current" in the list).
-        currentFaviconURL = faviconURLs.first
     }
 
     private var monogram: some View {

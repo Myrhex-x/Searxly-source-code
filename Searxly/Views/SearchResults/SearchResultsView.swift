@@ -28,6 +28,11 @@ struct SearchResultsView: View {
     var knowledgePanelState: KnowledgePanelDisplayState = .hidden
     var onOpenKnowledgeURL: ((String) -> Void)? = nil
 
+    var localPackState: LocalPackDisplayState = .hidden
+    var onOpenLocalPackURL: ((String) -> Void)? = nil
+    var onEnableLocalPack: (() -> Void)? = nil
+    var onDismissLocalPackPrompt: (() -> Void)? = nil
+
     // News SERP controls (news category only)
     var newsTimeRange: String? = nil
     var newsSortByRecency: Bool = false
@@ -375,6 +380,38 @@ struct SearchResultsView: View {
         currentCategory != "images" && currentCategory != "videos"
     }
 
+    /// The Google-style local pack (place queries → OpenStreetMap places + a live map), pinned above the
+    /// web results on the All tab. Renders only once resolved — nothing while loading — so results don't
+    /// jump as it appears.
+    @ViewBuilder
+    private var localPackHeader: some View {
+        if currentCategory == nil {
+            switch localPackState {
+            case .prompt(let detected):
+                LocalPackPromptView(
+                    categoryLabel: detected.categoryLabel,
+                    area: detected.area,
+                    useLocation: detected.useCurrentLocation,
+                    onEnable: { onEnableLocalPack?() },
+                    onDismiss: { onDismissLocalPackPrompt?() }
+                )
+                .padding(.bottom, 10)
+            case .ready(let data):
+                LocalPackView(
+                    data: data,
+                    glassEnabled: glassEnabled,
+                    onOpenURL: { onOpenLocalPackURL?($0) }
+                )
+                .padding(.bottom, 10)
+            case .loading:
+                LocalPackLoadingView()
+                    .padding(.bottom, 10)
+            case .hidden:
+                EmptyView()
+            }
+        }
+    }
+
     @ViewBuilder
     private func paginatedList<Row: View, Module: View>(
         rows: [SearXNGResult],
@@ -414,6 +451,7 @@ struct SearchResultsView: View {
         @ViewBuilder moduleAfterFirst: @escaping () -> Module = { EmptyView() }
     ) -> some View {
         LazyVStack(alignment: .leading, spacing: SERPDesign.resultSpacing) {
+            localPackHeader
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, result in
                 rowBuilder(index, result)
                     .onAppear {

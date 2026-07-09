@@ -234,4 +234,57 @@ final class WebNavigationDelegate: NSObject, WKNavigationDelegate {
         MainActor.assumeIsolated { model?.loadError = nil }
     }
 
+    // MARK: - Downloads
+
+    /// Decide whether a response should be shown or downloaded. Attachments (Content-Disposition) and
+    /// content the web view can't render (zips, dmgs, installers, …) become downloads instead of a
+    /// blank page or a "can't display" dead end.
+    nonisolated func webView(_ webView: WKWebView,
+                             decidePolicyFor navigationResponse: WKNavigationResponse,
+                             decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        MainActor.assumeIsolated {
+            if Self.shouldDownload(navigationResponse) {
+                decisionHandler(.download)
+            } else {
+                decisionHandler(.allow)
+            }
+        }
+    }
+
+    private static func shouldDownload(_ response: WKNavigationResponse) -> Bool {
+        if let http = response.response as? HTTPURLResponse,
+           let disposition = http.value(forHTTPHeaderField: "Content-Disposition"),
+           disposition.lowercased().contains("attachment") {
+            return true
+        }
+        // The web view can't display this MIME type (a real main-frame resource, not a subframe embed).
+        return response.isForMainFrame && !response.canShowMIMEType
+    }
+
+    /// A navigation (e.g. a "download" link) turned into a download — hand it to the manager.
+    nonisolated func webView(_ webView: WKWebView,
+                             navigationAction: WKNavigationAction,
+                             didBecome download: WKDownload) {
+        MainActor.assumeIsolated {
+            download.delegate = DownloadManager.shared.begin(download)
+        }
+    }
+
+    /// A response we chose to download became a WKDownload — hand it to the manager.
+    nonisolated func webView(_ webView: WKWebView,
+                             navigationResponse: WKNavigationResponse,
+                             didBecome download: WKDownload) {
+        MainActor.assumeIsolated {
+            download.delegate = DownloadManager.shared.begin(download)
+        }
+    }
+
+    /// The WebContent process was terminated (memory pressure or a page bug). Without this the tab
+    /// sits blank forever — reload it in place so it recovers itself.
+    nonisolated func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        MainActor.assumeIsolated {
+            model?.recoverFromWebContentCrash()
+        }
+    }
+
 }

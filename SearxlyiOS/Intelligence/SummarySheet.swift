@@ -49,7 +49,7 @@ struct SummarySheet: View {
                         if phase == .streaming { loadingRow(L("Summarizing…")) }
                     case .failed(let message):
                         Text(message)
-                            .font(.system(size: 14))
+                            .scaledFont(size: 14)
                             .foregroundStyle(Brand.textSecondary)
                     }
 
@@ -79,7 +79,7 @@ struct SummarySheet: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "sparkles")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(size: 15, weight: .semibold)
                 .foregroundStyle(Brand.bg)
                 .frame(width: 32, height: 32)
                 .background(Brand.text, in: Circle())
@@ -91,9 +91,9 @@ struct SummarySheet: View {
                     .lineLimit(2)
                 HStack(spacing: 4) {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .scaledFont(size: 8.5, weight: .semibold)
                     Text(L("Generated on this iPhone — the page never leaves your device."))
-                        .font(.system(size: 11))
+                        .scaledFont(size: 11)
                 }
                 .foregroundStyle(Brand.textTertiary)
             }
@@ -116,7 +116,7 @@ struct SummarySheet: View {
                 Haptics.tick()
             } label: {
                 Label(copied ? L("Copied") : L("Copy"), systemImage: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(size: 14, weight: .semibold)
                     .foregroundStyle(Brand.text)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
@@ -130,7 +130,7 @@ struct SummarySheet: View {
                 start()
             } label: {
                 Label(L("Regenerate"), systemImage: "arrow.clockwise")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(size: 14, weight: .semibold)
                     .foregroundStyle(Brand.text)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
@@ -151,7 +151,7 @@ struct SummarySheet: View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small).tint(Brand.textTertiary)
             Text(label)
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textTertiary)
         }
     }
@@ -176,7 +176,7 @@ struct SummarySheet: View {
                 phase = .done
             } catch {
                 if !Task.isCancelled {
-                    phase = summary.isEmpty ? .failed(error.localizedDescription) : .done
+                    phase = summary.isEmpty ? .failed(PageIntelligence.friendlyError(error)) : .done
                 }
             }
         }

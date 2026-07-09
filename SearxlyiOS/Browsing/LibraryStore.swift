@@ -24,12 +24,27 @@ struct HistoryEntry: Identifiable, Codable, Equatable {
     let url: String
     var title: String
     let visitedAt: Date
+    /// How many times this URL has been visited — powers the start-typing "Top Sites" row.
+    var visitCount: Int
 
-    init(id: UUID = UUID(), url: String, title: String, visitedAt: Date = .now) {
+    init(id: UUID = UUID(), url: String, title: String, visitedAt: Date = .now, visitCount: Int = 1) {
         self.id = id
         self.url = url
         self.title = title
         self.visitedAt = visitedAt
+        self.visitCount = visitCount
+    }
+
+    /// Backward-compatible decode: encrypted library files written before visit counts existed
+    /// simply have no `visitCount` key — treat those as a single visit rather than failing to
+    /// decode (a decode failure would drop the whole bookmarks+history file).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        url = try c.decode(String.self, forKey: .url)
+        title = try c.decode(String.self, forKey: .title)
+        visitedAt = try c.decode(Date.self, forKey: .visitedAt)
+        visitCount = try c.decodeIfPresent(Int.self, forKey: .visitCount) ?? 1
     }
 }
 
@@ -114,9 +129,35 @@ final class LibraryStore {
         persistBookmarks()
     }
 
+    /// Remove a single bookmark by URL (used by context-menu delete, which can't rely on a
+    /// list offset once the list is filtered by search).
+    func removeBookmark(url: String) {
+        guard bookmarks.contains(where: { $0.url == url }) else { return }
+        bookmarks.removeAll { $0.url == url }
+        persistBookmarks()
+    }
+
+    /// Reorder bookmarks (drag-to-arrange in the Library) — the user's chosen order is the
+    /// persisted order, and also the order shown on the start page's favorites row.
+    func moveBookmarks(from source: IndexSet, to destination: Int) {
+        bookmarks.move(fromOffsets: source, toOffset: destination)
+        persistBookmarks()
+    }
+
+    /// Rename a bookmark in place (Safari-style edit). An all-whitespace title falls back to the URL.
+    func renameBookmark(url: String, title: String) {
+        guard let idx = bookmarks.firstIndex(where: { $0.url == url }) else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        bookmarks[idx].title = trimmed.isEmpty ? url : trimmed
+        persistBookmarks()
+    }
+
     // MARK: - History
 
     /// Records a visit, collapsing consecutive duplicates and moving an existing URL to the top.
+    /// Re-visiting a page that had scrolled down the list carries its visit count forward (+1), which
+    /// is the frequency signal behind Top Sites. A plain reload of the page already on top only
+    /// refreshes the title, so reloads don't inflate the count.
     func recordVisit(url: String, title: String) {
         guard let u = URL(string: url), let scheme = u.scheme, scheme.hasPrefix("http") else { return }
         if history.first?.url == url {
@@ -124,10 +165,34 @@ final class LibraryStore {
             persistHistory()
             return
         }
+        let priorCount = history.first(where: { $0.url == url })?.visitCount ?? 0
         history.removeAll { $0.url == url }
-        history.insert(HistoryEntry(url: url, title: title.isEmpty ? (u.host ?? url) : title), at: 0)
+        history.insert(HistoryEntry(url: url, title: title.isEmpty ? (u.host ?? url) : title,
+                                    visitCount: priorCount + 1), at: 0)
         if history.count > Self.historyCap { history.removeLast(history.count - Self.historyCap) }
         persistHistory()
+    }
+
+    /// Most-visited sites for the start-typing quick-access row: one entry per host (visit counts
+    /// summed across its pages, most-recent page as the representative), ranked by count then
+    /// recency. The search instance's own pages are excluded — they're the plumbing, not a destination.
+    func topSites(limit: Int = 8) -> [HistoryEntry] {
+        let instanceHost = URL(string: SearchSettings.shared.base)?.host
+        var byHost: [String: HistoryEntry] = [:]
+        for e in history {
+            guard let host = URL(string: e.url)?.host, host != instanceHost else { continue }
+            if let existing = byHost[host] {
+                var merged = e.visitedAt > existing.visitedAt ? e : existing
+                merged.visitCount = existing.visitCount + e.visitCount
+                byHost[host] = merged
+            } else {
+                byHost[host] = e
+            }
+        }
+        return byHost.values
+            .sorted { $0.visitCount != $1.visitCount ? $0.visitCount > $1.visitCount : $0.visitedAt > $1.visitedAt }
+            .prefix(limit)
+            .map { $0 }
     }
 
     /// Updates the title of the most-recent entry for a URL once the page title resolves.
@@ -139,6 +204,14 @@ final class LibraryStore {
 
     func removeHistory(at offsets: IndexSet) {
         history.remove(atOffsets: offsets)
+        persistHistory()
+    }
+
+    /// Remove a single history entry by id — needed once history is presented in date-grouped
+    /// sections, where a flat list offset no longer maps to the backing array.
+    func removeHistory(id: UUID) {
+        guard history.contains(where: { $0.id == id }) else { return }
+        history.removeAll { $0.id == id }
         persistHistory()
     }
 
@@ -255,7 +328,10 @@ final class LibraryStore {
 
     // MARK: - Persistence (encrypted, synchronous — durability is never deferred)
 
-    private func persistBookmarks() { persist() }
+    private func persistBookmarks() {
+        persist()
+        SpotlightIndexer.reindexBookmarks()   // keep system search in sync with the bookmark set
+    }
     private func persistHistory() { persist() }
 
     private func persist() {
@@ -268,4 +344,28 @@ final class LibraryStore {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
     }
+
+    #if DEBUG
+    /// Injects backdated history so the date-grouped Library (Today / Yesterday / Previous 7 / 30
+    /// Days / Older) is exercisable in headless simulator screenshots. No-op once seeded.
+    func seedDemoHistory() {
+        guard history.count < 4 else { return }
+        let cal = Calendar.current
+        func at(_ days: Int, _ hour: Int) -> Date {
+            let base = cal.date(byAdding: .day, value: -days, to: .now) ?? .now
+            return cal.date(bySettingHour: hour, minute: 5, second: 0, of: base) ?? base
+        }
+        let seed: [HistoryEntry] = [
+            HistoryEntry(url: "https://en.wikipedia.org/wiki/Coffee", title: "Coffee — Wikipedia", visitedAt: at(0, 9), visitCount: 6),
+            HistoryEntry(url: "https://www.apple.com", title: "Apple", visitedAt: at(0, 8), visitCount: 3),
+            HistoryEntry(url: "https://news.ycombinator.com", title: "Hacker News", visitedAt: at(1, 20), visitCount: 9),
+            HistoryEntry(url: "https://www.swift.org", title: "Swift.org — Welcome to Swift.org", visitedAt: at(4, 14), visitCount: 4),
+            HistoryEntry(url: "https://developer.apple.com", title: "Apple Developer", visitedAt: at(12, 11), visitCount: 2),
+            HistoryEntry(url: "https://www.gnu.org", title: "The GNU Operating System", visitedAt: at(48, 16), visitCount: 1),
+        ]
+        history = (seed + history).sorted { $0.visitedAt > $1.visitedAt }
+        if recentSearches.isEmpty { recentSearches = ["swift concurrency", "privacy browser ios"] }
+        persistHistory()
+    }
+    #endif
 }

@@ -16,10 +16,10 @@ struct AboutView: View {
                 .foregroundStyle(.tint)
 
             VStack(spacing: 4) {
-                Text("Searxly")
+                Text(Edition.appName)
                     .font(.largeTitle.weight(.semibold))
 
-                Text("Privacy-first native macOS browser")
+                Text(Edition.isMaximum ? "Locked-down, 100% local private browser" : "Privacy-first native macOS browser")
                     .font(.title3)
                     .foregroundStyle(.secondary)
             }

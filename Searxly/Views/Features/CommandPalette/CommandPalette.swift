@@ -29,7 +29,6 @@ enum PaletteCommand: String, CaseIterable, Identifiable {
     case settings
     case importData
     case clearData
-    case askAI
     case lock
 
     var id: String { rawValue }
@@ -43,7 +42,6 @@ enum PaletteCommand: String, CaseIterable, Identifiable {
         case .settings:      return "Settings"
         case .importData:    return "Import Data from Another Browser"
         case .clearData:     return "Clear Browsing Data"
-        case .askAI:         return "Ask Searxly AI"
         case .lock:          return "Lock Searxly"
         }
     }
@@ -57,7 +55,6 @@ enum PaletteCommand: String, CaseIterable, Identifiable {
         case .settings:      return "gearshape"
         case .importData:    return "square.and.arrow.down.on.square"
         case .clearData:     return "trash"
-        case .askAI:         return "sparkles"
         case .lock:          return "lock"
         }
     }
@@ -72,7 +69,6 @@ enum PaletteCommand: String, CaseIterable, Identifiable {
         case .settings:      return ["preferences", "options", "config"]
         case .importData:    return ["import", "migrate", "switch", "bookmarks", "passwords", "chrome", "safari", "firefox"]
         case .clearData:     return ["wipe", "cookies", "cache", "privacy"]
-        case .askAI:         return ["chat", "assistant", "ai", "searxly"]
         case .lock:          return ["lock", "privacy", "secure"]
         }
     }

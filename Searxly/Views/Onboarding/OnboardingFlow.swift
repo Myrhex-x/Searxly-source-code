@@ -113,10 +113,8 @@ struct OnboardingFlow: View {
         case 6:
             torShell
         case 7:
-            aiShell
-        case 8:
             securityShell
-        case 9:
+        case 8:
             readyShell
         default:
             welcomeShell
@@ -229,31 +227,14 @@ struct OnboardingFlow: View {
                 skipAction: dismissOnboardingEarly,
                 primaryTitle: "Next",
                 primarySystemImage: "arrow.right",
-                // Skip the AI slide while the AI program is off — don't advertise what can't be reached.
-                primaryAction: { advance(to: AIFeatures.programEnabled ? 7 : 8) }
-            )
-        }
-    }
-
-    private var aiShell: some View {
-        OnboardingShell(step: 7, scrollable: false, showProgress: true, useGlassCard: false) {
-            OnboardingAIStep()
-        } actionBar: {
-            OnboardingActionBar(
-                showBack: true,
-                backAction: goBack,
-                skipTitle: "Skip intro",
-                skipAction: dismissOnboardingEarly,
-                primaryTitle: "Next",
-                primarySystemImage: "arrow.right",
-                primaryAction: { advance(to: 8) }
+                primaryAction: { advance(to: 7) }
             )
         }
     }
 
     private var securityShell: some View {
         OnboardingShell(
-            step: 8,
+            step: 7,
             instruction: "Pick a protection level below. App Lock is optional, but recommended for shared Macs.",
             scrollable: true,
             showProgress: true,
@@ -295,13 +276,13 @@ struct OnboardingFlow: View {
                 primaryTitle: "Continue",
                 primarySystemImage: "arrow.right",
                 primaryDisabled: selectedLevel == nil,
-                primaryAction: { advance(to: 9) }
+                primaryAction: { advance(to: 8) }
             )
         }
     }
 
     private var readyShell: some View {
-        OnboardingShell(step: 9, showProgress: false, useGlassCard: false, maxContentWidth: OnboardingStyle.centeredContentWidth) {
+        OnboardingShell(step: 8, showProgress: false, useGlassCard: false, maxContentWidth: OnboardingStyle.centeredContentWidth) {
             OnboardingReadyStep(
                 glassEnabled: glassEnabled,
                 localSearchReady: setup.isConnectionSuccessful,
@@ -341,9 +322,7 @@ struct OnboardingFlow: View {
     private func goBack() {
         isPerformingAppLockAuth = false
         appLockSetupError = nil
-        var target = max(0, currentStep - 1)
-        // The AI slide (step 7) is skipped while the AI program is off — hop over it backwards too.
-        if target == 7 && !AIFeatures.programEnabled { target = 6 }
+        let target = max(0, currentStep - 1)
         advance(to: target)
     }
 
@@ -358,9 +337,15 @@ struct OnboardingFlow: View {
 
     private func syncStepState(for step: Int) {
         switch step {
-        case 8:
+        case 7:
             // Security/privacy step. Reflect any already-applied state.
-            if PrivacyManager.shared.dataEncryptionEnabled, selectedLevel == nil {
+            if Edition.isMaximum {
+                // Searxly Maximum is permanently Maximum — present it pre-selected and locked.
+                selectedLevel = .maximum
+                if PrivacyManager.shared.dataEncryptionEnabled {
+                    recoveryCodeInOnboarding = PrivacyManager.shared.exportEncryptionRecoveryCode()
+                }
+            } else if PrivacyManager.shared.dataEncryptionEnabled, selectedLevel == nil {
                 selectedLevel = .encrypted
                 recoveryCodeInOnboarding = PrivacyManager.shared.exportEncryptionRecoveryCode()
             }
@@ -396,9 +381,11 @@ struct OnboardingFlow: View {
     /// can change how sites work (fingerprint farbling) and that gates traffic behind VPN/Tor (search
     /// rides Tor in Tor mode) — so the user opts in deliberately. Other levels apply immediately.
     private func handleLevelSelection(_ level: OnboardingPrivacyLevel) {
-        if level == .maximum {
+        if level == .maximum && !Edition.isMaximum {
             showMaximumConfirm = true
         } else {
+            // Searxly Maximum is already in Maximum (the VPN isn't offered) — apply directly, no
+            // VPN/Tor confirmation sheet.
             applyPrivacyLevel(level)
         }
     }

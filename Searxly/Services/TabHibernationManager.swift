@@ -292,6 +292,7 @@ final class TabHibernationManager {
     private func handleMemoryPressure(critical: Bool) {
         // Always reclaim image memory — it's cheap and reloads on demand. Drop the disk cache too when critical.
         SearchThumbnailLoader.purgeCaches(includingDisk: critical)
+        FaviconCache.shared.purge()
 
         if DeveloperSettings.shared.isEnabled && DeveloperSettings.shared.verboseTabLifecycleLogging {
             Log.web.info("[Dev] Memory pressure (\(critical ? "critical" : "warning")) — purged image caches, requesting background-tab hibernation")

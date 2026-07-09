@@ -55,6 +55,15 @@ struct SearXNGResult: Decodable, Identifiable {
     let thumb_width: Int?
     let thumb_height: Int?
 
+    // MARK: Runtime memo (not decoded)
+    /// Cached parse of `newsPublishedDate`. The parse is expensive (up to 5 DateFormatters + regex) and is
+    /// read on every news card render, every sort comparison, and every ranking/clustering pass — so it is
+    /// primed ONCE via `primeNewsDate()` during processing. Excluded from `CodingKeys` (below), so it is
+    /// never decoded/encoded: pure runtime state with value semantics. `_hasCachedNewsDate` distinguishes
+    /// "not computed yet" from "computed, no parseable date".
+    private var _cachedNewsDate: Date? = nil
+    private var _hasCachedNewsDate: Bool = false
+
     enum CodingKeys: String, CodingKey {
         case title, url, content, engine, publishedDate, engines, metadata
         case img_src, thumbnail, thumbnail_src, img_format, resolution, filesize
@@ -213,6 +222,21 @@ extension SearXNGResult {
     /// an approximate time from a relative phrase (google_news' "Source / 2 hours ago" in `content`, or
     /// a relative `publishedDate` string some engines use). Returns nil when nothing parses.
     var newsPublishedDate: Date? {
+        if _hasCachedNewsDate { return _cachedNewsDate }
+        return computedNewsPublishedDate
+    }
+
+    /// Parses and stores `newsPublishedDate` once, so downstream reads (card renders, sorts, ranking,
+    /// clustering) are free. Idempotent. Called during `SearchResultProcessor.process` for news results.
+    mutating func primeNewsDate() {
+        guard !_hasCachedNewsDate else { return }
+        _cachedNewsDate = computedNewsPublishedDate
+        _hasCachedNewsDate = true
+    }
+
+    /// The actual (expensive) parse — up to 5 DateFormatters + regex over publishedDate/metadata/content.
+    /// Prefer `newsPublishedDate`, which returns the primed cache when available.
+    private var computedNewsPublishedDate: Date? {
         if let raw = publishedDate?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
             if let d = Self.parseAbsoluteNewsDate(raw) { return d }
             if let d = Self.parseRelativePhrase(raw) { return d }
@@ -327,6 +351,9 @@ extension SearXNGResult {
         let t = s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, t.count <= 24 else { return false }
         if ["just now", "now", "today", "yesterday"].contains(t) { return true }
+        // French forms — fr-locale news engines pack "Il y a 48 minutes" where English packs "48m ago".
+        if ["hier", "aujourd'hui", "maintenant", "à l'instant", "a l'instant"].contains(t) { return true }
+        if t.hasPrefix("il y a ") { return true }
         return t.range(
             of: #"^\d+\s*(mo|months?|minutes?|mins?|seconds?|secs?|hours?|hrs?|days?|weeks?|wks?|years?|yrs?|[smhdwy])\s*(ago)?$"#,
             options: .regularExpression
@@ -338,6 +365,7 @@ extension SearXNGResult {
     static func parseRelativePhrase(_ raw: String, now: Date = Date()) -> Date? {
         let s = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s.isEmpty else { return nil }
+        if let french = parseFrenchRelative(s, now: now) { return french }
         if s.contains("just now") { return now }
         if s.contains("yesterday") { return now.addingTimeInterval(-86_400) }
         if let re = relativeRegex,
@@ -363,6 +391,39 @@ extension SearXNGResult {
         if unit.hasPrefix("d") { return 86_400 }                // day(s)
         if unit.hasPrefix("w") { return 7 * 86_400 }            // week(s)
         if unit.hasPrefix("y") { return 365 * 86_400 }          // year(s)
+        return 60
+    }
+
+    /// French relative phrases ("il y a 48 minutes", "hier", "maintenant"). Kept as a separate matcher
+    /// so the English `secondsPerUnit`/regex above stay untouched (the number sits mid-phrase in French,
+    /// and "semaines"/"secondes" would both collide on the English "s"-prefix rule). fr-locale news
+    /// engines emit no machine date, so recovering one here powers LIVE badges + newest-first sorting.
+    private static func parseFrenchRelative(_ s: String, now: Date) -> Date? {
+        if s.contains("maintenant") || s.contains("l'instant") || s.contains("a l'instant") { return now }
+        if s.contains("aujourd'hui") || s.contains("aujourd hui") { return now }
+        if s.contains("hier") { return now.addingTimeInterval(-86_400) }
+        guard let re = frenchRelativeRegex,
+              let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+              m.numberOfRanges >= 3,
+              let numRange = Range(m.range(at: 1), in: s),
+              let unitRange = Range(m.range(at: 2), in: s),
+              let value = Double(s[numRange]) else { return nil }
+        return now.addingTimeInterval(-value * frenchSecondsPerUnit(String(s[unitRange])))
+    }
+
+    private static let frenchRelativeRegex = try? NSRegularExpression(
+        pattern: #"il y a\s+(\d+)\s*(secondes?|minutes?|heures?|jours?|semaines?|mois|ans?|années?)"#,
+        options: []
+    )
+
+    private static func frenchSecondsPerUnit(_ unit: String) -> TimeInterval {
+        if unit.hasPrefix("sec") { return 1 }                    // seconde(s)
+        if unit.hasPrefix("min") { return 60 }                   // minute(s)
+        if unit.hasPrefix("heure") { return 3600 }               // heure(s)
+        if unit.hasPrefix("jour") { return 86_400 }              // jour(s)
+        if unit.hasPrefix("semaine") { return 7 * 86_400 }       // semaine(s)
+        if unit.hasPrefix("mois") { return 30 * 86_400 }         // mois
+        if unit.hasPrefix("an") || unit.hasPrefix("année") { return 365 * 86_400 } // an(s) / année(s)
         return 60
     }
 

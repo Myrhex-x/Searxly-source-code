@@ -33,6 +33,8 @@ final class SearchQueryHistoryStore {
     // MARK: - Write
 
     func record(_ query: String) {
+        // Amnesic session: don't write new search history to disk.
+        guard !AmnesiaMode.isActive else { return }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count >= 2 else { return }
         var entries = load()

@@ -72,6 +72,18 @@ final class BrowserState {
     /// `knowledgePanelState` (gated on the search actually returning results). See SearchCoordinator.
     var knowledgePanelResolved: (query: String, content: KnowledgePanelContent?)?
 
+    /// Top-of-results SERP "local pack" for place queries (e.g. "pharmacie perpignan") — OpenStreetMap
+    /// places + a live map, resolved via the Searxly gateway. Mirrors the knowledge-panel lifecycle:
+    /// resolves in parallel with the search and commits once both settle (see SearchCoordinator).
+    var localPackState: LocalPackDisplayState = .hidden
+    var localPackEnabled: Bool = Persistence.localPackEnabled()
+    var localPackTask: Task<Void, Never>?
+    var localPackResolved: (query: String, data: LocalPackData?)?
+    /// The place query detected for the current search (drives the opt-in prompt when the feature is off).
+    var localPackDetected: LocalPackQuery?
+    /// Set when the user dismisses the opt-in prompt — suppresses further prompts for the rest of the session.
+    var localPackPromptDismissed = false
+
     // Transient highlight for AI citations (or future "jump to result" actions).
     // The SearchResultCard observes this (via passed isHighlighted) to give a temporary emphasis
     // on the flat row without any heavy chrome. Auto-cleared by the highlighter.
@@ -217,15 +229,6 @@ final class BrowserState {
     /// instead of web content, search results, or home.
     var showingFullHistory = false
 
-    // MARK: - Local AI (sheet + onboarding prompt; logic in SearchCoordinator)
-    var showingLocalAIChat: Bool = false
-    var showEnableAIToolsPrompt = false
-    /// A pending "Ask Searxly AI" request from the page right-click menu (selection → chat seed).
-    /// Consumed by the chat sheet when it appears (or live, if already open).
-    var pendingAIChatSeed: AIChatSeed? = nil
-    /// A pending lightweight quick answer (Explain / Summarize) shown in the Siri-style popup.
-    var quickAnswer: QuickAnswerRequest? = nil
-
     // MARK: - Instances (Phase 8)
     var searxInstances: [SearXNGInstance] = SearXNGInstance.defaultInstances
     var currentInstanceID: UUID = UUID()
@@ -318,13 +321,6 @@ final class BrowserState {
         // Load will be called explicitly from ContentView.onAppear (mirrors old behavior)
         // so that @AppStorage values are available before we force onboarding etc.
 
-        // Listen for "Ask Searxly AI" picks from the page right-click menu (SearxlyWebView).
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAskAISelectionNote(_:)),
-            name: .searxlyAskAISelection,
-            object: nil
-        )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppPrivacyModeChanged),
@@ -387,56 +383,6 @@ final class BrowserState {
         }
     }
 
-    @objc func handleAskAISelectionNote(_ note: Notification) {
-        let text = (note.userInfo?["text"] as? String) ?? ""
-        let actionRaw = (note.userInfo?["action"] as? String) ?? AIChatSeed.Action.ask.rawValue
-        let title = (note.userInfo?["title"] as? String) ?? ""
-        let url = (note.userInfo?["url"] as? String) ?? ""
-        DispatchQueue.main.async { [weak self] in
-            self?.handleAskAISelection(text: text, actionRaw: actionRaw, title: title, url: url)
-        }
-    }
-
-    /// Routes a page-menu request: "Ask" opens the full chat; "Explain"/"Summarize"/"Summarize page"
-    /// use the lightweight Siri-style quick-answer popup instead.
-    func handleAskAISelection(text: String, actionRaw: String, title: String = "", url: String = "") {
-        guard AIFeatures.programEnabled else { return }
-        let action = AIChatSeed.Action(rawValue: actionRaw) ?? .ask
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // PRIVACY: never ship Private-tab page content to the cloud backend. Show a notice instead.
-        let prefs = LocalIntelligenceManager.shared.preferences
-        let cloudActive = prefs.searxlyAIEnabled && prefs.useSearxlyAI
-        if (selectedTab?.isPrivate ?? false) && cloudActive {
-            quickAnswer = QuickAnswerRequest(
-                selection: "",
-                action: action,
-                staticNotice: "Searxly AI Cloud is paused in Private tabs so your private browsing never leaves your Mac. Switch to on‑device AI in Settings, or use a normal tab."
-            )
-            return
-        }
-
-        switch action {
-        case .ask:
-            guard !trimmed.isEmpty else { return }
-            pendingAIChatSeed = AIChatSeed(selection: String(trimmed.prefix(4000)), action: .ask)
-            openLocalAIChat()
-        case .explain, .summarize:
-            guard !trimmed.isEmpty else { return }
-            quickAnswer = QuickAnswerRequest(selection: String(trimmed.prefix(4000)), action: action)
-            LocalIntelligenceManager.shared.warmUpIfNeeded()
-        case .summarizePage:
-            // Page text is untrusted + can be large; PageContentGuard sanitizes/caps before the model.
-            quickAnswer = QuickAnswerRequest(
-                selection: String(trimmed.prefix(16000)),
-                action: .summarizePage,
-                pageTitle: title.isEmpty ? nil : title,
-                pageURL: url.isEmpty ? nil : url
-            )
-            LocalIntelligenceManager.shared.warmUpIfNeeded()
-        }
-    }
-
     @objc func handleHistoryTitleSnapshot(_ note: Notification) {
         guard let url = note.userInfo?["url"] as? URL,
               let title = note.userInfo?["title"] as? String else { return }
@@ -447,7 +393,6 @@ final class BrowserState {
 
     deinit {
         NotificationCenter.default.removeObserver(self, name: Self.historyTitleSnapshotNotification, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .searxlyAskAISelection, object: nil)
     }
 }
 

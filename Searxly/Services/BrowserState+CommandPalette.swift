@@ -50,7 +50,6 @@ extension BrowserState {
         case .settings:      showingSettings = true
         case .importData:    showingImportData = true
         case .clearData:     showingClearData = true
-        case .askAI:         openLocalAIChat()
         case .lock:          AppLockManager.shared.lock()
         }
     }
