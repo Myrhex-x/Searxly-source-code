@@ -62,7 +62,7 @@ struct AboutSettingsView: View {
             }
 
             SettingsSection(title: "Community") {
-                Link(destination: URL(string: "https://github.com/Myrhex-x/Searxly")!) {
+                Link(destination: URL(string: "https://github.com/searxly/Searxly")!) {
                     Label("GitHub repository", systemImage: "link")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }

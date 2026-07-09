@@ -32,7 +32,7 @@ enum PageContentGuard {
     /// Hard cap on page text fed to the model (also limits attack surface + cost).
     static let contentCharLimit = 12_000
 
-    /// Shared Bulwark engine (github.com/Myrhex-x/bulwark). HTML stripping is left
+    /// Shared Bulwark engine (github.com/searxly/bulwark). HTML stripping is left
     /// off because callers pass already-extracted plain text; Bulwark is used here
     /// for the vectors simple regex defanging can't see — invisible-Unicode
     /// smuggling, NFKC + cross-script homoglyphs — and for multilingual detection.

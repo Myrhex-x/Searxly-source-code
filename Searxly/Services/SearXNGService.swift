@@ -88,7 +88,7 @@ final class SearXNGService {
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Searxly/1.0 (macOS; +https://github.com/Myrhex-x/Searxly)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Searxly/1.0 (macOS; +https://github.com/searxly/Searxly)", forHTTPHeaderField: "User-Agent")
 
         // Accept-Language: must lead with the user's chosen search language.
         // default_lang: "auto" in SearXNG uses Accept-Language as the primary signal

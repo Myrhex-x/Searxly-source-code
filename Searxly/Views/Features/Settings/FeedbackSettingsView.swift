@@ -139,7 +139,7 @@ struct FeedbackSettingsView: View {
                 Button("Copy to clipboard") { copyReportToClipboard() }
                     .buttonStyle(.link)
                 Text("•").foregroundStyle(.tertiary)
-                Link("Open GitHub issues", destination: URL(string: "https://github.com/Myrhex-x/Searxly/issues")!)
+                Link("Open GitHub issues", destination: URL(string: "https://github.com/searxly/Searxly/issues")!)
             }
             .font(.callout)
         }
