@@ -2,7 +2,7 @@
 //  TokenIconView.swift
 //  Searxly
 //
-//  Reusable token icon: ETH diamond, SEARXLY hexagon, generic letter+color for custom ERC-20s.
+//  Reusable token icon: ETH diamond, generic letter+color for custom ERC-20s.
 //
 
 import SwiftUI
@@ -41,9 +41,9 @@ struct TokenIconView: View {
         }
     }
 
-    /// The real-logo URL for this token, or nil to fall back to the drawn mark. Every ERC-20 (incl.
-    /// SEARXLY, which is a listed token) uses its real logo from the directory; the native gas coins use
-    /// a known logo. The drawn glyph only shows while loading or for a coin no list knows.
+    /// The real-logo URL for this token, or nil to fall back to the drawn mark. Every ERC-20 uses its
+    /// real logo from the directory; the native gas coins use a known logo. The drawn glyph only shows
+    /// while loading or for a coin no list knows.
     private var logoURL: URL? {
         // Core coins get a known, verified logo immediately — so a wrapped/native coin (ETH, WETH, POL)
         // never falls back to a generic glyph while the token list resolves.
@@ -70,8 +70,6 @@ struct TokenIconView: View {
         switch token.symbol.uppercased() {
         case "ETH", "WETH":
             EthDiamond(size: size * 0.54)
-        case "SEARXLY":
-            SearxlyHex(size: size * 0.58)
         case "WBTC", "CBBTC", "BTC":
             Text("₿")
                 .font(.system(size: size * 0.52, weight: .bold, design: .rounded))
@@ -119,46 +117,6 @@ private struct EthDiamond: View {
             // Lower triangle: left facet (dim) + right facet (bright)
             facet(leftWaist, center, botApex, 0.55)
             facet(rightWaist, center, botApex, 0.72)
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-// MARK: - SEARXLY Hexagon
-
-private struct SearxlyHex: View {
-    let size: CGFloat
-
-    var body: some View {
-        Canvas { ctx, sz in
-            let w = sz.width, h = sz.height
-            let cx = w / 2, cy = h / 2
-            let r = min(w, h) / 2
-
-            // Regular hexagon (flat-top orientation)
-            var hex = Path()
-            for i in 0..<6 {
-                let angle = Double(i) * .pi / 3 - .pi / 6
-                let x = cx + r * cos(angle)
-                let y = cy + r * sin(angle)
-                if i == 0 { hex.move(to: .init(x: x, y: y)) }
-                else       { hex.addLine(to: .init(x: x, y: y)) }
-            }
-            hex.closeSubpath()
-            ctx.stroke(hex, with: .color(.white), style: StrokeStyle(lineWidth: w * 0.12, lineCap: .round, lineJoin: .round))
-
-            // Inner "S" dot / small filled hexagon
-            let innerR = r * 0.32
-            var inner = Path()
-            for i in 0..<6 {
-                let angle = Double(i) * .pi / 3 - .pi / 6
-                let x = cx + innerR * cos(angle)
-                let y = cy + innerR * sin(angle)
-                if i == 0 { inner.move(to: .init(x: x, y: y)) }
-                else       { inner.addLine(to: .init(x: x, y: y)) }
-            }
-            inner.closeSubpath()
-            ctx.fill(inner, with: .color(.white))
         }
         .frame(width: size, height: size)
     }

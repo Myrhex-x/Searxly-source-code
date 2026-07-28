@@ -8,7 +8,7 @@
 //  - Seed phrase encrypted with PIN-derived AES-GCM key, stored in Keychain
 //  - PIN verified by decrypting the seed (its GCM tag is the verifier — no PIN hash on disk)
 //  - JSON-RPC balance fetching (eth_getBalance + ERC-20 balanceOf)
-//  - Price feeds (CoinGecko for ETH, DexScreener for SEARXLY)
+//  - Price feeds (CoinGecko for the native gas coin)
 //
 
 import Foundation
@@ -198,8 +198,6 @@ final class WalletManager {
     var aggregatedTotalUSD: Double { aggregatedTokens.reduce(0) { $0 + $1.usdValue } }
 
     var ethPriceUSD: Double = 0
-    var searxlyPriceUSD: Double = 0
-    var searxlyChange24h: Double = 0
 
     // MARK: - Display currency (fiat)
 
@@ -239,7 +237,7 @@ final class WalletManager {
         return "\(sym)\(String(format: "%.8f", v))"
     }
 
-    /// Token IDs the user hid (spam/airdrop junk). ETH and SEARXLY can never be hidden.
+    /// Token IDs the user hid (spam/airdrop junk). The native gas coin can never be hidden.
     private(set) var hiddenTokenIDs: Set<String> = []
     /// Built-in coins the user explicitly added/pinned (e.g. USDC) — kept visible even at a $0
     /// balance, so "Add USDC" actually makes USDC appear.
@@ -250,14 +248,14 @@ final class WalletManager {
             // Always show the essentials and anything the user explicitly added or pinned; the rest of
             // the curated built-ins only appear once they hold a balance, so the list isn't padded
             // with empty rows by default.
-            if token.isNative || token.id == "SEARXLY" || token.isCustom { return true }
+            if token.isNative || token.isCustom { return true }
             return token.balance > 0 || revealedTokenIDs.contains(token.id)
         }
     }
 
     func hideToken(id: String) {
-        // Never hide SEARXLY or the active chain's native gas token.
-        guard id != "SEARXLY", id != activeChain.nativeSymbol else { return }
+        // Never hide the active chain's native gas token.
+        guard id != activeChain.nativeSymbol else { return }
         hiddenTokenIDs.insert(id); revealedTokenIDs.remove(id)
         saveHiddenTokens(); saveRevealedTokens()
     }
@@ -516,12 +514,10 @@ final class WalletManager {
     // MARK: - Token list
 
     func rebuildTokenList() {
-        // On Base, $SEARXLY is the hero asset and leads; then the chain's native gas token; then the
-        // curated built-in ERC-20s (WETH/USDC/USDT/DAI/cbBTC) so received funds always surface; then
-        // this chain's custom tokens. On other chains there's no SEARXLY/built-ins, so native leads.
+        // The chain's native gas token leads; then, on Base, the curated built-in ERC-20s
+        // (WETH/USDC/USDT/DAI/cbBTC) so received funds always surface; then this chain's custom tokens.
         var list: [WalletToken] = []
         if activeChain.id == WalletChain.base.id {
-            list.append(.searxly)
             list.append(.native(for: activeChain))
             list.append(contentsOf: WalletToken.baseBuiltInERC20s)
         } else {
@@ -600,68 +596,6 @@ final class WalletManager {
             walletAddress: address,
             decimals: ManagedVPNConfig.usdcDecimals,
             rpc: rpcURL(forChain: WalletChain.base.id)) ?? 0
-    }
-
-    // MARK: - $SEARXLY holder perks
-    //
-    // Holding at least `WalletConfig.searxlyHolderMinUSD` of $SEARXLY unlocks the "$SEARXLY HOLDER"
-    // badge, half-price Managed VPN, and the reduced `holderSwapFeeBps` swap fee. Like the AI-pass
-    // holder tier and the whole crypto-gated surface, this is a client-side UX gate (a patched binary
-    // could forge it) — it never moves funds and never grants anything an attacker couldn't already
-    // reach by editing the client, so it's the same honest model used across the app.
-
-    /// The active account's $SEARXLY balance as last loaded (0 until balances refresh). Reads the live
-    /// token row on Base, then the aggregated All-Networks row, then the session balance cache — so it's
-    /// populated regardless of which chain the wallet UI is currently showing.
-    var searxlyBalance: Decimal {
-        if let t = tokens.first(where: { $0.id == "SEARXLY" }), t.balance > 0 { return t.balance }
-        if let agg = aggregatedTokens.first(where: { $0.id == "SEARXLY" && $0.chainId == WalletChain.base.id }),
-           agg.balance > 0 { return agg.balance }
-        return cachedBalance(chainId: WalletChain.base.id, tokenId: "SEARXLY") ?? 0
-    }
-
-    /// Live USD value of the active account's $SEARXLY holdings (0 until balances/prices load). Prefers a
-    /// token row's own priced value (populated by both the single-chain and All-Networks refreshes), then
-    /// falls back to balance × the live price.
-    var searxlyHoldingsUSD: Double {
-        if let t = tokens.first(where: { $0.id == "SEARXLY" }), t.usdValue > 0 { return t.usdValue }
-        if let agg = aggregatedTokens.first(where: { $0.id == "SEARXLY" && $0.chainId == WalletChain.base.id }),
-           agg.usdValue > 0 { return agg.usdValue }
-        return (searxlyBalance as NSDecimalNumber).doubleValue * searxlyPriceUSD
-    }
-
-    /// Whether the active account qualifies for $SEARXLY holder perks, from the last loaded balance/price.
-    /// Reactive — drives the wallet's holder badge and the UI's discounted pricing. For a money decision
-    /// (the actual VPN charge) prefer `fetchSearxlyHoldingsUSD()`, which reads fresh so the amount charged
-    /// matches what the user was shown.
-    var isSearxlyHolder: Bool { searxlyHoldingsUSD >= WalletConfig.searxlyHolderMinUSD }
-
-    /// Authoritative $SEARXLY holdings value in USD for the active account, read straight from Base
-    /// (independent of the chain the UI shows) and priced with the live feed. Used by the holder-gated
-    /// purchase paths. Falls back to the last loaded value if the network read fails.
-    func fetchSearxlyHoldingsUSD() async -> Double {
-        guard let address = activeAddress else { return 0 }
-        async let balanceA = WalletNetwork.erc20Balance(
-            tokenAddress: WalletConfig.searxlyTokenAddress,
-            walletAddress: address,
-            decimals: WalletConfig.searxlyTokenDecimals,
-            rpc: rpcURL(forChain: WalletChain.base.id))
-        var price = searxlyPriceUSD
-        if price <= 0 {
-            let pr = await WalletNetwork.fetchPrices(
-                nativeCoinGeckoID: WalletChain.base.coinGeckoNativeID,
-                searxlyAddress: WalletConfig.searxlyTokenAddress)
-            price = pr.searxlyUSD
-            if price > 0 { searxlyPriceUSD = price }
-        }
-        guard let balance = await balanceA else { return searxlyHoldingsUSD }
-        cacheBalance(chainId: WalletChain.base.id, tokenId: "SEARXLY", balance)
-        return (balance as NSDecimalNumber).doubleValue * price
-    }
-
-    /// Fresh holder check for holder-gated purchases (see `fetchSearxlyHoldingsUSD`).
-    func isSearxlyHolderFresh() async -> Bool {
-        await fetchSearxlyHoldingsUSD() >= WalletConfig.searxlyHolderMinUSD
     }
 
     func removeCustomToken(id: String) {
@@ -990,7 +924,6 @@ final class WalletManager {
 
         let chain = activeChain
         let rpc = activeRPCURL
-        let onBase = chain.id == WalletChain.base.id
 
         // Optional: auto-discover tokens this address holds (Etherscan v2) before fetching balances.
         if WalletFeatures.tokenDiscovery {
@@ -1008,33 +941,27 @@ final class WalletManager {
             }
         }
 
-        // Prices come from external price APIs; ALL on-chain balances (native coin + SEARXLY + every
-        // ERC-20) come from ONE batched RPC round-trip, so a rate-limited public node can't throttle
+        // Prices come from external price APIs; ALL on-chain balances (native coin + every ERC-20)
+        // come from ONE batched RPC round-trip, so a rate-limited public node can't throttle
         // the burst — the bug that left balances stuck at "0" until a manual reload.
         let balanceTokens: [(id: String, contract: String?, decimals: Int)] =
             tokens.map { ($0.id, $0.contractAddress, $0.decimals) }
-        async let prices = WalletNetwork.fetchPrices(
-            nativeCoinGeckoID: chain.coinGeckoNativeID,
-            searxlyAddress: onBase ? WalletConfig.searxlyTokenAddress : nil)
+        async let prices = WalletNetwork.fetchPrices(nativeCoinGeckoID: chain.coinGeckoNativeID)
         async let balances = WalletNetwork.batchBalances(
             walletAddress: address, tokens: balanceTokens, rpc: rpc)
 
         let (pr, bals) = await (prices, balances)
 
         ethPriceUSD = pr.ethUSD
-        searxlyPriceUSD = pr.searxlyUSD
-        searxlyChange24h = pr.searxlyChange24h
 
         // Apply balances + prices in one pass. A token absent from `bals` (its node call failed) keeps
-        // its previous balance rather than being wiped to 0. Native = ETH/gas price; SEARXLY = its DEX
-        // price; stablecoins peg $1; WETH tracks ETH; anything else has no price feed yet.
+        // its previous balance rather than being wiped to 0. Native = ETH/gas price; stablecoins peg
+        // $1; WETH tracks ETH; anything else has no price feed yet.
         var heldZeros: [WalletToken] = []
         for token in tokens {   // value-type snapshot; updateToken mutates self.tokens by id
             let price: Double, change: Double
             if token.isNative {
                 price = pr.ethUSD; change = 0
-            } else if token.id == "SEARXLY" {
-                price = pr.searxlyUSD; change = pr.searxlyChange24h
             } else if token.isStablecoin {
                 price = 1.0; change = 0
             } else if token.symbol.uppercased() == "WETH" {
@@ -1105,7 +1032,6 @@ final class WalletManager {
     private func fundedTokens(forChain chain: WalletChain, address: String) async -> [WalletToken] {
         var list: [WalletToken] = [.native(for: chain)]
         if chain.id == WalletChain.base.id {
-            list.append(.searxly)
             list.append(contentsOf: WalletToken.baseBuiltInERC20s)
         }
         let present = Set(list.compactMap { $0.contractAddress?.lowercased() })
@@ -1115,13 +1041,10 @@ final class WalletManager {
         }
 
         let rpc = rpcURL(forChain: chain.id)
-        let onBase = chain.id == WalletChain.base.id
         // Snapshot the balance inputs into a `let` so the concurrent `async let` below doesn't capture
         // the mutable `list` (a Swift 6 data-race error). Mirrors refreshBalancesAndPrices.
         let balanceInputs = list.map { ($0.id, $0.contractAddress, $0.decimals) }
-        async let pricesA = WalletNetwork.fetchPrices(
-            nativeCoinGeckoID: chain.coinGeckoNativeID,
-            searxlyAddress: onBase ? WalletConfig.searxlyTokenAddress : nil)
+        async let pricesA = WalletNetwork.fetchPrices(nativeCoinGeckoID: chain.coinGeckoNativeID)
         async let balsA = WalletNetwork.batchBalances(
             walletAddress: address, tokens: balanceInputs, rpc: rpc)
         let (pr, bals) = await (pricesA, balsA)
@@ -1144,7 +1067,6 @@ final class WalletManager {
             cacheBalance(chainId: chain.id, tokenId: token.id, applied)
             token.chainId = chain.id
             if token.isNative { token.priceUSD = pr.ethUSD }
-            else if token.id == "SEARXLY" { token.priceUSD = pr.searxlyUSD; token.change24h = pr.searxlyChange24h }
             else if token.isStablecoin { token.priceUSD = 1.0 }
             else if token.symbol.uppercased() == "WETH" { token.priceUSD = pr.ethUSD }
             priced.append(token)
@@ -1562,8 +1484,8 @@ final class WalletManager {
 
     // MARK: - Swap execution (0x)
 
-    /// Submits a swap: native Uniswap v4 (SEARXLY, via Permit2 + UniversalRouter) or the 0x route.
-    /// Either way, any required approvals are sent and awaited first, then the swap tx is broadcast.
+    /// Submits a swap on the 0x route. Any required approval is sent and awaited first, then the
+    /// swap tx is broadcast.
     /// `progress` is called (on the main actor) as each stage starts, so the UI can narrate the legs.
     func executeSwap(quote: SwapQuote, pin: String,
                      progress: ((SwapStage) -> Void)? = nil) async -> (hash: String?, error: String?) {
@@ -1588,47 +1510,24 @@ final class WalletManager {
             return (nil, "No \(sym) on \(activeChain.name) to pay the network fee (gas). \(fix) (WETH is wrapped ETH and can't pay gas.)")
         }
 
-        // Native Uniswap v4 route (SEARXLY): a sell pulls the ERC-20 from the user via Permit2 (up to
-        // two one-time approvals — token→Permit2, then Permit2→UniversalRouter); a buy (native ETH in)
-        // needs none. Then the swap itself is a single UniversalRouter.execute tx.
-        if quote.isV4 {
-            if let spender = quote.permit2Spender, let token = quote.sellToken.contractAddress {
-                let amount = WeiConverter.baseUnitBytes(amount: quote.sellAmount, decimals: quote.sellToken.decimals)
-                let owner = activeAddress ?? ""
-                let permit2 = WalletConfig.permit2Address
-                // 1. ERC-20 allowance: token → Permit2 (approve max, one-time).
-                let erc20 = await WalletNetwork.allowance(token: token, owner: owner, spender: permit2, rpc: rpc)
-                if allowanceShort(erc20, amount) {
-                    progress?(.approving(quote.sellToken.symbol))
-                    let data = EthereumTransaction.erc20ApproveData(spender: permit2, amountBytes: [UInt8](repeating: 0xff, count: 32))
-                    let hex = "0x" + data.map { String(format: "%02x", $0) }.joined()
-                    let res = await dappSendTransaction(toHex: token, valueHex: "0x0", dataHex: hex, gasHex: nil, pin: pin)
-                    guard let h = res.hash else { return (nil, res.error ?? "Token approval failed") }
-                    progress?(.confirmingApproval)
-                    await waitForMined(h, rpc: rpc)
-                }
-                // 2. Permit2 allowance: token → UniversalRouter (approve max, one-time).
-                let now = UInt64(Date().timeIntervalSince1970)
-                let p2 = await UniswapV4.permit2Allowance(owner: owner, token: token, spender: spender, rpc: rpc)
-                let covered = p2.map { !allowanceShort($0.amount, amount) && $0.expiration > now } ?? false
-                if !covered {
-                    progress?(.authorizing)
-                    let data = UniswapV4.permit2ApproveData(token: token, spender: spender)
-                    let hex = "0x" + data.map { String(format: "%02x", $0) }.joined()
-                    let res = await dappSendTransaction(toHex: permit2, valueHex: "0x0", dataHex: hex, gasHex: nil, pin: pin)
-                    guard let h = res.hash else { return (nil, res.error ?? "Permit2 approval failed") }
-                    progress?(.confirmingApproval)
-                    await waitForMined(h, rpc: rpc)
-                }
+        // Backstop for the UI's up-front check (WalletSwapView.insufficientBalance): if the known
+        // balance of the token being sold can't cover the amount, stop here with a plain reason
+        // rather than signing and broadcasting a tx the node rejects as "insufficient funds" (which
+        // surfaced as a confusing late error). Only block on a KNOWN shortfall — an unknown balance
+        // proceeds, so this can never wrongly stop a fundable swap.
+        if let sellBal = aggregatedTokens.first(where: { $0.id == quote.sellToken.id && $0.chainId == activeChain.id })?.balance {
+            // Same small tolerance as the UI so a "Max" tap (rounded display balance) isn't rejected.
+            let have = (sellBal as NSDecimalNumber).doubleValue
+            let want = (quote.sellAmount as NSDecimalNumber).doubleValue
+            if want > have * 1.000001 + 1e-12 {
+                return (nil, "Not enough \(quote.sellToken.symbol) to swap — the amount is more than your balance.")
             }
-            progress?(.submitting)
-            return await dappSendTransaction(toHex: quote.to, valueHex: quote.value, dataHex: quote.data, gasHex: quote.gas, pin: pin)
         }
 
         if let spender = quote.needsAllowanceTo, let sellContract = quote.sellToken.contractAddress {
-            // The spender comes back from the 0x API (possibly via the Searxly gateway). Never grant
-            // an allowance to an address a tampered quote could inject: it must be the quote's own
-            // settlement target or canonical swap infrastructure (Permit2 / 0x AllowanceHolder).
+            // The spender comes back from the 0x API. Never grant an allowance to an address a
+            // tampered quote could inject: it must be the quote's own settlement target or canonical
+            // swap infrastructure (Permit2 / 0x AllowanceHolder).
             guard Self.isTrustedSwapSpender(spender, quoteTarget: quote.to) else {
                 return (nil, "Swap cancelled for your safety: the quote asked to approve an unrecognized contract (\(spender)). Try again — if this repeats, don't proceed and report it.")
             }
@@ -1654,13 +1553,16 @@ final class WalletManager {
     /// 0x v2's canonical AllowanceHolder (same address on every supported chain) — the spender the
     /// allowance-holder quote endpoint names.
     nonisolated private static let zeroExAllowanceHolder = "0x0000000000001ff3684f28c67538d4d072c22734"
+    /// Permit2 (canonical, same address on every chain) — a 0x route may name it as the approval
+    /// spender, so it stays on the allow-list below.
+    nonisolated private static let permit2Address = "0x000000000022d473030f116ddee9f6b43ac78ba3"
 
     /// Whether a quote's approval spender is one we recognize: the quote's own settlement contract
     /// (`transaction.to`), Permit2, or 0x's AllowanceHolder. Anything else is refused before signing.
     private static func isTrustedSwapSpender(_ spender: String, quoteTarget: String) -> Bool {
         let s = spender.lowercased()
         return s == quoteTarget.lowercased()
-            || s == WalletConfig.permit2Address.lowercased()
+            || s == permit2Address
             || s == zeroExAllowanceHolder
     }
 

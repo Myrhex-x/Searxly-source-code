@@ -196,41 +196,6 @@ if let blob = WalletBackup.export(words: backupPhrase, password: "correct horse 
     failed += 1; print("  ❌ backup export returned nil")
 }
 
-// 15. Uniswap v4 (SEARXLY native swaps) — golden calldata. The byte layout was validated ON-CHAIN
-//     (eth_call to the live V4 Quoter + simulating our own buy against the deployed UniversalRouter +
-//     decoding a real swap), so a keccak match here means the production encoder still emits that exact
-//     layout. Compares keccak256(calldata) to keep the vectors short.
-print("\n[15] Uniswap v4 (SEARXLY native swaps)")
-let v4S  = "0x0fdc79b868bc4a6295cd94397f61890f68c38ba3"
-let v4W  = "0x4200000000000000000000000000000000000006"
-let v4UR = "0xfdf682f51fe81aa4898f0ae2163d8a55c127fbc7"
-let v4R  = "0x1111111111111111111111111111111111111111"
-func v4Hash(_ hex: String) -> String { hx(Keccak256.hash(RLP.dataFromHex(hex))) }
-
-check("Permit2.approve calldata",
-      hx(Keccak256.hash(UniswapV4.permit2ApproveData(token: v4S, spender: v4UR))),
-      "f8228cb22179e1705ef16223d1efb1a6e485339602f8f445f39636354db72d5e")
-
-let v4Buy = UniswapV4.buildSwap(swapIn: v4W, swapOut: v4S, inputIsNative: true, outputIsNative: false,
-                                amountIn: WeiConverter.decimalStringToBytes("1000000000000000"),
-                                amountOutMin: [0], recipient: v4R, deadline: 9999999999)
-checkBool("buy targets UniversalRouter", v4Buy.to.lowercased() == v4UR)
-check("buy (ETH→SEARXLY) execute() calldata", v4Hash(v4Buy.dataHex),
-      "88afd2ba920f87ef5eec0c2fc37717d5970d634f19c41f337b41d06505476bfd")
-
-let v4Sell = UniswapV4.buildSwap(swapIn: v4S, swapOut: v4W, inputIsNative: false, outputIsNative: true,
-                                 amountIn: WeiConverter.decimalStringToBytes("1000000000000000000000"),
-                                 amountOutMin: [0], recipient: v4R, deadline: 9999999999)
-check("sell (SEARXLY→ETH) execute() calldata", v4Hash(v4Sell.dataHex),
-      "09311a5fc1e5f0b04449fba7f94842aee79dd5459ee8b560cdafe209f3288e79")
-
-checkBool("supports ETH↔SEARXLY",
-          UniswapV4.supports(sell: WalletToken(id: "ETH", symbol: "ETH", contractAddress: nil, decimals: 18),
-                             buy:  WalletToken(id: "SEARXLY", symbol: "SEARXLY", contractAddress: v4S, decimals: 18)))
-checkBool("rejects ETH↔USDC (non-SEARXLY → 0x)",
-          !UniswapV4.supports(sell: WalletToken(id: "ETH", symbol: "ETH", contractAddress: nil, decimals: 18),
-                              buy:  WalletToken(id: "USDC", symbol: "USDC", contractAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6)))
-
 print("\n────────────────────────────────────────")
 print("  RESULT: \(passed) passed, \(failed) failed")
 print("────────────────────────────────────────")

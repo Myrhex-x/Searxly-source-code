@@ -55,19 +55,17 @@ search engine:
   of Corresponding Source.
 
 Copyright © 2026 Myrhex-x. All rights reserved except as granted by the licenses
-above. The **"Searxly" name, logo, and brand** are *not* licensed for reuse, and
-the `$SEARXLY` token is unaffected by these licenses. For commercial licensing of
-the Searxly application, contact the maintainer via the official **@Searxly**
-account on X.
+above. The **"Searxly" name, logo, and brand** are *not* licensed for reuse. For
+commercial licensing of the Searxly application, contact the maintainer via the
+official **@Searxly** account on X.
 
 ## Community & Support
 
-Ongoing development is supported by the community through the **$SEARXLY** token on Base.
+Searxly does not issue, promote, or endorse any token, and has no affiliated
+token. Development is funded by Searxly Maximum licences, Managed VPN passes, and
+the in-app swap fee.
 
-- Contract address: `0x0fdc79b868bc4a6295cd94397f61890f68c38ba3`
-- All updates and the CA are posted on the official **@Searxly** account on X.
-
-Do your own research. All funds go directly to project development.
+- All updates are posted on the official **@Searxly** account on X.
 
 ## Current Feature Status
 

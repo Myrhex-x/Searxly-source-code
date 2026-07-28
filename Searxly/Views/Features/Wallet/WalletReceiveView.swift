@@ -12,7 +12,7 @@ struct WalletReceiveView: View {
     var initialTokenID: String? = nil
     @State private var wallet = WalletManager.shared
     @State private var copiedAddress = false
-    @State private var selectedTokenID = "SEARXLY"
+    @State private var selectedTokenID = WalletManager.shared.activeChain.nativeSymbol
 
     private var address: String { wallet.activeAddress ?? "" }
 

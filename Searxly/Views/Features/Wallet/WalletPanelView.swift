@@ -17,6 +17,7 @@ struct WalletPanelView: View {
     @State private var wallet = WalletManager.shared
     @State private var activeTab: WalletTab = .portfolio
     @State private var showSwap = false
+    @State private var showBuyNotice = false
     @State private var showAccounts = false
     @State private var showSettings = false
     @State private var showNetworks = false
@@ -72,6 +73,12 @@ struct WalletPanelView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $showSwap) { WalletSwapView(initialSellID: pendingTokenID) }
+        .alert("You're leaving Searxly", isPresented: $showBuyNotice) {
+            Button("Cancel", role: .cancel) {}
+            Button("Continue") { proceedToOnramp() }
+        } message: {
+            Text("Buying crypto is handled by Onramper, a separate company. They take the payment, run their own identity checks, and set their own prices and fees — Searxly isn't part of the purchase, never sees your card details, and earns nothing from it.\n\nYour receiving address is passed to them so the coins reach this wallet. Their terms and privacy policy apply.")
+        }
         .sheet(isPresented: $showAccounts) { WalletAccountsSheet(onClose: { showAccounts = false }) }
         .sheet(isPresented: $showNetworks) { WalletNetworkSheet() }
         .sheet(isPresented: $showSettings) { walletSettingsSheet }
@@ -249,8 +256,6 @@ struct WalletPanelView: View {
                     .contentTransition(.numericText())
                     .background(balanceGlow)
 
-                holderBadge
-
                 // The 24h change pill + sparkline track the active chain's on-device series, so they're
                 // shown only in single-chain mode; All Networks shows the combined total alone.
                 if !wallet.showAllNetworks {
@@ -262,30 +267,6 @@ struct WalletPanelView: View {
         .frame(maxWidth: .infinity)
         .padding(.top, 26)
         .padding(.bottom, 18)
-    }
-
-    /// "$SEARXLY HOLDER" mark — shown when the active account holds at least $15 of $SEARXLY, which
-    /// unlocks the holder perks (half-price Managed VPN, a reduced 0.3% swap fee). Monochrome per the
-    /// brand — the hexagon mark carries the identity, never color.
-    @ViewBuilder
-    private var holderBadge: some View {
-        if wallet.isSearxlyHolder {
-            HStack(spacing: 5) {
-                SearxlyHexMark(color: WalletTheme.textPrimary)
-                    .frame(width: 11, height: 11)
-                Text("$SEARXLY HOLDER")
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(0.7)
-                    .foregroundStyle(WalletTheme.textPrimary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(WalletTheme.surfaceStrong, in: Capsule())
-            .overlay(Capsule().strokeBorder(WalletTheme.hairlineStrong, lineWidth: 1))
-            .padding(.top, 6)
-            .help("You hold over $15 of $SEARXLY — you get half-price Managed VPN and a reduced 0.3% swap fee.")
-            .transition(.opacity)
-        }
     }
 
     /// 24h change as a soft direction-colored capsule (green up / red down). Color only ever carries
@@ -393,7 +374,14 @@ struct WalletPanelView: View {
         }
     }
 
-    private func openBuy() {
+    /// "Buy" hands the user to Onramper — a separate company that sells crypto for card money and
+    /// runs its own identity checks. That's a real hand-off to a third-party financial service, with
+    /// the user's receiving address prefilled, so it gets an interstitial rather than silently
+    /// opening a browser: Searxly sells nothing here, sees no card details, and isn't a party to the
+    /// purchase, and the user should know that before they leave.
+    private func openBuy() { showBuyNotice = true }
+
+    private func proceedToOnramp() {
         guard let addr = wallet.activeAddress,
               let url = URL(string: WalletConfig.onrampURL(address: addr)) else { return }
         NSWorkspace.shared.open(url)
@@ -688,7 +676,7 @@ private struct WalletLockView: View {
     }
 }
 
-// MARK: - Portfolio tab (one flat, uniform token list — SEARXLY pinned first)
+// MARK: - Portfolio tab (one flat, uniform token list)
 
 private struct WalletPortfolioView: View {
     var onTokenAction: (WalletTokenAction, WalletToken) -> Void = { _, _ in }
@@ -697,11 +685,11 @@ private struct WalletPortfolioView: View {
     @State private var detailToken: WalletToken? = nil
 
     /// Sorted by holding value — the coin you hold the most of (in $) leads. Zero-value rows fall to
-    /// the bottom in a stable order (SEARXLY as the home asset, then the native gas coin, then A–Z).
+    /// the bottom in a stable order (the native gas coin, then A–Z).
     private var orderedTokens: [WalletToken] {
         wallet.visibleTokens.sorted { a, b in
             if a.usdValue != b.usdValue { return a.usdValue > b.usdValue }
-            func rank(_ t: WalletToken) -> Int { t.symbol == "SEARXLY" ? 0 : (t.isNative ? 1 : 2) }
+            func rank(_ t: WalletToken) -> Int { t.isNative ? 0 : 1 }
             if rank(a) != rank(b) { return rank(a) < rank(b) }
             return a.symbol < b.symbol
         }
@@ -712,21 +700,9 @@ private struct WalletPortfolioView: View {
         wallet.showAllNetworks ? wallet.aggregatedTokens : orderedTokens
     }
 
-    /// $SEARXLY, set apart above the list as the home token — brand-first, whatever it's worth (a
-    /// zero-balance stand-in when unheld). Only where it lives (Base / All Networks).
-    private var searxlyLead: WalletToken? {
-        portfolioSource.first { $0.symbol.uppercased() == "SEARXLY" }
-            ?? ((wallet.showAllNetworks || wallet.activeChain.id == WalletChain.base.id) ? .searxly : nil)
-    }
-
-    /// Everything except $SEARXLY, in value order — the flat list below the featured card.
-    private var restTokens: [WalletToken] {
-        portfolioSource.filter { $0.symbol.uppercased() != "SEARXLY" }
-    }
-
     var body: some View {
         VStack(spacing: 12) {
-            if searxlyLead == nil && restTokens.isEmpty {
+            if portfolioSource.isEmpty {
                 Text(wallet.showAllNetworks
                      ? "No coins found on any network yet — tap Receive to get your address."
                      : "Your wallet is empty — tap Receive to get your address.")
@@ -738,17 +714,10 @@ private struct WalletPortfolioView: View {
                     .padding(.horizontal, 36)
                     .padding(.top, 8)
             } else {
-                // $SEARXLY sits apart in its own stronger-fill card as the home token…
-                if let lead = searxlyLead {
-                    WalletGlassCard(padding: 6, fill: WalletTheme.surfaceStrong) { tokenRow(lead) }
-                        .padding(.horizontal, WalletTheme.pagePadding)
-                }
-                // …and everything else follows in one flat, value-sorted card. In All Networks each row
-                // shows a small network pill by its name (see tokenRow) so mixed chains stay legible.
-                if !restTokens.isEmpty {
-                    WalletGlassCard(padding: 6) { tokenRows(restTokens) }
-                        .padding(.horizontal, WalletTheme.pagePadding)
-                }
+                // One flat, value-sorted card. In All Networks each row shows a small network pill by
+                // its name (see tokenRow) so mixed chains stay legible.
+                WalletGlassCard(padding: 6) { tokenRows(portfolioSource) }
+                    .padding(.horizontal, WalletTheme.pagePadding)
             }
 
             if !wallet.showAllNetworks, !wallet.hiddenTokenIDs.isEmpty {
@@ -862,8 +831,8 @@ private struct WalletPortfolioView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 11)
             // Funded assets read at full strength; empty rows recede so the portfolio's real weight
-            // is legible at a glance (SEARXLY stays a touch brighter as the home asset).
-            .opacity(funded ? 1 : (token.symbol == "SEARXLY" ? 0.7 : 0.5))
+            // is legible at a glance.
+            .opacity(funded ? 1 : 0.5)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -874,7 +843,7 @@ private struct WalletPortfolioView: View {
                     NSPasteboard.general.setString(addr, forType: .string)
                 }
             }
-            if token.symbol != "SEARXLY" {
+            if !token.isNative {
                 Button { WalletManager.shared.hideToken(id: token.id) } label: {
                     Label("Hide token", systemImage: "eye.slash")
                 }

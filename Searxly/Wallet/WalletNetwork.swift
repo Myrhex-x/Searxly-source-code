@@ -2,7 +2,7 @@
 //  WalletNetwork.swift
 //  Searxly
 //
-//  JSON-RPC calls to Base L2 + price feeds (CoinGecko + DexScreener).
+//  JSON-RPC calls to Base L2 + price feeds (CoinGecko; DexScreener for chart pool lookups).
 //
 
 import Foundation
@@ -95,31 +95,14 @@ enum WalletNetwork {
 
     struct PriceResult {
         var ethUSD: Double = 0
-        var searxlyUSD: Double = 0
-        var searxlyChange24h: Double = 0
         var usdcUSD: Double = 1.0   // USDC is pegged
     }
 
-    /// Fetches the native-coin USD price (CoinGecko) and, when `searxlyAddress` is provided
-    /// (i.e. on Base), the SEARXLY DEX price. On non-Base chains pass `searxlyAddress: nil`.
-    static func fetchPrices(nativeCoinGeckoID: String = "ethereum",
-                            searxlyAddress: String?) async -> PriceResult {
+    /// Fetches the native-coin USD price (CoinGecko).
+    static func fetchPrices(nativeCoinGeckoID: String = "ethereum") async -> PriceResult {
         var result = PriceResult()
-
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                if let native = await coinGeckoPrice(id: nativeCoinGeckoID) {
-                    result.ethUSD = native
-                }
-            }
-            if let searxlyAddress {
-                group.addTask {
-                    if let (price, change) = await dexScreenerPrice(tokenAddress: searxlyAddress) {
-                        result.searxlyUSD = price
-                        result.searxlyChange24h = change
-                    }
-                }
-            }
+        if let native = await coinGeckoPrice(id: nativeCoinGeckoID) {
+            result.ethUSD = native
         }
         return result
     }
@@ -149,21 +132,6 @@ enum WalletNetwork {
               let coin = json[id] as? [String: Any],
               let price = coin["usd"] as? Double else { return nil }
         return price
-    }
-
-    // MARK: - DexScreener (SEARXLY / tiny token price)
-
-    private static func dexScreenerPrice(tokenAddress: String) async -> (Double, Double)? {
-        guard let lane = await marketLane() else { return nil }   // public data — may ride Tor in Maximum
-        guard let url = URL(string: "https://api.dexscreener.com/latest/dex/tokens/\(tokenAddress)") else { return nil }
-        guard let (data, _) = try? await lane.session.data(from: url) else { return nil }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let pairs = json["pairs"] as? [[String: Any]],
-              let first = pairs.first else { return nil }
-        let priceStr = first["priceUsd"] as? String ?? "0"
-        let price = Double(priceStr) ?? 0
-        let change = (first["priceChange"] as? [String: Any])?["h24"] as? Double ?? 0
-        return (price, change)
     }
 
     // MARK: - Token metadata ("Add coin" by contract address)

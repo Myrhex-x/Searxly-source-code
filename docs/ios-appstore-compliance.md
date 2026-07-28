@@ -17,7 +17,7 @@ Status legend: ✅ done / handled · ⚠️ action needed before submission · �
 
 ## 2. Payments & crypto — Guidelines 3.1.1, 3.1.5(b), 3.1.3
 
-- ✅ The iOS app ships with **no wallet, no crypto, no DEX, no `$SEARXLY` gating, no paid features.**
+- ✅ The iOS app ships with **no wallet, no crypto, no DEX, no token gating, no paid features.**
 - 🔒 When paid features arrive (cloud AI, managed VPN), they **must** unlock via **StoreKit IAP** —
   never USDC / on-chain tokens. Crypto may not unlock app functionality (3.1.5(b)); digital services
   need IAP (3.1.1). This is the single biggest rejection risk for this product; keep it off iOS.

@@ -3,7 +3,9 @@
 //  Searxly
 //
 //  Token swaps on Base via the 0x Swap API (allowance-holder endpoint, which returns a
-//  ready-to-sign transaction). Requires a free 0x API key (Settings → Wallet). Toggle-gated.
+//  ready-to-sign transaction). Requires the user's OWN free 0x API key (Settings → Wallet):
+//  quotes go straight from this Mac to 0x, with no Searxly server in the order flow.
+//  Toggle-gated.
 //
 
 import Foundation
@@ -20,8 +22,6 @@ struct SwapQuote {
     let gas: String?                // 0x-computed gas limit (hex) — accurate for the swap route
     let feeBps: Int                 // Searxly fee applied to this quote, in basis points (for disclosure)
     let needsAllowanceTo: String?   // spender to approve (nil for native ETH sells)
-    var isV4: Bool = false          // true → native Uniswap v4 route (SEARXLY), not a 0x route
-    var permit2Spender: String? = nil  // v4 sells: the UniversalRouter to authorize via Permit2; else nil
 
     /// The disclosed Searxly fee as a percentage string, e.g. "0.8%".
     var feePercentText: String {
@@ -56,12 +56,11 @@ struct SwapQuote {
 }
 
 /// A user-visible stage of swap execution, reported as the wallet works through the legs
-/// (a swap can be up to three transactions: ERC-20 approval → Permit2 authorization → swap,
-/// each waiting to confirm on-chain). Drives the progress UI in WalletSwapView.
+/// (selling an ERC-20 is two transactions: approval → swap, each waiting to confirm on-chain).
+/// Drives the progress UI in WalletSwapView.
 enum SwapStage: Equatable {
     case checking               // pre-flight: gas balance + allowance reads
     case approving(String)      // signing + broadcasting the ERC-20 approval for a symbol
-    case authorizing            // Permit2 → UniversalRouter authorization (v4 sells only)
     case confirmingApproval     // an approval is broadcast; waiting for it to mine
     case submitting             // signing + broadcasting the swap itself
 }
@@ -85,7 +84,7 @@ enum WalletSwap {
         case noKey, badResponse(String), notConfigured
         var errorDescription: String? {
             switch self {
-            case .noKey: return "Add a free 0x API key in Settings → Wallet to enable swaps."
+            case .noKey: return "Swaps need your own free 0x API key — add one in Settings → Wallet."
             case .notConfigured: return "Swaps are turned off. Enable them in Settings → Wallet."
             case .badResponse(let m): return m
             }
@@ -93,47 +92,20 @@ enum WalletSwap {
     }
 
     /// Fetches a swap quote. `taker` is the wallet address. If a fee'd quote can't be routed, retries
-    /// once WITHOUT the Searxly fee — some thin-liquidity pairs (e.g. SEARXLY) only quote without the
-    /// extra fee leg, so the user can still swap (Searxly just forgoes its fee on that trade).
+    /// once WITHOUT the Searxly fee — some thin-liquidity pairs only quote without the extra fee leg,
+    /// so the user can still swap (Searxly just forgoes its fee on that trade).
     static func quote(sell: WalletToken, buy: WalletToken, sellAmount: Decimal, taker: String,
                       chainId: Int = WalletConfig.baseChainID,
                       feeBps: Int = WalletConfig.swapFeeBps) async -> Result<SwapQuote, SwapError> {
-        // Native Uniswap v4 for ETH/WETH↔SEARXLY: no API key, no gateway, fully on-chain. The pool is a
-        // Doppler v4 pool, priced via the V4 Quoter and executed through the UniversalRouter (see
-        // UniswapV4). On any failure (e.g. a transient RPC miss) we fall through to the 0x path below,
-        // so SEARXLY stays swappable either way.
-        if WalletFeatures.swaps, chainId == WalletConfig.baseChainID, UniswapV4.supports(sell: sell, buy: buy),
-           let v4 = await UniswapV4.quoteAndBuild(sell: sell, buy: buy, sellAmount: sellAmount,
-                                                  taker: taker, rpc: WalletConfig.defaultRPCURLs.first ?? "") {
-            return .success(SwapQuote(
-                sellToken: sell, buyToken: buy, sellAmount: sellAmount,
-                buyAmountRaw: v4.amountOut, minBuyAmountRaw: v4.minAmountOut,
-                to: v4.to, data: v4.dataHex, value: v4.valueHex,
-                gas: "0x" + String(v4.gas, radix: 16), feeBps: 0, needsAllowanceTo: nil,
-                isV4: true,
-                permit2Spender: v4.permit2Token == nil ? nil : WalletConfig.universalRouterV4))
-        }
-
-        // No Searxly fee on ANY swap that involves SEARXLY — buying it, selling it, anything. A
-        // deliberate incentive to use the token (the swap UI then discloses a 0% fee).
-        let waiveFee = isSearxly(sell) || isSearxly(buy)
-
         let primary = await fetchQuote(sell: sell, buy: buy, sellAmount: sellAmount,
-                                       taker: taker, chainId: chainId, applyFee: !waiveFee, feeBps: feeBps)
+                                       taker: taker, chainId: chainId, applyFee: true, feeBps: feeBps)
         // If a fee'd quote can't be routed, retry once without the fee (helps thin-liquidity pairs).
-        if !waiveFee, case .failure(.badResponse(let message)) = primary, isNoRoute(message) {
+        if case .failure(.badResponse(let message)) = primary, isNoRoute(message) {
             let noFee = await fetchQuote(sell: sell, buy: buy, sellAmount: sellAmount,
                                          taker: taker, chainId: chainId, applyFee: false, feeBps: feeBps)
             if case .success = noFee { return noFee }
         }
         return primary
-    }
-
-    /// True for the SEARXLY token (matched by id, symbol, or contract) — swaps involving it are free.
-    private static func isSearxly(_ token: WalletToken) -> Bool {
-        token.id == "SEARXLY"
-            || token.symbol.uppercased() == "SEARXLY"
-            || token.contractAddress?.lowercased() == WalletConfig.searxlyTokenAddress.lowercased()
     }
 
     /// Whether a quote failure looks like a routing/liquidity miss (worth retrying without the fee).
@@ -146,12 +118,14 @@ enum WalletSwap {
                                    chainId: Int, applyFee: Bool,
                                    feeBps: Int = WalletConfig.swapFeeBps) async -> Result<SwapQuote, SwapError> {
         guard WalletFeatures.swaps else { return .failure(.notConfigured) }
-        // Prefer the user's own 0x key (talks to 0x directly). Otherwise route through the Searxly
-        // gateway, which holds the key server-side — so swaps work with no per-user key.
+        // The quote is fetched with the user's OWN 0x key, straight from their machine to 0x. Searxly
+        // operates no swap backend and is deliberately not in the order flow: no Searxly server ever
+        // sees the taker address, the pair, or the amount, and none relays the trade. The fee is a
+        // client-specified parameter that 0x settles on-chain (below) — collecting it needs no
+        // intermediary, so we don't be one.
         let userKey = WalletFeatures.zeroExAPIKey
-        let useGateway = userKey.isEmpty
-        guard !useGateway || SearxlyGateway.isConfigured else { return .failure(.noKey) }
-        let base = useGateway ? SearxlyGateway.zeroExBase : WalletConfig.swapAPIBase
+        guard !userKey.isEmpty else { return .failure(.noKey) }
+        let base = WalletConfig.swapAPIBase
 
         let sellAmountBase = WeiConverter.baseUnitDecimalString(amount: sellAmount, decimals: sell.decimals)
         var items: [URLQueryItem] = [
@@ -175,13 +149,8 @@ enum WalletSwap {
         guard let url = comps?.url else { return .failure(.badResponse("Bad URL")) }
 
         var req = URLRequest(url: url)
-        if useGateway {
-            // The gateway attaches the real 0x-api-key + 0x-version itself.
-            req.setValue(SearxlyGateway.bearer, forHTTPHeaderField: "Authorization")
-        } else {
-            req.setValue(userKey, forHTTPHeaderField: "0x-api-key")
-            req.setValue("v2", forHTTPHeaderField: "0x-version")
-        }
+        req.setValue(userKey, forHTTPHeaderField: "0x-api-key")
+        req.setValue("v2", forHTTPHeaderField: "0x-version")
         req.timeoutInterval = 20
 
         // Fail closed in Maximum Privacy when protection is down: a swap quote carries the taker

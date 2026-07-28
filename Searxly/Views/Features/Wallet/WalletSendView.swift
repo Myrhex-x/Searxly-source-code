@@ -11,7 +11,7 @@ struct WalletSendView: View {
     @State private var wallet = WalletManager.shared
     @State private var toAddress = ""
     @State private var amountText = ""
-    @State private var selectedTokenID = "SEARXLY"
+    @State private var selectedTokenID = WalletManager.shared.activeChain.nativeSymbol
     @State private var sendError = ""
     @State private var isSending = false
     @State private var showConfirm = false

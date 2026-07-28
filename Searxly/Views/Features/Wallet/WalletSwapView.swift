@@ -4,8 +4,8 @@
 //
 //  In-wallet token swaps. "You Pay" / "You Receive" cards with a live auto-quote, a token picker that
 //  spans every network you hold (picking a coin on another chain switches the active network), and a
-//  same-chain swap via the 0x Swap API — or natively through Uniswap v4 for SEARXLY. Monochrome to
-//  match the Searxly brand (green only ever signals live/price, never decoration).
+//  same-chain swap via the 0x Swap API, using the user's own API key. Monochrome to match the
+//  Searxly brand (green only ever signals live/price, never decoration).
 //
 
 import SwiftUI
@@ -17,7 +17,7 @@ struct WalletSwapView: View {
     @State private var wallet = WalletManager.shared
 
     @State private var sellID = "ETH"
-    @State private var buyID = "SEARXLY"
+    @State private var buyID = ManagedVPNConfig.usdcContract
     @State private var amountText = ""
     @State private var quote: SwapQuote?
     @State private var loadingQuote = false
@@ -30,7 +30,7 @@ struct WalletSwapView: View {
     /// Live execution narration: stages already passed + the one running now (shown while swapping).
     @State private var doneStages: [String] = []
     @State private var currentStage = ""
-    /// "0.5 ETH" → "≈ 1,234 SEARXLY", captured at submit time for the success screen.
+    /// "0.5 ETH" → "≈ 1,234 USDC", captured at submit time for the success screen.
     @State private var successSummary: (pay: String, receive: String)? = nil
     /// nil = still confirming; .success/.failed = final on-chain outcome; .pending = gave up polling.
     @State private var confirmStatus: WalletNetwork.ReceiptStatus? = nil
@@ -41,7 +41,8 @@ struct WalletSwapView: View {
     @State private var extraTokens: [String: WalletToken] = [:]
     /// Whether a swap backend exists (own 0x key or the gateway). Cached once — the key lives in the
     /// Keychain, and reading it from `body` did a synchronous Keychain round-trip on every render.
-    @State private var hasSwapBackend = SearxlyGateway.isConfigured
+    @State private var hasSwapBackend = !WalletFeatures.zeroExAPIKey.isEmpty
+    @State private var showKeySheet = false
 
     private enum PickerTarget: Int, Identifiable { case pay, receive; var id: Int { rawValue } }
 
@@ -57,6 +58,17 @@ struct WalletSwapView: View {
         let raw = amountText.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
         guard let d = Decimal(string: raw, locale: Locale(identifier: "en_US_POSIX")), d > 0 else { return nil }
         return d
+    }
+
+    /// True when the entered amount is more than the wallet holds of the token being sold. Checked
+    /// up front so the button reads "Insufficient …" and stays disabled, instead of running the whole
+    /// approve/confirm/broadcast flow and only then failing on-chain with a raw node error. Uses the
+    /// same small tolerance as WalletSendView so a "Max" tap (rounded display balance) doesn't trip it.
+    private var insufficientBalance: Bool {
+        guard let amount, let token = sellToken else { return false }
+        let amt = (amount as NSDecimalNumber).doubleValue
+        let bal = (token.balance as NSDecimalNumber).doubleValue
+        return amt > bal * 1.000001 + 1e-12
     }
 
     private var payUSD: Double {
@@ -83,15 +95,15 @@ struct WalletSwapView: View {
         .interactiveDismissDisabled(swapping)
         .onAppear {
             if let initialSellID { sellID = initialSellID }
-            // Ensure a valid, DISTINCT receive coin for the active chain (the initial "SEARXLY"
-            // default only exists on Base; off Base it wouldn't resolve, and it collides when the
-            // user is selling SEARXLY).
+            // Ensure a valid, DISTINCT receive coin for the active chain (the initial USDC default
+            // only exists on Base; off Base it wouldn't resolve, and it collides when the user is
+            // selling USDC).
             if buyID.isEmpty || buyToken == nil || sameCoin(sellToken, buyToken) {
                 applyDefaultBuy(excluding: sellID)
             }
             WalletTokenDirectory.shared.ensureLoaded(chainId: wallet.activeChain.id)
             if wallet.aggregatedTokens.isEmpty { Task { await wallet.refreshAllNetworks() } }
-            hasSwapBackend = !WalletFeatures.zeroExAPIKey.isEmpty || SearxlyGateway.isConfigured
+            hasSwapBackend = !WalletFeatures.zeroExAPIKey.isEmpty
         }
         .onChange(of: amountText) { _, _ in scheduleQuote() }
         .sheet(item: $picker) { target in
@@ -103,6 +115,13 @@ struct WalletSwapView: View {
                     picker = nil
                 },
                 onClose: { picker = nil })
+        }
+        .sheet(isPresented: $showKeySheet) {
+            ZeroExKeySheet {
+                // Saving a key turns Swaps on too, so re-read both and drop the setup banner.
+                hasSwapBackend = !WalletFeatures.zeroExAPIKey.isEmpty
+                scheduleQuote()
+            }
         }
     }
 
@@ -243,14 +262,8 @@ struct WalletSwapView: View {
                 rowDivider
                 detailRow("Min received", "\(q.minBuyAmountDisplay) \(q.buyToken.symbol)")
                 rowDivider
-                detailRow("Searxly fee", q.feeBps == 0
-                          ? "Free"
-                          : q.feePercentText + (q.feeBps == WalletConfig.holderSwapFeeBps ? " · holder" : ""))
-                if q.isV4 {
-                    rowDivider
-                    detailRow("Route", "Uniswap v4 · native")
-                }
-                if let spender = q.needsAllowanceTo ?? q.permit2Spender {
+                detailRow("Searxly fee", q.feeBps == 0 ? "Free" : q.feePercentText)
+                if let spender = q.needsAllowanceTo {
                     rowDivider
                     detailRow("Note", "One-time approval tx first")
                     rowDivider
@@ -284,13 +297,15 @@ struct WalletSwapView: View {
     @ViewBuilder
     private var primaryArea: some View {
         if !swapsReady {
-            actionButton("Turn on swaps in Settings", enabled: false) {}
+            actionButton("Set up swaps", enabled: true) { showKeySheet = true }
         } else if sellToken == nil {
             actionButton("Choose a token to pay with", enabled: false) {}
         } else if buyToken == nil || sellID == buyID {
             actionButton("Choose a token to receive", enabled: false) {}
         } else if amount == nil {
             actionButton("Enter an amount", enabled: false) {}
+        } else if insufficientBalance {
+            actionButton("Insufficient \(sellToken?.symbol ?? "balance")", enabled: false) {}
         } else if quote != nil {
             actionButton("Swap Now", enabled: !swapping) { showAuth = true }
         } else {
@@ -307,9 +322,32 @@ struct WalletSwapView: View {
             Image(systemName: "arrow.down").font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(WalletTheme.textTertiary)
             summaryLine(buyToken, quote.map { prettyAmount($0.buyAmountDouble) } ?? "0", receiveUSD, prefix: "Receive")
+
+            // The fee and the guaranteed minimum are shown on the quote screen, but this is the
+            // screen where money actually moves — repeat them here so nothing material is only one
+            // screen back, and say plainly that it can't be undone.
+            if let q = quote {
+                Divider().opacity(0.08).padding(.vertical, 2)
+                confirmDetail("Searxly fee", q.feeBps == 0 ? "Free" : q.feePercentText)
+                confirmDetail("Minimum received", "\(q.minBuyAmountDisplay) \(q.buyToken.symbol)")
+                Text("On-chain and irreversible. Searxly never holds your funds — your Mac signs this and sends it to the network. Network (gas) fees are separate.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(WalletTheme.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 3)
+            }
         }
         .padding(14)
         .walletGlass(radius: 16, fill: WalletTheme.surface)
+    }
+
+    private func confirmDetail(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).font(.system(size: 11)).foregroundStyle(WalletTheme.textTertiary)
+            Spacer()
+            Text(value).font(.system(size: 11, weight: .medium)).foregroundStyle(WalletTheme.textSecondary)
+        }
     }
 
     private var authView: some View {
@@ -366,7 +404,6 @@ struct WalletSwapView: View {
         switch s {
         case .checking:           return "Checking balances & allowances"
         case .approving(let sym): return "Approving \(sym) for swapping"
-        case .authorizing:        return "Authorizing the swap router"
         case .confirmingApproval: return "Waiting for on-chain confirmation"
         case .submitting:         return "Submitting the swap"
         }
@@ -391,24 +428,30 @@ struct WalletSwapView: View {
 
     private var swapsReady: Bool {
         guard WalletFeatures.swaps else { return false }
-        if let s = sellToken, let b = buyToken, UniswapV4.supports(sell: s, buy: b) { return true }
         return hasSwapBackend
     }
 
+    /// Tappable — the whole banner opens `ZeroExKeySheet`, which explains why the key is needed and
+    /// takes one there and then. The short text here only has to say what's missing and that it's free.
     private var swapSetupBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "key.horizontal").font(.system(size: 14)).foregroundStyle(WalletTheme.warning)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Turn on swaps").font(.system(size: 12, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
-                Text(SearxlyGateway.isConfigured
-                     ? "Open Settings → Wallet → Wallet Features and turn on **Swaps**. No API key needed."
-                     : "Swaps use the 0x aggregator and need a free API key. Open Settings → Wallet → Wallet Features, turn on **Swaps**, and paste a 0x key.")
-                    .font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        Button { showKeySheet = true } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "key.horizontal").font(.system(size: 14)).foregroundStyle(WalletTheme.warning)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Swaps need your own 0x key")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(WalletTheme.textPrimary)
+                    Text("It's free and takes a minute. Your key keeps the quote between this Mac and 0x — no Searxly server sits in your trade. Tap to set it up.")
+                        .font(.system(size: 11)).foregroundStyle(WalletTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WalletTheme.textTertiary).padding(.top, 2)
             }
-            Spacer(minLength: 0)
+            .padding(12)
+            .contentShape(Rectangle())
         }
-        .padding(12)
+        .buttonStyle(.plain)
         .background(WalletTheme.warning.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WalletTheme.warning.opacity(0.3), lineWidth: 1))
     }
@@ -492,10 +535,10 @@ struct WalletSwapView: View {
         return a.id == b.id || a.symbol.uppercased() == b.symbol.uppercased()
     }
 
-    /// Preferred receive coins, in order. SEARXLY only exists on Base; the rest come from the wallet's
-    /// own list first, then the verified per-chain directory (so chains where we track only the native
-    /// coin still get a real default instead of collapsing to sell == buy).
-    private static let defaultBuyPrefs = ["SEARXLY", "USDC", "WETH", "USDT", "DAI"]
+    /// Preferred receive coins, in order. Drawn from the wallet's own list first, then the verified
+    /// per-chain directory (so chains where we track only the native coin still get a real default
+    /// instead of collapsing to sell == buy).
+    private static let defaultBuyPrefs = ["USDC", "WETH", "USDT", "DAI"]
 
     /// Sets `buyID` to a sensible receive coin that is guaranteed DIFFERENT from `sell`. Falls back to
     /// "" (→ the pill shows "Select") rather than ever defaulting to the sell coin itself.
@@ -606,9 +649,7 @@ struct WalletSwapView: View {
         }
         loadingQuote = true; error = ""
         let result = await WalletSwap.quote(sell: sell, buy: buy, sellAmount: amt, taker: taker,
-                                            chainId: wallet.activeChain.id,
-                                            feeBps: wallet.isSearxlyHolder ? WalletConfig.holderSwapFeeBps
-                                                                           : WalletConfig.swapFeeBps)
+                                            chainId: wallet.activeChain.id)
         if Task.isCancelled { return }
         loadingQuote = false
         switch result {
@@ -641,7 +682,19 @@ struct WalletSwapView: View {
                 wallet.addCustomToken(contractAddress: bought, symbol: q.buyToken.symbol,
                                       name: q.buyToken.name, decimals: q.buyToken.decimals)
             }
-        } else { error = result.error ?? "Swap failed"; pinError = false }
+        } else { error = friendlySwapError(result.error); pinError = false }
+    }
+
+    /// Turns a raw node/broadcast error into plain language. A rejection like "insufficient funds for
+    /// gas * price + value" reads like an app bug to people — name the real cause instead.
+    private func friendlySwapError(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "Swap failed" }
+        let l = raw.lowercased()
+        if l.contains("insufficient funds") || l.contains("exceeds balance") {
+            let sym = wallet.activeChain.nativeSymbol
+            return "Not enough funds to cover the swap plus the network fee (gas). Lower the amount, or add a little \(sym) for gas, and try again."
+        }
+        return raw
     }
 
     // MARK: - Number formatting

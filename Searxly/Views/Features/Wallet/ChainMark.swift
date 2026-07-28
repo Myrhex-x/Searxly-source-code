@@ -5,7 +5,7 @@
 //  The wallet's per-network identity badge — a small monochrome mark so each chain is recognizable
 //  at a glance (in the switcher, network sheet, and as a corner badge on token icons). White monogram
 //  on a dark disc; brand rule is monochrome, so there are deliberately no per-chain colors. Drawn the
-//  same spirit as the ETH/SEARXLY marks in TokenIconView. Isolated here so the glyph set is easy to
+//  same spirit as the ETH mark in TokenIconView. Isolated here so the glyph set is easy to
 //  upgrade to richer brand artwork later without touching call sites.
 //
 

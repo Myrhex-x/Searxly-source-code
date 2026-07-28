@@ -101,7 +101,6 @@ struct WalletSettingsSection: View {
                 }
                 featuresSection
                 if isSetup { backupSection }
-                tokenSection
                 if isSetup { dangerSection }
             }
         }
@@ -168,7 +167,7 @@ struct WalletSettingsSection: View {
                             .foregroundStyle(SettingsTheme.textPrimary)
                         SettingsBadge(text: "Beta", tint: SettingsTheme.warning)
                     }
-                    Text("Multi-chain · \(WalletConfig.searxlyTokenSymbol) on Base")
+                    Text("Multi-chain · self-custody")
                         .font(.system(size: 11.5))
                         .foregroundStyle(SettingsTheme.textSecondary)
                 }
@@ -176,6 +175,13 @@ struct WalletSettingsSection: View {
             Text("A private crypto wallet built into Searxly. Your keys are encrypted and never leave this Mac — no account, no company can touch your funds but you.")
                 .font(.system(size: 12))
                 .foregroundStyle(SettingsTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            // The flip side of self-custody, stated where the wallet introduces itself rather than
+            // only in Settings ▸ Legal: nobody can undo a mistake for you, and Searxly is not a
+            // broker, exchange, or adviser. Nothing here is financial advice.
+            Text("Because it's self-custody, transactions are irreversible and lost recovery phrases can't be restored — by us or anyone. Searxly isn't a broker, exchange, or financial adviser, and nothing in the wallet is financial advice. See Settings ▸ Legal.")
+                .font(.system(size: 11))
+                .foregroundStyle(SettingsTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -207,7 +213,7 @@ struct WalletSettingsSection: View {
         SettingsSection(title: "Networks",
                         footer: "The same address works on every network — switch from the network button in the wallet.") {
             SettingsLabeledField(title: "Supported networks",
-                                 description: "\(WalletChain.all.count) EVM networks. $SEARXLY lives on Base.") {
+                                 description: "\(WalletChain.all.count) EVM networks.") {
                 VStack(spacing: 9) {
                     ForEach(WalletChain.all) { chain in
                         HStack(spacing: 9) {
@@ -404,7 +410,7 @@ struct WalletSettingsSection: View {
                               description: "Resolves .eth names via Ethereum mainnet.",
                               isOn: $ens)
             SettingsToggleRow(title: "Swaps",
-                              description: "In-wallet swaps — native Uniswap v4 for $SEARXLY, the 0x aggregator for other pairs.",
+                              description: "In-wallet swaps through the 0x aggregator, using your own API key.",
                               isOn: $swaps)
             SettingsToggleRow(title: "Buy crypto",
                               description: "Card on-ramp widget (Onramper).",
@@ -421,9 +427,7 @@ struct WalletSettingsSection: View {
                 }
             }
             if swaps {
-                SettingsLabeledField(title: SearxlyGateway.isConfigured
-                                     ? "0x API key (optional — Searxly provides one)"
-                                     : "0x API key (required for 0x swaps)") {
+                SettingsLabeledField(title: "0x API key (required — your own key, used directly)") {
                     SecureField("Paste key…", text: $zeroExKey)
                         .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
                 }
@@ -457,22 +461,6 @@ struct WalletSettingsSection: View {
             SettingsProminentAction(title: "Show recovery phrase or save a backup", systemImage: "eye") {
                 showRevealPhrase = true
             }
-        }
-    }
-
-    // MARK: - $SEARXLY token
-
-    private var tokenSection: some View {
-        SettingsSection(title: "$SEARXLY Token") {
-            infoRow("Contract", value: abbreviated(WalletConfig.searxlyTokenAddress))
-            infoRow("Network", value: WalletConfig.baseChainName)
-            infoRow("Decimals", value: "\(WalletConfig.searxlyTokenDecimals)")
-            SettingsActionChip(title: "View on Basescan", systemImage: "arrow.up.right.square") {
-                if let url = URL(string: "\(WalletConfig.explorerBaseURL)/token/\(WalletConfig.searxlyTokenAddress)") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
-            .fixedSize()
         }
     }
 

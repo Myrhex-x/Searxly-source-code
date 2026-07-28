@@ -56,14 +56,6 @@ struct WalletToken: Identifiable, Equatable, Codable {
                     chainId: chain.id)
     }
 
-    static var searxly: WalletToken {
-        WalletToken(id: "SEARXLY", symbol: WalletConfig.searxlyTokenSymbol,
-                    name: WalletConfig.searxlyTokenName,
-                    contractAddress: WalletConfig.searxlyTokenAddress,
-                    decimals: WalletConfig.searxlyTokenDecimals, isCustom: false,
-                    chainId: WalletChain.base.id)
-    }
-
     /// Native Circle USDC on Base (6 decimals). Used for in-app payments (e.g. Managed-VPN passes).
     static var usdc: WalletToken {
         WalletToken(id: ManagedVPNConfig.usdcContract, symbol: ManagedVPNConfig.usdcSymbol,
@@ -107,7 +99,7 @@ struct WalletToken: Identifiable, Equatable, Codable {
 
     /// Canonical Base-mainnet ERC-20s tracked out of the box (in display order) so funds received
     /// without a manual "Add Token" still show up. Balances are read over the user's own RPC — the
-    /// same surface as ETH/SEARXLY — so this adds no explorer/discovery network call. Each row stays
+    /// same surface as ETH — so this adds no explorer/discovery network call. Each row stays
     /// hidden until it holds a balance (see `WalletManager.visibleTokens`).
     static var baseBuiltInERC20s: [WalletToken] { [weth, usdc, usdt, dai, cbBTC] }
 
@@ -116,7 +108,6 @@ struct WalletToken: Identifiable, Equatable, Codable {
     var iconColor: Color {
         switch symbol.uppercased() {
         case "ETH", "WETH": return Color(red: 0.380, green: 0.443, blue: 0.890)   // Ethereum periwinkle
-        case "SEARXLY":     return Color(white: 0.20)   // monochrome — Searxly is black & white
         case "USDC", "USDBC": return Color(red: 0.153, green: 0.459, blue: 0.792) // USDC brand blue #2775CA
         case "USDT":        return Color(red: 0.149, green: 0.682, blue: 0.557)   // Tether teal #26A17B
         case "DAI":         return Color(red: 0.961, green: 0.694, blue: 0.184)   // DAI gold #F5AC2F

@@ -27,11 +27,6 @@ enum SearxlyGateway {
     nonisolated static var isConfigured: Bool { !appToken.isEmpty }
 
     nonisolated static var aiBaseURL: URL { URL(string: "\(host)/v1")! }
-    nonisolated static var zeroExBase: String { "\(host)/wallet/0x" }
     nonisolated static var etherscanBase: String { "\(host)/wallet/etherscan" }
     nonisolated static var bearer: String { "Bearer \(appToken)" }
-
-    // Native local-pack (OpenStreetMap) place data. The gateway geocodes + runs Overpass, so OSM only ever
-    // sees the gateway — never the user. The map picture is drawn natively (Apple MapKit). See gateway.mjs.
-    nonisolated static var placesBase: String { "\(host)/places" }
 }

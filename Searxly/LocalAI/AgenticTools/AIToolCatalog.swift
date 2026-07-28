@@ -84,7 +84,7 @@ enum AIToolCatalog {
                    example: "e.g. “what is Tesla?” as a quick fact card",
                    tier: .searxly, availableOnDevice: false),
         AIToolInfo(id: "crypto_price", icon: "chart.line.uptrend.xyaxis", name: "Crypto prices",
-                   summary: "Live prices your wallet tracks (ETH, $SEARXLY, your tokens) and simple conversions. Read-only — never moves funds.",
+                   summary: "Live prices your wallet tracks (ETH and your tokens) and simple conversions. Read-only — never moves funds.",
                    example: "e.g. “what's ETH at?” or “0.5 ETH in USDC”",
                    tier: .searxly, availableOnDevice: false),
         AIToolInfo(id: "wallet_balance", icon: "wallet.pass", name: "Wallet balance",
