@@ -108,3 +108,23 @@ Trademark-Prep.md
 
 # ── iOS port of the private ad-block engine (same policy as Searxly/AdBlocker/) ──
 SearxlyiOS/Shields/AdBlock/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Searxly Maximum — the paid edition. Its source lives in its own repository.
+#
+# Maximum is not a separate codebase: it's this source built as a second target
+# with MAXIMUM_EDITION defined, so `Edition.isMaximum` branches remain in shared
+# files here. What's excluded is everything that only Maximum has — the licence
+# system and the edition's own UI and hardening.
+# ─────────────────────────────────────────────────────────────────────────────
+Searxly/App/Licensing.swift
+Searxly/App/MachineID.swift
+Searxly/Views/Features/MaximumActivationView.swift
+Searxly/Views/Features/Settings/MaximumStatusBoard.swift
+Searxly/Views/Components/MaximumEditionBadge.swift
+Searxly/Privacy/MaximumSecurityLevel.swift
+Searxly/Privacy/MAXIMUM-HARDENING.md
+SearxlyTests/LicensingTests.swift
+Searxly/SearxlyMaximum.entitlements
+Searxly/Assets.xcassets/AppIconMaximum.appiconset/
+Searxly.xcodeproj/xcshareddata/xcschemes/SearxlyMaximum.xcscheme
