@@ -87,6 +87,76 @@ extension WebViewRepresentable.Coordinator {
             decisionHandler(.download, preferences)
             return
         }
+        // Chrome Web Store compatibility (extensions program): Google's server-side browser sniff shows
+        // "switch to Chrome" banners and serves a dead install button when it sees our Safari UA. On the
+        // STORE HOSTS ONLY — and only on standard tabs of a 15.4+ run, where installing is actually
+        // possible — present Chrome's UA instead. Cancel-and-reload so the switched UA applies to this
+        // very navigation; the reload re-enters this whole policy chain, so every check above re-runs.
+        // Transitions are strictly ours: Chrome UA on entering the store, and back to the default ONLY
+        // when the current value is our Chrome UA — the YouTube Safari-UA fix is never touched.
+        if #available(macOS 15.4, *), ExtensionFeatures.programEnabled,
+           navigationAction.targetFrame?.isMainFrame ?? true,
+           webView.configuration.websiteDataStore.isPersistent,
+           webView.configuration.websiteDataStore.proxyConfigurations.isEmpty {
+            if ChromeWebStore.isStoreURL(navigationAction.request.url) {
+                if webView.customUserAgent != ChromeWebStore.chromeUserAgent {
+                    webView.customUserAgent = ChromeWebStore.chromeUserAgent
+                    decisionHandler(.cancel, preferences)
+                    webView.load(navigationAction.request)
+                    return
+                }
+            } else if webView.customUserAgent == ChromeWebStore.chromeUserAgent {
+                webView.customUserAgent = nil
+                decisionHandler(.cancel, preferences)
+                webView.load(navigationAction.request)
+                return
+            }
+        }
+        // Phishing/malware safety net: warn before a known-malicious main-frame page loads. The
+        // interstitial's "Continue anyway" re-navigates with a proceed marker, which we detect here
+        // and honor (once, per host, per tab). Runs before the shields so a blocked host is never
+        // even request-processed. Check runs entirely on-device — no URL leaves the Mac.
+        if navigationAction.targetFrame?.isMainFrame ?? true,
+           let url = navigationAction.request.url,
+           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            let host = url.host?.lowercased() ?? ""
+            if url.fragment?.hasSuffix(PhishingGuard.proceedFragment) ?? false {
+                // User consented past the warning — remember, strip the marker, load the clean URL.
+                phishingAllowedHosts.insert(host)
+                var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                comps?.fragment = nil
+                decisionHandler(.cancel, preferences)
+                if let clean = comps?.url { webView.load(URLRequest(url: clean)) }
+                return
+            }
+            if PhishingGuard.isBlocked(url), !phishingAllowedHosts.contains(host) {
+                NetworkEgressLedger.record(host: host, lane: .blocked, kind: "phishing")
+                decisionHandler(.cancel, preferences)
+                webView.loadHTMLString(PhishingGuard.interstitialHTML(for: url, host: host), baseURL: url)
+                return
+            }
+        }
+        // Request-level shields (NavigationGuard): strip tracking params, upgrade http→https, and add
+        // the Sec-GPC header — on main-frame GET navigations only. If any of these rewrite the request,
+        // cancel this one and re-issue the clean request (which re-enters this delegate and passes
+        // through, since there's nothing left to rewrite). POSTs are never rewritten.
+        if navigationAction.targetFrame?.isMainFrame ?? true,
+           let rewritten = rewrittenRequestForShields(navigationAction) {
+            decisionHandler(.cancel, preferences)
+            webView.load(rewritten)
+            return
+        }
+        // Searxly Maximum first-party circuit keying: when the main frame moves to a DIFFERENT
+        // first-party site, rotate this tab's SOCKS credential before the load opens a connection, so
+        // streams to a shared third party (CDN, analytics host) never ride one circuit across a
+        // first-party change. Strictly main-frame-only: a nil targetFrame is a new-window request that
+        // resolves into its own tab (with its own credential), not a navigation of this one.
+        if Edition.isMaximum,
+           navigationAction.targetFrame?.isMainFrame == true,
+           let url = navigationAction.request.url,
+           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            TorCircuitIsolation.rotateIfNeeded(for: webView, mainFrameURL: url)
+        }
         // Network Ledger: record how this main-frame page load leaves the device (Tor / VPN / direct).
         // Sub-resources ride the same per-tab lane, so the main-frame entry represents the whole page.
         if navigationAction.targetFrame?.isMainFrame ?? true,
@@ -95,6 +165,45 @@ extension WebViewRepresentable.Coordinator {
             NetworkEgressLedger.recordWebNavigation(url: url, isOnionTab: isOnionTab)
         }
         decisionHandler(.allow, preferences)
+    }
+
+    /// Request-level shields for a main-frame navigation. Returns a rewritten request to re-issue when
+    /// any shield changed the URL or needs the Sec-GPC header, or nil when the request should proceed
+    /// unchanged. Only ever rewrites main-frame GET requests to http(s); POSTs pass through untouched
+    /// so form submissions are never re-issued (which would drop the body / double-submit).
+    func rewrittenRequestForShields(_ action: WKNavigationAction) -> URLRequest? {
+        guard let original = action.request.url,
+              let scheme = original.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              (action.request.httpMethod ?? "GET").uppercased() == "GET" else { return nil }
+
+        let settings = PrivacyShieldSettings.shared
+        var url = original
+
+        // 1. Strip tracking parameters.
+        if settings.stripTrackingParams, let cleaned = NavigationGuard.strippingTrackingParams(from: url) {
+            url = cleaned
+        }
+        // 2. HTTPS-Only upgrade.
+        if settings.httpsOnly, NavigationGuard.shouldUpgradeToHTTPS(url),
+           let upgraded = NavigationGuard.upgradedToHTTPS(url) {
+            url = upgraded
+        }
+
+        let urlChanged = url.absoluteString != original.absoluteString
+
+        // 3. GPC header — add once per URL (loop-guarded), on the possibly-rewritten target.
+        let hasGPC = action.request.value(forHTTPHeaderField: "Sec-GPC") == "1"
+        let wantsGPC = settings.gpcSignal && !hasGPC && !gpcHandledURLs.contains(url.absoluteString)
+
+        guard urlChanged || wantsGPC else { return nil }
+
+        var request = URLRequest(url: url)
+        if settings.gpcSignal {
+            request.setValue("1", forHTTPHeaderField: "Sec-GPC")
+            gpcHandledURLs.insert(url.absoluteString)
+            if gpcHandledURLs.count > 400 { gpcHandledURLs.removeAll() }   // bound the loop-guard set
+        }
+        return request
     }
 
     /// Searxly Maximum: confirm before handing a link off to another app (mailto:, magnet:, tel:, a

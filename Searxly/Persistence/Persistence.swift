@@ -120,11 +120,6 @@ struct AppData: Codable {
     /// off until the user explicitly enables it in Settings → Search.
     var knowledgePanelEnabled: Bool = false
 
-    /// Top-of-results SERP "local pack" for place queries (OpenStreetMap places + Apple's native map).
-    /// Default-OFF and opt-in: when a place query is detected the SERP offers to enable it with a privacy
-    /// note (place data is private via the gateway, but the map is drawn by Apple). Blocked in Maximum Privacy.
-    var localPackEnabled: Bool = false
-
     // Custom decoder for backward compatibility.
     // Older AppData.json files won't have the newer keys (historyEnabled, defaultNewTabsToPrivate, tabSnapshots).
     // We use decodeIfPresent + defaults so upgrades don't spam errors and fall back to defaults.
@@ -181,7 +176,7 @@ struct AppData: Codable {
         passwordVaultCopyGeneratedToClipboard = (try? container.decodeIfPresent(Bool.self, forKey: .passwordVaultCopyGeneratedToClipboard)) ?? true
 
         knowledgePanelEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .knowledgePanelEnabled)) ?? false
-        localPackEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .localPackEnabled)) ?? false
+        // localPackEnabled was removed; older AppData may still carry the key — ignore on decode.
 
         // App-wide privacy posture. Older files (pre-feature) lack these keys and fall back to the
         // privacy-neutral defaults, so upgrading users are untouched; users who chose Maximum now have
@@ -234,8 +229,7 @@ struct AppData: Codable {
         passwordVaultOfferToSaveEnabled: Bool = true,
         passwordVaultSuggestPasswordsEnabled: Bool = true,
         passwordVaultCopyGeneratedToClipboard: Bool = true,
-        knowledgePanelEnabled: Bool = false,
-        localPackEnabled: Bool = false
+        knowledgePanelEnabled: Bool = false
     ) {
         self.searxInstances = searxInstances
         self.history = history
@@ -275,7 +269,6 @@ struct AppData: Codable {
         self.passwordVaultSuggestPasswordsEnabled = passwordVaultSuggestPasswordsEnabled
         self.passwordVaultCopyGeneratedToClipboard = passwordVaultCopyGeneratedToClipboard
         self.knowledgePanelEnabled = knowledgePanelEnabled
-        self.localPackEnabled = localPackEnabled
     }
 
     init() {}   // Convenience empty init for defaults
@@ -327,7 +320,6 @@ struct AppData: Codable {
         case passwordVaultSuggestPasswordsEnabled
         case passwordVaultCopyGeneratedToClipboard
         case knowledgePanelEnabled
-        case localPackEnabled
 
         // App-wide privacy posture (Normal / Encrypted / Maximum) + which network Maximum enforces.
         // These MUST be listed here: with an explicit CodingKeys enum, the synthesized encoder only
@@ -510,16 +502,6 @@ enum Persistence {
 
     static func knowledgePanelEnabled() -> Bool {
         load().knowledgePanelEnabled
-    }
-
-    static func setLocalPackEnabled(_ enabled: Bool) {
-        var current = load()
-        current.localPackEnabled = enabled
-        save(current)
-    }
-
-    static func localPackEnabled() -> Bool {
-        load().localPackEnabled
     }
 
     /// Updates the default tab privacy preference atomically.

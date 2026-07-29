@@ -16,6 +16,14 @@ struct DownloadsSheetView: View {
                 .font(.title2.bold())
                 .padding(.bottom)
 
+            if AmnesiaMode.isActive {
+                Text("Amnesic session: downloads vanish when you quit. Keep moves a file to your Downloads folder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 4)
+            }
+
             if DownloadsManager.shared.downloads.isEmpty {
                 Text("No downloads yet")
                     .foregroundStyle(.secondary)
@@ -32,6 +40,12 @@ struct DownloadsSheetView: View {
                         }
                         Spacer()
                         if item.isComplete, let url = item.destinationURL {
+                            if item.isSessionOnly {
+                                Button("Keep") {
+                                    _ = DownloadsManager.shared.keepPermanently(id: item.id)
+                                }
+                                .help("Move to your Downloads folder so it survives this amnesic session")
+                            }
                             Button("Reveal in Finder") {
                                 NSWorkspace.shared.activateFileViewerSelecting([url])
                             }

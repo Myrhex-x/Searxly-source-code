@@ -19,8 +19,23 @@ import AppKit
 
 @MainActor
 enum BrowserActions {
+    #if DEBUG
+    /// Test-only injection point so integration tests can drive the browser-action tools against a
+    /// real, offscreen WKWebView without standing up the whole BrowserState. Never set in production.
+    static var testWebViewOverride: WKWebView?
+    #endif
+
     static func activeWebView() -> WKWebView? {
-        AgenticServerManager.shared.browserState?.activeWebView
+        #if DEBUG
+        if let override = testWebViewOverride { return override }
+        #endif
+        let browserState = AgenticServerManager.shared.browserState
+        // When isolation is on, act in a dedicated ephemeral (logged-out) tab instead of the user's real
+        // active tab, so the AI can't act as the authenticated user or touch their sessions.
+        if AgenticServerManager.shared.agentIsolatedContext {
+            return browserState?.agentWebView()
+        }
+        return browserState?.activeWebView
     }
 
     /// Evaluate JS in the active tab; nil on error / no tab.
@@ -134,7 +149,9 @@ enum BrowserActions {
 @MainActor
 struct PageSnapshotTool: AgenticTool {
     let id = "page_snapshot"
+    let title = "Page snapshot"
     let requiresBrowserControl = true
+    let isReadOnly = true
     let summary = "Capture a structured snapshot of the CURRENT browser tab: its URL/title and the visible interactive elements (links, buttons, inputs), each tagged with a [ref] id. Call this first, then use the refs with click/type. Re-snapshot after the page changes — refs are reassigned each time."
     let inputSchema: [String: Any] = ["type": "object", "properties": [:]]
 
@@ -152,6 +169,7 @@ struct PageSnapshotTool: AgenticTool {
 @MainActor
 struct ClickTool: AgenticTool {
     let id = "click"
+    let title = "Click"
     let requiresBrowserControl = true
     let summary = "Click an element in the current tab by its [ref] from page_snapshot."
     let inputSchema: [String: Any] = [
@@ -163,27 +181,60 @@ struct ClickTool: AgenticTool {
     func run(_ arguments: [String: Any]) async -> AgenticToolOutcome {
         guard let ref = BrowserActions.intArg(arguments["ref"]) else { return .failed("Missing integer 'ref'.") }
         let before = BrowserActions.currentURL()
+        let needConfirm = AgenticServerManager.shared.confirmActionsEnabled
+
         // Dispatch a full, realistic event sequence (not a bare .click()) so JS-driven controls react,
-        // and capture the element's label + link target so we can report exactly what was clicked.
-        let js = """
-        (function(){
-          var e=document.querySelector('[data-searxly-ref="\(ref)"]');
-          if(!e) return JSON.stringify({ok:false});
-          e.scrollIntoView({block:'center'});
-          var lnk = (e.tagName==='A' && e.href) ? e : (e.closest ? e.closest('a[href]') : null);
-          var href = lnk ? lnk.href : '';
-          var label = (e.innerText||e.textContent||e.getAttribute('aria-label')||'').replace(/\\s+/g,' ').trim().slice(0,80);
-          try { ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t){ e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})); }); }
-          catch(err) { try { e.click(); } catch(e2) {} }
-          return JSON.stringify({ok:true, href:href, label:label});
-        })();
-        """
-        guard let raw = await BrowserActions.eval(js) as? String,
-              let data = raw.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (obj["ok"] as? Bool) == true else {
+        // and capture the element's label + link target so we can report exactly what was clicked. When
+        // the target is a genuine form-submit control and confirmation is on, `force`=false returns
+        // {willSubmit:true} WITHOUT clicking, so we can pause for the user's approval first.
+        func clickJS(force: Bool) -> String {
+            """
+            (function(){
+              var e=document.querySelector('[data-searxly-ref="\(ref)"]');
+              if(!e) return JSON.stringify({ok:false});
+              var tag=e.tagName, ty=((e.getAttribute('type')||e.type||'')+'').toLowerCase();
+              var willSubmit=(tag==='INPUT'&&(ty==='submit'||ty==='image'))||(tag==='BUTTON'&&(ty===''||ty==='submit')&&!!e.form);
+              var label=(e.innerText||e.textContent||e.getAttribute('aria-label')||e.value||'').replace(/\\s+/g,' ').trim().slice(0,80);
+              if(willSubmit && \(needConfirm ? "true" : "false") && \(!force ? "true" : "false")) return JSON.stringify({ok:false, willSubmit:true, label:label});
+              e.scrollIntoView({block:'center'});
+              var lnk = (e.tagName==='A' && e.href) ? e : (e.closest ? e.closest('a[href]') : null);
+              var href = lnk ? lnk.href : '';
+              try { ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t){ e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})); }); }
+              catch(err) { try { e.click(); } catch(e2) {} }
+              return JSON.stringify({ok:true, href:href, label:label});
+            })();
+            """
+        }
+        func parse(_ raw: Any?) -> [String: Any]? {
+            guard let s = raw as? String, let d = s.data(using: .utf8),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+            return o
+        }
+
+        guard let obj = parse(await BrowserActions.eval(clickJS(force: false))) else {
             return .failed("No element with ref \(ref) — run page_snapshot again (refs reset on every snapshot).")
         }
+
+        // Gated form submission: pause for the user's one-tap approval, then click for real.
+        if (obj["ok"] as? Bool) != true {
+            guard (obj["willSubmit"] as? Bool) == true else {
+                return .failed("No element with ref \(ref) — run page_snapshot again (refs reset on every snapshot).")
+            }
+            let label = (obj["label"] as? String) ?? ""
+            let host = BrowserActions.currentURL().flatMap { URL(string: $0)?.host } ?? "this page"
+            let what = label.isEmpty ? "the form" : "\"\(label)\""
+            let approved = await AgenticApproval.shared.confirm(
+                title: "Submit a form?",
+                detail: "The AI wants to submit a form on \(host) by clicking \(what)."
+            )
+            guard approved else { return .failed("The user declined to submit the form. Ask them what they'd like to do instead.") }
+            guard let done = parse(await BrowserActions.eval(clickJS(force: true))), (done["ok"] as? Bool) == true else {
+                return .failed("No element with ref \(ref) — run page_snapshot again (refs reset on every snapshot).")
+            }
+            let nav = await BrowserActions.describeNavigation(from: before)
+            return .ok("Submitted \(what). \(nav)")
+        }
+
         let label = (obj["label"] as? String) ?? ""
         let what = label.isEmpty ? "[\(ref)]" : "[\(ref)] \"\(label)\""
         let nav = await BrowserActions.describeNavigation(from: before)
@@ -196,8 +247,9 @@ struct ClickTool: AgenticTool {
 @MainActor
 struct TypeTool: AgenticTool {
     let id = "type"
+    let title = "Type text"
     let requiresBrowserControl = true
-    let summary = "Type text into an input or textarea in the current tab by its [ref]. Set submit=true to press Enter afterwards (e.g. to run a search)."
+    let summary = "Type text into an input or textarea in the current tab by its [ref]. Set submit=true to press Enter afterwards (e.g. to run a search). Password fields are refused — the user enters their own credentials."
     let inputSchema: [String: Any] = [
         "type": "object",
         "properties": [
@@ -213,16 +265,44 @@ struct TypeTool: AgenticTool {
         guard let text = arguments["text"] as? String else { return .failed("Missing 'text'.") }
         let submit = (arguments["submit"] as? Bool) ?? false
         let value = BrowserActions.jsLiteral(text)
-        let submitJS = submit ? """
+
+        // Submitting is irreversible (it posts the form). Filling is always allowed; when confirmation is
+        // on, the submit pauses for the user's approval. If declined, we still fill but don't submit.
+        var effectiveSubmit = submit
+        var submitDeclined = false
+        if submit && AgenticServerManager.shared.confirmActionsEnabled {
+            let host = BrowserActions.currentURL().flatMap { URL(string: $0)?.host } ?? "this page"
+            let approved = await AgenticApproval.shared.confirm(
+                title: "Submit a form?",
+                detail: "The AI wants to submit a form on \(host)."
+            )
+            effectiveSubmit = approved
+            submitDeclined = !approved
+        }
+
+        let submitJS = effectiveSubmit ? """
         e.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
         e.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
         if(e.form){ if(e.form.requestSubmit){ e.form.requestSubmit(); } else { e.form.submit(); } }
         """ : ""
+        // Refuse credential fields: a confused or injected agent must never type into a password box,
+        // and hidden inputs aren't a legitimate typing target. The check runs in-page before any input.
         let js = """
-        (function(){var e=document.querySelector('[data-searxly-ref="\(ref)"]');if(!e)return 'not_found';e.focus();if(e.isContentEditable){e.textContent=\(value);}else{e.value=\(value);}e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));\(submitJS)return 'ok';})();
+        (function(){var e=document.querySelector('[data-searxly-ref="\(ref)"]');if(!e)return 'not_found';var t=((e.getAttribute('type')||e.type||'')+'').toLowerCase();if(e.tagName==='INPUT'&&(t==='password'||t==='hidden'))return 'blocked_'+t;e.focus();if(e.isContentEditable){e.textContent=\(value);}else{e.value=\(value);}e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));\(submitJS)return 'ok';})();
         """
-        let result = await BrowserActions.eval(js) as? String
-        return result == "ok" ? .ok("Typed into [\(ref)]\(submit ? " and submitted." : ".")") : .failed("No element with ref \(ref) — run page_snapshot again.")
+        switch await BrowserActions.eval(js) as? String {
+        case "ok":
+            if submitDeclined {
+                return .ok("Typed into [\(ref)]. You asked to submit, but the user declined — the field is filled, the form was not submitted.")
+            }
+            return .ok("Typed into [\(ref)]\(effectiveSubmit ? " and submitted." : ".")")
+        case "blocked_password":
+            return .failed("Refused: [\(ref)] is a password field. Searxly won't let the AI type into credential fields — ask the user to enter their password themselves.")
+        case "blocked_hidden":
+            return .failed("Refused: [\(ref)] is a hidden field, not a real typing target.")
+        default:
+            return .failed("No element with ref \(ref) — run page_snapshot again.")
+        }
     }
 }
 
@@ -231,6 +311,7 @@ struct TypeTool: AgenticTool {
 @MainActor
 struct SelectOptionTool: AgenticTool {
     let id = "select_option"
+    let title = "Choose a dropdown option"
     let requiresBrowserControl = true
     let summary = "Choose a value in a <select> dropdown in the current tab by its [ref]."
     let inputSchema: [String: Any] = [
@@ -259,6 +340,7 @@ struct SelectOptionTool: AgenticTool {
 @MainActor
 struct PressKeyTool: AgenticTool {
     let id = "press_key"
+    let title = "Press a key"
     let requiresBrowserControl = true
     let summary = "Press a keyboard key in the current tab (e.g. 'Enter', 'Escape', 'ArrowDown', 'Tab'). Sent to the focused element."
     let inputSchema: [String: Any] = [
@@ -283,6 +365,7 @@ struct PressKeyTool: AgenticTool {
 @MainActor
 struct ScrollTool: AgenticTool {
     let id = "scroll"
+    let title = "Scroll"
     let requiresBrowserControl = true
     let summary = "Scroll the current tab. Pass a direction (down/up/top/bottom), or a [ref] to scroll that element into view."
     let inputSchema: [String: Any] = [
@@ -319,8 +402,9 @@ struct ScrollTool: AgenticTool {
 @MainActor
 struct NavigateTool: AgenticTool {
     let id = "navigate"
+    let title = "Go to a URL"
     let requiresBrowserControl = true
-    let summary = "Navigate the current tab to a URL. Accepts a full URL or a bare domain (https is assumed)."
+    let summary = "Navigate the CURRENT tab to a URL you already know (full URL or bare domain; https is assumed). Use this to follow a link or go to an exact address in place. To open a site in a NEW tab, or when you only know a brand/name and want Searxly to resolve the official site, use open_website instead."
     let inputSchema: [String: Any] = [
         "type": "object",
         "properties": ["url": ["type": "string", "description": "The URL (or domain) to open in the current tab."]],
@@ -346,6 +430,7 @@ struct NavigateTool: AgenticTool {
 @MainActor
 struct GoBackTool: AgenticTool {
     let id = "go_back"
+    let title = "Go back"
     let requiresBrowserControl = true
     let summary = "Go back one page in the current tab's history."
     let inputSchema: [String: Any] = ["type": "object", "properties": [:]]
@@ -363,6 +448,7 @@ struct GoBackTool: AgenticTool {
 @MainActor
 struct ReloadTool: AgenticTool {
     let id = "reload"
+    let title = "Reload the page"
     let requiresBrowserControl = true
     let summary = "Reload the current tab."
     let inputSchema: [String: Any] = ["type": "object", "properties": [:]]
@@ -381,25 +467,41 @@ struct ReloadTool: AgenticTool {
 @MainActor
 struct WaitForTool: AgenticTool {
     let id = "wait_for"
+    let title = "Wait for content"
     let requiresBrowserControl = true
-    let summary = "Wait until some text appears on the current page (up to ~10s). Useful after a click/navigation that loads content."
+    let isReadOnly = true
+    let summary = "Wait (up to ~10s) until either some text appears on the current page or a CSS selector matches a visible element. Useful after a click/navigation that loads content."
     let inputSchema: [String: Any] = [
         "type": "object",
-        "properties": ["text": ["type": "string", "description": "Text to wait for on the page."]],
-        "required": ["text"]
+        "properties": [
+            "text": ["type": "string", "description": "Text to wait for on the page."],
+            "selector": ["type": "string", "description": "CSS selector to wait for (element present and visible). Use instead of 'text' when you know the element."]
+        ]
     ]
 
     func run(_ arguments: [String: Any]) async -> AgenticToolOutcome {
-        guard let text = arguments["text"] as? String, !text.isEmpty else { return .failed("Missing 'text'.") }
-        let needle = BrowserActions.jsLiteral(text)
-        let js = "(function(){return !!(document.body && document.body.innerText && document.body.innerText.indexOf(\(needle)) >= 0);})();"
+        let text = (arguments["text"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let selector = (arguments["selector"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        guard text != nil || selector != nil else { return .failed("Provide 'text' or 'selector' to wait for.") }
+
+        let js: String
+        let label: String
+        if let selector {
+            let sel = BrowserActions.jsLiteral(selector)
+            js = "(function(){try{var e=document.querySelector(\(sel));if(!e)return false;var r=e.getBoundingClientRect();var s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';}catch(err){return false;}})();"
+            label = "element \(selector)"
+        } else {
+            let needle = BrowserActions.jsLiteral(text!)
+            js = "(function(){return !!(document.body && document.body.innerText && document.body.innerText.indexOf(\(needle)) >= 0);})();"
+            label = "\"\(text!)\""
+        }
         for _ in 0..<33 {   // ~10s at 0.3s intervals
             if BrowserActions.boolResult(await BrowserActions.eval(js)) {
-                return .ok("Found \"\(text)\" on the page.")
+                return .ok("Found \(label) on the page.")
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
-        return .failed("Timed out waiting for \"\(text)\".")
+        return .failed("Timed out waiting for \(label).")
     }
 }
 
@@ -408,7 +510,9 @@ struct WaitForTool: AgenticTool {
 @MainActor
 struct ScreenshotTool: AgenticTool {
     let id = "screenshot"
+    let title = "Screenshot"
     let requiresBrowserControl = true
+    let isReadOnly = true
     let summary = "Capture a PNG screenshot of the current tab's visible area. Use only if you need to see the page visually — page_snapshot is usually better and cheaper."
     let inputSchema: [String: Any] = ["type": "object", "properties": [:]]
 

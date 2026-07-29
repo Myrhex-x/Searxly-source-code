@@ -133,9 +133,17 @@ enum PageIntelligence {
 
     /// Page text budget: the on-device model has a small context window (~4k tokens), so the
     /// page's visible text is clamped — enough for articles, honest about very long pages.
-    private static let maxChars = 9_000
+    static let maxChars = 9_000
 
     static func pageText(from webView: WKWebView) async -> String? {
+        // Prefer the reader extraction: clean article prose without nav/footer/cookie noise —
+        // every char of the small context window goes to substance. Non-article pages (dashboards,
+        // stores, forums) fall back to raw innerText so they can still be summarized.
+        if let article = await ReaderExtractor.extract(from: webView) {
+            let text = article.blocks.map(\.text).joined(separator: "\n\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.count > 200 { return String(text.prefix(maxChars)) }
+        }
         let js = "document.body ? document.body.innerText : ''"
         guard let raw = try? await webView.evaluateJavaScript(js) as? String else { return nil }
         let text = raw.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
@@ -162,10 +170,13 @@ enum PageIntelligence {
             // late output via its own task instead.
             Task {
                 do {
+                    let uiLang = AppLocale.shared.languageCode
+                    let uiName = AppLocale.shared.languageNameForModel
                     let session = LanguageModelSession(instructions: """
                     You summarize web pages. Reply with a tight summary of the page's substance: \
                     2–4 short paragraphs or up to 6 bullet points, no preamble, no meta-commentary. \
-                    Match the language of the page text.
+                    Prefer the language of the page text when it is clear; if the page mixes languages \
+                    or is mostly non-prose, write the summary in \(uiName) (language code: \(uiLang)).
                     """)
                     for try await partial in session.streamResponse(to: prompt) {
                         continuation.yield(partial.content)

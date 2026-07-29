@@ -97,7 +97,14 @@ nonisolated struct RampartTokenizer {
             let searchRange = NSRange(location: cursor, length: foldedNS.length - cursor)
             let at = isContinuation ? cursor
                                     : foldedNS.range(of: piece, options: [], range: searchRange).location
-            if at == NSNotFound || at + pieceNS.length > foldedNS.length {
+            // Guard NSNotFound (== Int.max) BEFORE any arithmetic on `at`, or `at + length` overflows
+            // and traps (SIGTRAP). Conditions short-circuit left-to-right, so the length arithmetic and
+            // array bounds are only checked for a real index. A mislocated token becomes unlocatable
+            // ((0,0)) — which the pipeline already tolerates — instead of crashing mid-redaction.
+            guard at != NSNotFound, at >= 0,
+                  at + pieceNS.length <= foldedNS.length,
+                  at < folded.rawStart.count,
+                  at + pieceNS.length - 1 < folded.rawEnd.count else {
                 offsets.append((0, 0))
                 continue
             }
@@ -146,12 +153,18 @@ nonisolated struct RampartTokenizer {
             let sourceLen = source.value > 0xFFFF ? 2 : 1   // source UTF-16 length
             let folded = String(source).lowercased().decomposedStringWithCompatibilityMapping
                 .unicodeScalars.filter { !$0.properties.isDiacritic && !isCombiningMark($0) }
-            // Folded letters/digits/punct are BMP (one UTF-16 unit each), so one offset
-            // entry per folded scalar stays aligned with NSString UTF-16 indexing.
+            // Most folded letters/digits/punct are BMP (one UTF-16 unit), but a folded scalar can be
+            // non-BMP (an emoji or astral CJK that survives folding = two UTF-16 units). `rawStart`/
+            // `rawEnd` are indexed later by a UTF-16 offset into the folded NSString, so we add ONE
+            // entry per folded UTF-16 code unit — not per scalar — or the arrays fall short of
+            // `foldedNS.length` and offset lookups index out of range (crash on emoji-bearing input).
             for scalar in folded {
                 scalars.append(scalar)
-                rawStart.append(i)
-                rawEnd.append(i + sourceLen)
+                let foldedLen = scalar.value > 0xFFFF ? 2 : 1
+                for _ in 0..<foldedLen {
+                    rawStart.append(i)
+                    rawEnd.append(i + sourceLen)
+                }
             }
             i += sourceLen
         }

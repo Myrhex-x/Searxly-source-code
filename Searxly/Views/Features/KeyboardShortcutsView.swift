@@ -35,15 +35,15 @@ struct KeyboardShortcutsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     section("Tabs & Navigation") {
-                        row("⌘ T",        "New Tab")
-                        row("⌘ ⇧ T",     "New Private Tab")
+                        row("⌘ T",        "New Tab (address bar ready to type)")
+                        row("⌘ ⇧ T",     "New Private Tab (address bar ready to type)")
                         row("⌘ ⇧ Z",     "Reopen Last Closed Tab")
                         row("⌘ ⇧ M",     "Mute / Unmute Tab")
                         row("⌘ W",       "Close Tab")
                         row("⌃ ⇥",       "Next Tab")
                         row("⌃ ⇧ ⇥",    "Previous Tab")
                         row("⌘ 1 – 9",   "Jump to Tab by Position")
-                        row("⌘ S",       "Toggle Sidebar")
+                        row("⌘ S",       "Toggle Sidebar (auto-hide: pin open / peeker; hover also expands)")
                         row("⌘ L",       "Focus Address Bar")
                         row("⌘ R",       "Reload Page")
                         row("⌘ .",       "Stop Loading")

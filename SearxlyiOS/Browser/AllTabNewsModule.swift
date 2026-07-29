@@ -81,7 +81,7 @@ struct AllTabNewsModule: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 3) {
                     Text(L("More news"))
-                        .scaledFont(size: 12.5)
+                        .scaledFont(size: 12)
                     Image(systemName: "chevron.right")
                         .scaledFont(size: 10, weight: .semibold)
                 }

@@ -392,13 +392,20 @@ struct OnboardingEncryptionDemo: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private struct Item { let icon: String; let label: String; let value: String }
-    private let items = [
-        Item(icon: "key.fill", label: "Passwords", value: "github · 14 saved"),
-        Item(icon: "clock", label: "History", value: "1,204 entries"),
-        Item(icon: "bookmark.fill", label: "Bookmarks", value: "37 sites"),
-        Item(icon: "wallet.pass.fill", label: "Wallet keys", value: "seed phrase"),
-        Item(icon: "magnifyingglass", label: "Search activity", value: "this session")
-    ]
+    /// Edition-aware demo rows: password vault is Maximum-only; wallet is base-only.
+    private var items: [Item] {
+        var rows: [Item] = []
+        if Edition.isMaximum {
+            rows.append(Item(icon: "key.fill", label: "Passwords", value: "github · 14 saved"))
+        }
+        rows.append(Item(icon: "clock", label: "History", value: "1,204 entries"))
+        rows.append(Item(icon: "bookmark.fill", label: "Bookmarks", value: "37 sites"))
+        if !Edition.isMaximum {
+            rows.append(Item(icon: "wallet.pass.fill", label: "Wallet keys", value: "seed phrase"))
+        }
+        rows.append(Item(icon: "magnifyingglass", label: "Search activity", value: "this session"))
+        return rows
+    }
 
     private let cycle: Double = 8.0
 
@@ -673,13 +680,15 @@ struct OnboardingVPNDemo: View {
                 toggle(on: connected)
             }
 
-            // Server — Searxly's own exit node (matches the live VPN pill).
+            // Server — Searxly's own exit node (matches the live VPN pill). The address shown is a
+            // documentation-range placeholder (RFC 5737), like the public IP below it: this is an
+            // illustration of the connected state, not a live readout, so it must not name the real node.
             HStack(spacing: 11) {
                 Circle().fill(AdaptiveChrome.fill(colorScheme, dark: 0.10)).frame(width: 34, height: 34)
                     .overlay(Image(systemName: "bolt.shield.fill").font(.system(size: 16)).foregroundStyle(.primary))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Searxly node").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.primary)
-                    Text("199.217.99.103 · encrypted").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.tertiary)
+                    Text("198.51.100.17 · encrypted").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.tertiary)
                 }
                 Spacer()
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 16)).foregroundStyle(.primary).opacity(connected)

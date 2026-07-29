@@ -63,26 +63,16 @@ final class BrowserState {
     /// (instead of blindly using .first, which is wrong after fallback or with multiple instances).
     var lastSearchInstanceURL: String? = nil
 
-    /// Right-column SERP knowledge panel (entity / dictionary), resolved via private SearXNG only.
+    /// Right-column SERP knowledge panel (entity / dictionary via Grokipedia).
+    /// Unavailable in Searxly Maximum (external fetch — edition is local-only for entity cards).
     var knowledgePanelState: KnowledgePanelDisplayState = .hidden
-    var knowledgePanelEnabled: Bool = Persistence.knowledgePanelEnabled()
+    var knowledgePanelEnabled: Bool = Edition.isMaximum ? false : Persistence.knowledgePanelEnabled()
     var knowledgePanelTask: Task<Void, Never>?
     /// Result of the in-flight panel resolution, which runs in parallel with the search fetch and may
     /// finish before it. Held here until both the resolution and the search settle, then committed to
     /// `knowledgePanelState` (gated on the search actually returning results). See SearchCoordinator.
     var knowledgePanelResolved: (query: String, content: KnowledgePanelContent?)?
 
-    /// Top-of-results SERP "local pack" for place queries (e.g. "pharmacie perpignan") — OpenStreetMap
-    /// places + a live map, resolved via the Searxly gateway. Mirrors the knowledge-panel lifecycle:
-    /// resolves in parallel with the search and commits once both settle (see SearchCoordinator).
-    var localPackState: LocalPackDisplayState = .hidden
-    var localPackEnabled: Bool = Persistence.localPackEnabled()
-    var localPackTask: Task<Void, Never>?
-    var localPackResolved: (query: String, data: LocalPackData?)?
-    /// The place query detected for the current search (drives the opt-in prompt when the feature is off).
-    var localPackDetected: LocalPackQuery?
-    /// Set when the user dismisses the opt-in prompt — suppresses further prompts for the rest of the session.
-    var localPackPromptDismissed = false
 
     // Transient highlight for AI citations (or future "jump to result" actions).
     // The SearchResultCard observes this (via passed isHighlighted) to give a temporary emphasis
@@ -143,6 +133,9 @@ final class BrowserState {
     var tabs: [BrowserTab] = [BrowserTab()]
     var selectedTabID: UUID? = nil
 
+    /// The dedicated ephemeral tab the agent acts in when "Isolate agent context" is on (see agentWebView()).
+    var agentTabID: UUID? = nil
+
     /// Snapshots of recently closed tabs (most recent first, capped at 15).
     /// Not persisted — session-only, cleared on quit.
     var recentlyClosedSnapshots: [TabSnapshot] = []
@@ -156,6 +149,8 @@ final class BrowserState {
 
     // Canonical sizes (used for toggle + density switch in the view).
     static let railWidth: CGFloat = 72
+    /// Auto-hide peeker with floating chrome — a touch wider so inset padding doesn't crush tiles.
+    static let peekerWidthFloating: CGFloat = 84
     static let defaultExpandedWidth: CGFloat = 260
     static let collapseThreshold: CGFloat = 115
 
@@ -248,7 +243,7 @@ final class BrowserState {
         return tabs.first
     }
 
-    // MARK: - Password Vault (always-on privacy feature)
+    // MARK: - Password Vault (Searxly Maximum exclusive — see PasswordVaultManager.isAvailable)
 
     var isPasswordsVaultSelected: Bool {
         selectedTab?.kind == .passwords
@@ -258,6 +253,23 @@ final class BrowserState {
 
     var activeWebView: WKWebView {
         selectedTab?.webView ?? fallbackWebView   // fallback (legacy single path rarely hit)
+    }
+
+    /// The web view browser-control tools act on when "Isolate agent context" is on: a dedicated
+    /// ephemeral (logged-out) tab, created lazily and kept selected so the user sees the AI work. This
+    /// walls the agent off from the user's authenticated sessions, cookies, and history. Reuses the same
+    /// `.privateEphemeral` tab machinery as a normal private tab.
+    func agentWebView() -> WKWebView? {
+        if let id = agentTabID, let tab = tabs.first(where: { $0.id == id }) {
+            if selectedTabID != id { selectedTabID = id; showingWebContent = true }
+            return tab.webView
+        }
+        let tab = BrowserTab(privacyMode: .privateEphemeral, kind: .web)
+        tabs.append(tab)
+        agentTabID = tab.id
+        selectedTabID = tab.id
+        showingWebContent = true
+        return tab.webView
     }
 
     var currentSearxInstance: SearXNGInstance {
@@ -298,6 +310,15 @@ final class BrowserState {
         return tab.currentURL?.host?.lowercased()
     }
 
+    /// Homograph-safe host for DISPLAY (the site-privacy popover, address-bar chrome): friendly
+    /// Unicode for legitimate international domains, punycode for suspicious mixed-script ones. Kept
+    /// separate from `currentWebDomain` (which is used for password-vault matching and must stay the
+    /// canonical `.host`).
+    var currentWebDisplayHost: String? {
+        guard let tab = selectedTab, tab.kind == .web, let url = tab.currentURL else { return nil }
+        return DomainSafety.displayHost(for: url)
+    }
+
     // Lightweight page context for the password pill (no full autofill).
     // Lets the in-browser pill know when the current page has password fields
     // and whether it looks like a "create new password" / signup flow.
@@ -309,6 +330,9 @@ final class BrowserState {
 
     /// Guards NotificationCenter registration in `loadPersistedData` (also called after backup restore).
     var historyTitleObserverRegistered = false
+
+    /// Guards the `.tabMediaStateChanged` observer registration (same reasoning as above).
+    var mediaStateObserverRegistered = false
 
     // Password vault web-page actions live in TabCoordinator.swift.
 
@@ -391,8 +415,24 @@ final class BrowserState {
         }
     }
 
+    /// Media bridge (`searxlyMedia`) reported a playback-state change. Map the reporting webView back to
+    /// its tab and record whether it holds resumable media (→ hibernation exemption) and its position
+    /// (→ resume-on-reload). Keyed by webView identity so it targets the right tab even if two tabs share
+    /// a URL.
+    @objc func handleTabMediaStateChanged(_ note: Notification) {
+        guard let wv = note.object as? WKWebView else { return }
+        let resumable = (note.userInfo?["resumable"] as? Bool) ?? false
+        let time = (note.userInfo?["time"] as? Double) ?? 0
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let tab = self.tabs.first(where: { $0.webView === wv }) else { return }
+            tab.hasResumableMedia = resumable
+            if time > 1 { tab.lastMediaPositionSeconds = time }
+        }
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self, name: Self.historyTitleSnapshotNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .tabMediaStateChanged, object: nil)
     }
 }
 

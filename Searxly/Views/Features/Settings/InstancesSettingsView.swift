@@ -27,7 +27,9 @@ struct InstancesSettingsView: View {
         SettingsPane {
             SettingsPaneHeader(
                 title: "SearXNG Instances",
-                subtitle: "Choose where searches run. Searxly only connects to instances you configure here."
+                subtitle: Edition.isMaximum
+                    ? "The metasearch backend. Searxly Maximum runs its own local SearXNG instance on this Mac; it never connects to an instance you have not configured here."
+                    : "Choose where searches run. Searxly only connects to instances you configure here."
             )
 
             activeInstanceSection

@@ -85,13 +85,6 @@ struct ExtensionsSettingsView: View {
                 editingDraft = EditableScript.blank()
             }
 
-            SettingsProminentAction(
-                title: "Open the Extensions page",
-                systemImage: "puzzlepiece.extension.fill"
-            ) {
-                openExtensionsPage()
-            }
-
             extensionsStoreSection
 
             if DeveloperSettings.shared.isEnabled {
@@ -153,10 +146,14 @@ struct ExtensionsSettingsView: View {
         }
     }
 
-    private func openExtensionsPage() {
+    private func openChromeWebStore() {
         dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            NotificationCenter.default.post(name: .showExtensionsTabRequested, object: nil)
+            NotificationCenter.default.post(
+                name: .openURLInNewTab,
+                object: ChromeWebStore.storeHomeURL,
+                userInfo: ["background": false]
+            )
         }
     }
 
@@ -272,30 +269,16 @@ struct ExtensionsSettingsView: View {
     @ViewBuilder private var extensionsStoreSection: some View {
         SettingsSection(
             title: "Browser extensions",
-            footer: "Real browser extensions — early beta. A small curated set today, more on the way. Each runs only with the access you grant, and never in Private or Tor tabs."
+            footer: "Add extensions straight from the Chrome Web Store. Each runs only with the access you grant, and never in Private or Tor tabs."
         ) {
             if #available(macOS 15.4, *) {
-                if !laneAExtensions.isEmpty {
+                if laneAExtensions.isEmpty {
+                    extensionsEmptyState
+                } else {
                     ForEach(laneAExtensions) { ext in
                         installedExtensionCard(ext)
                     }
-                    SettingsDivider()
                 }
-
-                Text("Available")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .tracking(0.9)
-                    .foregroundStyle(SettingsTheme.textTertiary)
-
-                if !laneAExtensions.contains(where: { $0.displayName == "Searxly Demo" }) {
-                    availableCard(
-                        name: "Searxly Demo",
-                        description: "Confirms extensions are working — shows a brief badge on the pages you visit.",
-                        comingSoon: false
-                    ) { installDemo() }
-                }
-                availableCard(name: "uBlock Origin Lite", description: "Efficient, privacy-friendly content blocker.", comingSoon: true) {}
-                availableCard(name: "Dark Reader", description: "Dark mode for every website.", comingSoon: true) {}
 
                 if let storeStatus {
                     Text(storeStatus)
@@ -313,91 +296,102 @@ struct ExtensionsSettingsView: View {
                 )
             }
         }
+
+        if #available(macOS 15.4, *) {
+            SettingsProminentAction(
+                title: "Get extensions from the Chrome Web Store",
+                systemImage: "puzzlepiece.extension.fill"
+            ) {
+                openChromeWebStore()
+            }
+        }
+    }
+
+    private var extensionsEmptyState: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("No extensions installed")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(SettingsTheme.textPrimary)
+            Text("Browse the Chrome Web Store below and click “Add to Searxly” on any extension’s page.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(SettingsTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func installedExtensionCard(_ ext: LaneAExtensionSnapshot) -> some View {
         SettingsInsetPanel {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(ext.displayName)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(SettingsTheme.textPrimary)
-                    if ext.grantedHostCount > 0 {
-                        SettingsBadge(text: "Active", tint: SettingsTheme.green)
-                    } else {
-                        SettingsBadge(text: "No access", tint: .secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                if !ext.requestedPermissions.isEmpty {
-                    Text("Permissions: " + ext.requestedPermissions.joined(separator: ", "))
-                        .font(.system(size: 11))
-                        .foregroundStyle(SettingsTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if !ext.requestedHosts.isEmpty {
-                    Text("Runs on: " + ext.requestedHosts.joined(separator: "  "))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(SettingsTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                HStack(spacing: 8) {
-                    if ext.grantedHostCount > 0 {
-                        SettingsActionChip(title: "Revoke access", systemImage: "xmark.shield") { revokeLaneA(ext.id) }
-                            .frame(maxWidth: 150)
-                    } else {
-                        SettingsActionChip(title: "Grant access", systemImage: "checkmark.shield") { grantLaneA(ext.id) }
-                            .frame(maxWidth: 150)
-                    }
-                    SettingsActionChip(title: "Remove", systemImage: "trash", role: .destructive) { uninstallExtension(ext.id) }
-                        .frame(maxWidth: 120)
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-    }
-
-    private func availableCard(name: String, description: String, comingSoon: Bool, action: @escaping () -> Void) -> some View {
-        SettingsInsetPanel {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text(name)
+                HStack(spacing: 10) {
+                    extensionIcon(ext)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(ext.displayName)
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(SettingsTheme.textPrimary)
-                        if comingSoon { SettingsBadge(text: "Coming soon", tint: .secondary) }
+                        statusLine(ext)
                     }
-                    Text(description)
-                        .font(.system(size: 11))
-                        .foregroundStyle(SettingsTheme.textSecondary)
+                    Spacer(minLength: 0)
+                    SettingsActionChip(title: "Remove", systemImage: "trash", role: .destructive) { uninstallExtension(ext.id) }
+                        .frame(maxWidth: 108)
+                }
+
+                if let warning = ext.healthWarning {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(SettingsTheme.warning)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 8)
-                SettingsActionChip(
-                    title: comingSoon ? "Soon" : "Install",
-                    systemImage: comingSoon ? "clock" : "arrow.down.circle",
-                    disabled: comingSoon,
-                    action: action
-                )
-                .frame(maxWidth: 110)
+
+                if !ext.requestedHosts.isEmpty {
+                    Text("Runs on: " + ext.requestedHosts.joined(separator: "  "))
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(SettingsTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: 8) {
+                    if ext.grantedHostCount > 0 {
+                        SettingsActionChip(title: "Pause everywhere", systemImage: "pause.circle") { revokeLaneA(ext.id) }
+                            .frame(maxWidth: 160)
+                    } else {
+                        SettingsActionChip(title: "Turn on", systemImage: "play.circle") { grantLaneA(ext.id) }
+                            .frame(maxWidth: 130)
+                    }
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
 
-    private func installDemo() {
-        guard #available(macOS 15.4, *) else { return }
-        storeStatus = "Installing…"
-        Task {
-            do {
-                try await ExtensionManager.shared.installBuiltInDemo()
-                laneAEnabled = true
-                storeStatus = "Installed Searxly Demo. Open a NEW tab and visit any site — a small badge in the corner confirms it's running."
-            } catch {
-                storeStatus = "Install failed: \(error.localizedDescription)"
-            }
-            refreshLaneA()
+    @ViewBuilder private func extensionIcon(_ ext: LaneAExtensionSnapshot) -> some View {
+        if let icon = ext.icon {
+            Image(nsImage: icon)
+                .resizable().interpolation(.high).scaledToFit()
+                .frame(width: 26, height: 26)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        } else {
+            Image(systemName: "puzzlepiece.extension.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(SettingsTheme.textSecondary)
+                .frame(width: 26, height: 26)
+                .background(SettingsTheme.fillSubtle, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+    }
+
+    @ViewBuilder private func statusLine(_ ext: LaneAExtensionSnapshot) -> some View {
+        if ext.healthWarning != nil {
+            Text("Limited — engine errors")
+                .font(.system(size: 11))
+                .foregroundStyle(SettingsTheme.warning)
+        } else if ext.grantedHostCount > 0 {
+            Text("On")
+                .font(.system(size: 11))
+                .foregroundStyle(SettingsTheme.green)
+        } else {
+            Text("Off — no site access")
+                .font(.system(size: 11))
+                .foregroundStyle(SettingsTheme.textSecondary)
         }
     }
 

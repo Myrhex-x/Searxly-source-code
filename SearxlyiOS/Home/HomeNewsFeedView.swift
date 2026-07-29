@@ -86,7 +86,7 @@ struct HomeNewsFeedView: View {
     private var footer: some View {
         VStack(spacing: 5) {
             Text(L("Headlines from your search instance."))
-                .scaledFont(size: 11.5)
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textTertiary)
             Text(L("Kept in memory only — never saved, off in private tabs."))
                 .scaledFont(size: 11)

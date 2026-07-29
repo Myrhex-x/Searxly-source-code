@@ -10,7 +10,9 @@ struct PerformanceSettingsView: View {
         SettingsPane {
             SettingsPaneHeader(
                 title: "Performance",
-                subtitle: "Save memory and keep your tab list manageable. Both are optional."
+                subtitle: Edition.isMaximum
+                    ? "Memory and tab-lifecycle management. Performance options never trade away protection."
+                    : "Save memory and keep your tab list manageable. Both are optional."
             )
 
             SettingsSection(

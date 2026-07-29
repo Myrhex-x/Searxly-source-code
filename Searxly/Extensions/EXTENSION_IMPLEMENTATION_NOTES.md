@@ -6,15 +6,19 @@ implements **Lane B**. Lane A is documented here as the deferred future option.
 | | **Lane A — Curated WebExtensions** | **Lane B — AI-authorable Userscripts** (this folder) |
 |---|---|---|
 | Engine | `WKWebExtension` (macOS 15.4+) | `WKUserScript` (works on macOS 15.0) |
-| Source | Searxly-vetted gallery, signed | User-authored or generated on-device from a prompt |
-| Trust | Third-party, signature-gated | First-party, the user's own code, reviewed before enable |
+| Source | Chrome Web Store, direct on-device download | User-authored or generated on-device from a prompt |
+| Trust | Third-party, CRX3-signature-verified against the extension ID | First-party, the user's own code, reviewed before enable |
 | API | Full `chrome.*` | Minimal; **no** `chrome.*`, **no** network, **no** native bridge |
-| Status | **Phase 0 spike landed** (engine compiles; runtime via Dev button) | **Building** (Phases 1–2 landed) |
+| Status | Engine + CWS install pipeline built, flag-gated | **Building** (Phases 1–2 landed) |
 
-> **Market model (decided):** Lane A is a **curated free gallery** — Searxly vets and signs only
-> open-source / redistributable extensions (uBlock Origin Lite, Dark Reader, Bitwarden, …) that are
-> tested to work in WebKit. **Not** a mirror of the Chrome Web Store: redistributing CWS `.crx` files
-> violates their ToS, and most extensions are copyrighted. No open user-submitted marketplace.
+> **Market model (re-decided 2026-07-18 after a user poll):** Lane A v1 is **direct Chrome Web Store
+> install** — the Orion model. The user pastes a store link (or taps a Popular card) and the `.crx` is
+> downloaded **on-device from Google's public packaging endpoint** (`clients2.google.com`), the same one
+> every Chromium-based browser uses. Searxly never redistributes a package — which is what the earlier
+> ToS concern was actually about. Authenticity comes from Chrome's own container format: the CRX3
+> developer-proof signature must validate AND come from the key whose SHA-256 prefix *is* the extension
+> ID (`ChromeWebStore.swift`). The curated signed catalog ("Verified on Searxly" — `ExtensionCatalog.swift`,
+> server-side catalog.json, Ed25519 package signing) was **removed** the same day.
 
 **Filename note:** named `EXTENSION_IMPLEMENTATION_NOTES.md` (not the generic `IMPLEMENTATION_NOTES.md`)
 to avoid Xcode "Multiple commands produce" CpResource collisions, same as `AD_BLOCKER_IMPLEMENTATION_NOTES.md`.
@@ -171,34 +175,75 @@ bodies in a separate realm (sandboxed iframe / Worker) for a true network kill-s
   `.showExtensionsTabRequested` notification → `BrowserState.ensureAndSelectUtilityTab(.extensions)`;
   entry point = "Open the Extensions page" button in the Settings → Extensions pane. Adding the TabKind
   case did NOT break other switches (codebase uses generic `isUtility`/`utilityIcon`). Builds clean.
-- **Catalog client (DONE, client side):** `Extensions/LaneA/ExtensionCatalog.swift` —
-  `ExtensionCatalogClient.fetch()` pulls `catalog.json` from searxly.app (graceful `[]` on failure, so the
-  marketplace falls back to the built-in demo + "Coming soon"); `downloadVerifiedPackage` downloads the
-  `.zip`, checks **SHA-256** (mandatory) + **Ed25519 signature** (once `publicKeyBase64` is set), and saves
-  it. `ExtensionManager.installFromCatalog(_:)` records + loads it (`WKWebExtension` loads a `.zip`
-  resourceBaseURL directly; `reloadInstalled` now handles dir OR zip). The marketplace's Discover section
-  lists catalog entries when the catalog is reachable. `LaneAExtensionSnapshot.extensionID` added so
-  install-state is matched by id.
+- **Chrome Web Store install (DONE 2026-07-18 — replaces the removed catalog):**
+  `Extensions/LaneA/ChromeWebStore.swift`:
+  - `ChromeWebStore.extensionID(from:)` accepts a bare 32-char `[a-p]` ID or any store URL (current
+    `chromewebstore.google.com/detail/<slug>/<id>` + legacy `chrome.google.com/webstore/…`); takes the
+    LAST valid token so a same-alphabet slug can't shadow the real ID.
+  - `download(id:)` hits Google's packaging endpoint (`clients2.google.com/service/update2/crx`,
+    `response=redirect&acceptformat=crx3`, `prodversion` constant to bump occasionally) over an
+    **ephemeral** URLSession; 204/empty → "not available", 200 MB cap.
+  - `CRX3.parse(_:expectedID:)` — bounds-checked hand-rolled protobuf + DER readers (untrusted bytes;
+    no libraries). Verifies **Chrome's developer proof**: at least one RSA(PKCS1v15-SHA256, via SecKey)
+    or ECDSA(P-256, via CryptoKit) signature over `"CRX3 SignedData\0" + LE32(len) + signed_header_data
+    + zip` must validate AND its key's SHA-256 16-byte prefix must equal the header's `crx_id`; the
+    derived a–p ID must equal the requested one. The verified ZIP payload is handed to `WKWebExtension`
+    directly (the SDK header confirms zip resourceBaseURLs).
+  - `ExtensionManager.installFromChromeWebStore(_:)` — download → verify → write
+    `Extensions/<id>/package.zip` → load with `grantRequestedHosts: true` (install = consent, like
+    Chrome) → record + flip the engine flag. Re-installing the same ID replaces the package in place
+    (the update path; WebKit extension storage survives via `uniqueIdentifier`). Failed loads clean up
+    after themselves.
+  - Marketplace: "Chrome Web Store" section (paste field + "Browse the Chrome Web Store" via
+    `.openURLInNewTab`) + one-click **Popular** cards (uBO Lite, Dark Reader, SponsorBlock, Bitwarden —
+    public store IDs) + the demo. Footer discloses that installs download from Google's servers.
+  - Removed: `ExtensionCatalog.swift`, `installFromCatalog`, the marketplace catalog fetch and
+    "Coming soon" cards, and the server-side catalog.json plan. `LaneAExtensionSnapshot.extensionID`
+    still matches install-state by id.
 - **Menu entry (DONE):** App menu → "Extensions" (CommandGroup after `.toolbar`) posts
   `.showExtensionsTabRequested`. (Settings button still works too.)
 - **Phase 3c (only remaining):** full `chrome.tabs`/`windows` CLOSE/ACTIVATE events (confirm
   `NS_REFINED_FOR_SWIFT` `didActivateTab`/`didCloseTab` on a 15.4 runtime; needs a proper BrowserState
   close hook to avoid firing on hibernation). Not needed by content-script / content-blocker extensions.
 
-### Server side — to publish the real catalog (your ops, not code)
-1. Host `https://searxly.app/extensions/catalog.json`:
-   ```json
-   { "version": 1, "extensions": [
-     { "id": "ublock-origin-lite", "name": "uBlock Origin Lite", "description": "…",
-       "version": "1.0.0", "author": "…", "license": "GPL-3.0",
-       "icon": "shield.lefthalf.filled", "permissionsSummary": "…",
-       "package": "https://searxly.app/extensions/ublock-origin-lite-1.0.0.zip",
-       "sha256": "<hex of the zip bytes>", "signature": "<base64 Ed25519 over the zip bytes>" } ] }
-   ```
-2. Each `package` is a `.zip` of a WebExtension (containing `manifest.json`). Only ship ones you have the
-   right to redistribute (open-source) and that you've tested in WebKit.
-3. Generate an Ed25519 keypair; put the **base64 public key** in `ExtensionCatalogClient.publicKeyBase64`
-   (then signatures become mandatory) and sign each zip's bytes with the private key.
+### One-click store install (DONE 2026-07-18 — the "like Chrome" flow)
+Browse the store → click → approve → installed. `Views/Navigation/ExtensionInstallChip.swift`, mounted
+in `BrowserHeaderView` right after the address bar:
+- Appears only when `ChromeWebStore.detailPageExtensionID(of:)` matches the current tab — **host-checked**
+  (chromewebstore.google.com / legacy chrome.google.com/webstore only) so a random site can't spoof the
+  affordance, and only on **standard** tabs (never Private/Onion).
+- Click → `ExtensionManager.fetchFromChromeWebStore` (download + CRX3-verify + **stage** the zip as
+  `Extensions/staging-<id>.zip` + read manifest metadata via a controller-less `WKWebExtension`) →
+  Chrome-style permission alert ("It can read and change data on: …" / "It uses: …") →
+  `confirmStoreInstall` (move staged zip into place, load, grant, record — consent is the approval) or
+  `cancelStoreInstall` (delete staged file; nothing granted). Already-installed shows a quiet "Added ✓".
+- The marketplace paste field + Popular cards use the same two steps fused (`installFromChromeWebStore`).
+
+**No "use Chrome" nudges + the store's own button works (DONE 2026-07-18):**
+- **Scoped UA override** — Google's browser sniff is server-side, so on the two store hosts only
+  (`ChromeWebStore.isStoreHostName`) standard tabs present `ChromeWebStore.chromeUserAgent` (version ==
+  `prodVersion`). Implemented in `decidePolicyFor` (WebViewRepresentable+Navigation): main-frame,
+  persistent + non-proxied (⇒ standard) tabs, 15.4+, program on; cancel-and-reload so the UA applies to
+  that very navigation (the reload re-enters the whole policy chain — no security check is skipped).
+  Transitions only ever touch OUR value: Chrome UA in, back to nil ONLY if current == our Chrome UA —
+  the YouTube `desktopSafariUserAgent` KVO fix is never disturbed.
+- **Page bridge** (`ChromeWebStore.storeBridgeScript`, isolated world `SearxlyStoreBridge`, injected in
+  WebViewFactory beside the Lane A hook, main-frame, standard tabs): with the Chrome UA the store's own
+  "Add to Chrome" button goes live, so the bridge (a) capture-phase intercepts clicks on it (detail
+  pages only) → `searxlyStoreInstall` handler (registered in the same isolated world in
+  WebViewRepresentable.makeNSView; origin re-checked in the AdBlock didReceive dispatch) →
+  `.chromeWebStoreInstallClicked` notification → the toolbar chip runs its normal fetch → permission
+  alert → confirm flow; and (b) relabels the button Chrome → Searxly (locale-tolerant text heuristic,
+  MutationObserver, idempotent). The message carries nothing actionable — the chip re-derives the ID
+  from the tab URL, so a forged message could at most surface the prompt.
+
+### Next (v1 roadmap, decided order)
+1. **Toolbar actions + popups** — `WKWebExtensionAction` (`iconForSize:`, `badgeText`, ready-made
+   `popupPopover`) + delegate `didUpdateAction` / `presentActionPopup` / `openNewTabUsingConfiguration` /
+   `openOptionsPageFor`, rendered as buttons in `BrowserHeaderView`. This is what makes popup-driven
+   extensions (Dark Reader, Bitwarden) fully usable.
+2. **Updates** — periodically re-hit the packaging endpoint per installed ID and version-compare.
+3. **Phase 3c plumbing** (below) + runtime permission prompts replacing the default-deny delegate.
 
 **Key API facts the spike nailed down (macOS 27 SDK):**
 - All `WKWebExtensionTab` / `WKWebExtensionWindow` methods are **`@optional`** — minimal conformance works.

@@ -12,12 +12,18 @@ private struct HomeTaglineBlock: View {
 
     var body: some View {
         VStack(spacing: 5) {
-            Text(Localization.string("home_tagline"))
-                .font(.system(size: 13.5, weight: .medium))
+            // Searxly Maximum's copy is plain and checkable — statements of fact, no drama. The
+            // base app keeps its localized consumer tagline.
+            Text(Edition.isMaximum
+                 ? "Private search, verified."
+                 : Localization.string("home_tagline"))
+                .font(.system(size: 13.5, weight: Edition.isMaximum ? .semibold : .medium))
                 .foregroundStyle(.secondary.opacity(colorScheme == .dark ? 0.9 : 0.82))
-                .tracking(0.35)
+                .tracking(Edition.isMaximum ? 0.5 : 0.35)
 
-            Text(Localization.string("home_subtitle"))
+            Text(Edition.isMaximum
+                 ? "All traffic goes through Tor or is blocked. Nothing is saved to disk. You can check this anytime with the built-in self-test."
+                 : Localization.string("home_subtitle"))
                 .font(.system(size: 11, weight: .regular))
                 .foregroundStyle(.tertiary.opacity(0.88))
                 .multilineTextAlignment(.center)
@@ -121,6 +127,13 @@ struct HomeView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // One-time, dismissible "connect your AI" discovery hint (hidden once Agentic Tools is on).
+        .overlay(alignment: .bottom) {
+            AgenticConnectNudge(onConnect: {
+                browserState.settingsInitialCategory = .agenticTools
+                browserState.showingSettings = true
+            })
+        }
     }
 
     /// The centered hero (logo + tagline + search), sized to fill one screen; optionally with the
@@ -248,41 +261,20 @@ struct HomeView: View {
                 animated: !reduceMotion,
                 showShine: glassEnabled && !reduceMotion,
                 showTagline: false,
-                // Maximum's home hero glows orange (its one sanctioned accent) instead of white.
-                glowTint: Edition.isMaximum ? Color(red: 1.0, green: 0.52, blue: 0.12) : .white,
-                glowStrength: Edition.isMaximum ? 1.6 : 1.0
+                // Maximum's home hero glows ember (its one sanctioned accent) instead of white —
+                // restrained: a controlled burn, not a neon sign.
+                glowTint: Edition.isMaximum ? MaximumBrand.emberGlow : .white,
+                glowStrength: Edition.isMaximum ? 1.15 : 1.0
             )
 
             // Searxly Maximum wears its badge on the hero: an orange-glow "MAXIMUM" plate under the
             // wordmark that sets the paid, locked-down edition apart from the standard app at a glance.
+            // Shared with the activation gate — see MaximumEditionBadge.
             if Edition.isMaximum {
-                maximumBadge
+                MaximumEditionBadge()
             }
         }
         .heroReveal(heroRevealed, reduceMotion: reduceMotion, delay: 0)
-    }
-
-    /// The "MAXIMUM" edition plate — the monochrome brand's one sanctioned splash of colour. Orange
-    /// fill + stroke + layered outer glow so it reads as premium against the dark ambient hero.
-    private var maximumBadge: some View {
-        let orange = Color(red: 1.0, green: 0.52, blue: 0.12)
-        return Text("MAXIMUM")
-            .font(.system(size: 12.5, weight: .heavy, design: .rounded))
-            .tracking(4)
-            .foregroundStyle(orange)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(orange.opacity(0.12))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .strokeBorder(orange.opacity(0.55), lineWidth: 1.2)
-                    )
-            )
-            .shadow(color: orange.opacity(0.75), radius: 10)
-            .shadow(color: orange.opacity(0.45), radius: 22)
-            .accessibilityLabel("Searxly Maximum edition")
     }
 
     private var taglineBlock: some View {

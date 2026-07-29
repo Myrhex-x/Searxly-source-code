@@ -31,6 +31,9 @@ extension BrowserState {
     /// returns or a selection/submit dismisses sooner.
     func setAddressBarFocused(_ focused: Bool) {
         addressBarFocused = focused
+        // Searxly Maximum: secure keyboard entry while the address bar has focus, so other
+        // processes' event taps can't read the query as it's typed. No-op in the base app.
+        SecureInputGuard.setAddressBarFocused(focused)
         suggestionBlurDismissTask?.cancel()
         suggestionBlurDismissTask = nil
 

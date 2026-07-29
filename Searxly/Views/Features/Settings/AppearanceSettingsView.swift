@@ -10,6 +10,9 @@ struct AppearanceSettingsView: View {
     @Binding var appearanceModeRaw: String
 
     @AppStorage("homeStarsEnabled") private var homeStarsEnabled = true
+    @AppStorage("sidebarAutoHide") private var sidebarAutoHide = true
+    @AppStorage(NavigationCoordinatorKeys.openNewTabsInBackground) private var openNewTabsInBackground = false
+    @AppStorage(WebsiteDarkMode.defaultsKey) private var websiteDarkMode = false
 
     private var selectedMode: AppearanceMode {
         AppearanceMode(rawValue: appearanceModeRaw) ?? .system
@@ -19,7 +22,9 @@ struct AppearanceSettingsView: View {
         SettingsPane {
             SettingsPaneHeader(
                 title: Localization.string("appearance_title", defaultValue: "Appearance"),
-                subtitle: "Theme and visual effects."
+                subtitle: Edition.isMaximum
+                    ? "Theme and rendering effects. Visual choices never alter the privacy posture."
+                    : "Theme and visual effects."
             )
 
             SettingsSection(
@@ -49,12 +54,46 @@ struct AppearanceSettingsView: View {
                     isOn: $reduceLiquidGlass
                 )
 
+                // Maximum's home is a pitch-black canvas with nothing on it, so there are no stars to
+                // switch off — the row would be a dead control.
+                if !Edition.isMaximum {
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: "Animated stars on home",
+                        description: "A subtle starfield behind the home page. Independent of liquid glass.",
+                        isOn: $homeStarsEnabled
+                    )
+                }
+            }
+
+            SettingsSection(
+                title: "Websites",
+                footer: "Dark mode darkens light pages you visit and leaves already-dark sites alone. It applies to new tabs immediately and to open tabs after a reload. Never runs in Private or Tor tabs."
+            ) {
+                SettingsToggleRow(
+                    title: "Dark mode for websites",
+                    description: "A built-in dark theme for the pages you browse — Searxly's own take on Dark Reader.",
+                    isOn: $websiteDarkMode
+                )
+            }
+
+            SettingsSection(
+                title: "Tabs",
+                footer: "Auto-hide applies in both Searxly and Searxly Maximum. Resting state is a compact icon peeker. Hover the peeker (or use the sidebar button / ⌘S) for the full list; it collapses back when the pointer leaves (⌘S pins it open). Expanding shifts search results and pages aside so nothing is covered."
+            ) {
+                SettingsToggleRow(
+                    title: "Auto-hide vertical tabs",
+                    description: "Keep a slim peeker rail; hover or ⌘S expands the full tab list automatically. Off keeps the classic always-visible sidebar.",
+                    isOn: $sidebarAutoHide
+                )
+
                 SettingsDivider()
 
                 SettingsToggleRow(
-                    title: "Animated stars on home",
-                    description: "A subtle starfield behind the home page. Independent of liquid glass.",
-                    isOn: $homeStarsEnabled
+                    title: "Open new tabs in the background",
+                    description: "Stay on the current page when a link or search result opens a new tab, instead of switching to it.",
+                    isOn: $openNewTabsInBackground
                 )
             }
 

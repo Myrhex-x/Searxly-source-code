@@ -19,7 +19,7 @@ struct SaveLoginSheet: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    private var vault = PasswordVaultManager.shared
+    private var vault: PasswordVaultManager { PasswordVaultManager.shared }
     private var normalizedDomain: String {
         PasswordVaultManager.normalizeDomain(domain)
     }

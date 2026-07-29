@@ -2,6 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- GENERATE_INFOPLIST_FILE is off for this target (the nested NSExtension dictionary can't be
+	     expressed as INFOPLIST_KEY_* build settings), so the standard bundle keys have to be spelled
+	     out here. Without CFBundleIdentifier the appex ships with no identifier and the app fails
+	     to embed it: "Embedded binary's bundle identifier is not prefixed with the parent app's". -->
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Open in Searxly</string>
 	<key>NSExtension</key>

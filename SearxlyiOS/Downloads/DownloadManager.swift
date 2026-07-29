@@ -51,8 +51,13 @@ final class DownloadManager {
 
     /// WKDownload holds its delegate weakly — we must retain the coordinators ourselves.
     private var coordinators: [UUID: DownloadCoordinator] = [:]
-    /// Resume data captured on failure, for a future Retry.
+    /// Resume data captured on failure, for Retry.
     private var resumeData: [UUID: Data] = [:]
+    /// The failed download's original request — the restart path when the server gave no resume data.
+    private var originalRequests: [UUID: URLRequest] = [:]
+    /// Offscreen web view that hosts resumed/restarted transfers. A download is standalone once
+    /// started, so any WKWebView can own it — and the originating tab may be gone by retry time.
+    @ObservationIgnored private lazy var retryHost = WKWebView(frame: .zero)
 
     private static let indexName = "Downloads.enc"
     private static let completedCap = 200
@@ -132,6 +137,7 @@ final class DownloadManager {
     func finish(id: UUID) {
         coordinators[id] = nil
         resumeData[id] = nil
+        originalRequests[id] = nil
         guard let idx = active.firstIndex(where: { $0.id == id }) else { return }
         let item = active.remove(at: idx)
         // The on-disk size is authoritative — servers that stream chunked (no Content-Length) leave the
@@ -152,13 +158,37 @@ final class DownloadManager {
         Haptics.success()
     }
 
-    func fail(id: UUID, error: Error, resumeData data: Data?) {
+    func fail(id: UUID, error: Error, resumeData data: Data?, originalRequest: URLRequest?) {
         guard let idx = active.firstIndex(where: { $0.id == id }) else { return }
         active[idx].failed = true
-        active[idx].canResume = data != nil
         resumeData[id] = data
+        if let originalRequest { originalRequests[id] = originalRequest }
+        active[idx].canResume = data != nil || originalRequests[id] != nil
         // Don't drop the coordinator yet — a Retry reuses nothing from it, but keep the row until dismissed.
         refreshBackgroundAssertion()
+    }
+
+    /// Retries a failed download: resumes from the checkpoint when the server allowed it, else
+    /// restarts the original request from scratch. The row keeps its identity either way.
+    func retry(_ id: UUID) {
+        guard let idx = active.firstIndex(where: { $0.id == id }), active[idx].failed else { return }
+        let coordinator = DownloadCoordinator(id: id, manager: self)
+        coordinators[id] = coordinator
+        active[idx].failed = false
+        active[idx].canResume = false
+        active[idx].fraction = 0
+        refreshBackgroundAssertion()
+        if let data = resumeData.removeValue(forKey: id) {
+            retryHost.resumeDownload(fromResumeData: data) { download in
+                download.delegate = coordinator
+            }
+        } else if let request = originalRequests[id] {
+            retryHost.startDownload(using: request) { download in
+                download.delegate = coordinator
+            }
+        } else if let i = active.firstIndex(where: { $0.id == id }) {
+            active[i].failed = true   // nothing to retry from — shouldn't happen (button is gated)
+        }
     }
 
     // MARK: - User actions
@@ -170,6 +200,7 @@ final class DownloadManager {
     func removeActive(_ id: UUID) {
         coordinators[id] = nil
         resumeData[id] = nil
+        originalRequests[id] = nil
         active.removeAll { $0.id == id }
         refreshBackgroundAssertion()
     }
@@ -299,7 +330,8 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         MainActor.assumeIsolated {
             progressObservation = nil
-            manager?.fail(id: id, error: error, resumeData: resumeData)
+            manager?.fail(id: id, error: error, resumeData: resumeData,
+                          originalRequest: download.originalRequest)
         }
     }
 }

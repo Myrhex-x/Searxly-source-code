@@ -11,6 +11,7 @@ import SwiftUI
 import UIKit
 import WebKit
 import CoreSpotlight
+import Translation
 
 struct BrowserView: View {
     @State private var tabs = TabsModel()
@@ -18,6 +19,7 @@ struct BrowserView: View {
     @FocusState private var addressFocused: Bool
     @State private var showTabs = false
     @State private var showSettings = false
+    @State private var showSyncReceive = false
     @State private var showLibrary = false
     @State private var libraryTab: LibraryView.Tab = .bookmarks
     @State private var showBurnConfirm = false
@@ -25,9 +27,13 @@ struct BrowserView: View {
     @State private var showSummary = false
     @State private var showPageChat = false
     @State private var showReaderUnavailable = false
+    @State private var showNoVideoForPiP = false
     @State private var showDownloads = false
     @State private var downloads = DownloadManager.shared
     @State private var intentRouter = IntentRouter.shared
+    @State private var translator = PageTranslator.shared
+    @State private var showVoiceSearch = false
+    @State private var showQRScanner = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var debugForceFocused = false
     /// Live horizontal offset while swiping the bottom bar to switch tabs — interactive (tracks the
@@ -66,212 +72,219 @@ struct BrowserView: View {
     /// (history) or bookmarks to fall back on, recent searches, or a Paste-and-Go clipboard string.
     /// `hasStrings` is banner-free (it doesn't read the clipboard), so this stays privacy-clean.
     private var hasQuickPanelContent: Bool {
+        // Private tabs hide the personal sections, so their panel has content only when the
+        // clipboard offers Paste and Go.
+        if active.isPrivate { return UIPasteboard.general.hasStrings }
         let lib = LibraryStore.shared
         return !lib.recentSearches.isEmpty || !lib.history.isEmpty || !lib.bookmarks.isEmpty
             || UIPasteboard.general.hasStrings
     }
 
     var body: some View {
+        browserShell
+            .background { keyboardShortcuts }
+            .overlay { privacySnapshotCover }
+            .overlay { readerLoadingOverlay }
+            .animation(.easeOut(duration: 0.18), value: active.readerLoading)
+            .onAppear {
+                syncEditing()
+                consumePendingIntents()
+                #if DEBUG
+                runDebugLaunchHooks()
+                #endif
+            }
+            .onChange(of: intentRouter.pendingSearch) { consumePendingIntents() }
+            .onChange(of: intentRouter.pendingPrivateTab) { consumePendingIntents() }
+            .onChange(of: intentRouter.pendingNewSearch) { consumePendingIntents() }
+            .onChange(of: intentRouter.pendingReopenLast) { consumePendingIntents() }
+            .onChange(of: intentRouter.pendingURL) { consumePendingIntents() }
+            .onChange(of: intentRouter.pendingDownloads) { consumePendingIntents() }
+            .onChange(of: intentRouter.pendingSummarize) { consumePendingIntents() }
+            .onChange(of: active.id) { syncEditing() }
+            .onChange(of: active.displayText) { if !addressFocused { syncEditing() } }
+            .onChange(of: downloads.startedGeneration) { showDownloads = true }
+            .onChange(of: addressFocused) { _, focused in
+                editingText = focused ? active.editText : active.displayText
+                if focused { active.expandChrome() }
+            }
+            // Owns the on-device translation session + selection actions (extracted to a modifier —
+            // the inline chain pushed body past the type-checker's budget).
+            .modifier(TranslationHost(translator: translator, model: active))
+            .userActivity(NSUserActivityTypeBrowsingWeb, isActive: handoffURL != nil) { activity in
+                configureHandoff(activity)
+            }
+            .onContinueUserActivity(CSSearchableItemActionType) { activity in
+                if let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+                   let url = URL(string: id) {
+                    intentRouter.pendingURL = url
+                }
+            }
+            .onOpenURL { handleDeepLink($0) }
+    }
+
+    /// Core shell + sheets/alerts — split out of `body` so the type-checker stays happy.
+    private var browserShell: some View {
+        browserStage
+            .animation(.easeOut(duration: 0.16), value: addressFocused)
+            .background(widthReader)
+            .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+            .sheet(isPresented: $showTabs) { TabSwitcherView(tabs: tabs) }
+            .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $showSyncReceive) {
+                NavigationStack { ReceiveSyncView() }
+                    .preferredColorScheme(.dark)
+            }
+            .sheet(isPresented: $showLibrary) {
+                LibraryView(
+                    initialTab: libraryTab,
+                    onOpen: { url in tabs.active.load(url) },
+                    onOpenInNewTab: { url in tabs.newTab(url: url); syncEditing() }
+                )
+            }
+            .sheet(isPresented: $showPageInfo) { PageInfoView(model: active) }
+            .sheet(isPresented: $showDownloads) { DownloadsView() }
+            .sheet(isPresented: $showSummary) { SummarySheet(model: active) }
+            .sheet(isPresented: $showPageChat) { PageChatSheet(model: active) }
+            .sheet(item: readerBinding) { article in ReaderView(article: article) }
+            .alert(L("No video on this page."), isPresented: $showNoVideoForPiP) {
+                Button(L("Done"), role: .cancel) {}
+            }
+            .alert(L("No readable article on this page."), isPresented: $showReaderUnavailable) {
+                Button(L("Done"), role: .cancel) {}
+            }
+            .confirmationDialog(L("Close all tabs and clear website data?"),
+                                isPresented: $showBurnConfirm, titleVisibility: .visible) {
+                Button(L("Close Tabs & Clear Data"), role: .destructive) {
+                    withAnimation(.smooth) { tabs.burn() }
+                    syncEditing()
+                }
+            } message: {
+                Text(L("Closes every tab (including private) and erases cookies, caches, and site data. Bookmarks and history are kept."))
+            }
+            .alert(L("Open in another app?"), isPresented: externalOpenPresented) {
+                Button(L("Cancel"), role: .cancel) { active.pendingExternalURL = nil }
+                Button(L("Open")) { active.confirmExternalOpen() }
+            } message: {
+                Text(active.pendingExternalURL?.absoluteString ?? "")
+            }
+            .alert(L("Site doesn't support HTTPS"), isPresented: httpFallbackPresented) {
+                Button(L("Go Back"), role: .cancel) { active.httpFallbackURL = nil }
+                Button(L("Use HTTP")) { active.continueWithHTTP() }
+            } message: {
+                Text(httpsFallbackMessage)
+            }
+    }
+
+    private var browserStage: some View {
         ZStack {
             Brand.bg.ignoresSafeArea()
-
-            // Adjacent-tab previews slide in from the side during an interactive tab swipe (rendered
-            // only while a swipe is in progress, so there's zero cost at rest).
             if dragX != 0 { swipePreviews }
-
-            // `.offset` is a render-only transform, so the web content still runs under the bar and the
-            // home/SERP keep their own layout — the swipe just slides them, Safari-style.
-            content
-                .offset(x: dragX)
-
-            // Focused overlay: a dim scrim (tap to dismiss) + private suggestions. Both are siblings of
-            // `content` and render ABOVE the bar — they NEVER wrap the bottom bar / text field, so they
-            // can't rebuild it or disturb focus (the cause of the earlier typing bug).
+            content.offset(x: dragX)
             if addressFocused {
-                Color.black.opacity(0.18)
+                Color.black.opacity(colorScheme == .dark ? 0.28 : 0.14)
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { addressFocused = false }
                     .transition(.opacity)
             }
-            // Non-empty query → live suggestions; empty query → the quick-access panel (Top Sites +
-            // recent searches) whenever there's anything local to show.
             if addressFocused && (!trimmedQuery.isEmpty || hasQuickPanelContent) {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
+                if trimmedQuery.isEmpty && active.content == .home && !active.isPrivate {
+                    // Home, empty field: the bar "expands" into a full browse panel — top-sites
+                    // grid + recent searches filling the space above the keyboard (Safari's
+                    // focused start page). Typing switches to the compact card below; private
+                    // tabs keep the compact card (their panel is Paste and Go at most).
                     SuggestionsView(
                         query: editingText,
                         allowRemote: !active.isPrivate,
+                        style: .expanded,
                         onSearch: { q in active.submit(q); addressFocused = false },
                         onOpen: { url in active.load(url); addressFocused = false }
                     )
                     .padding(.horizontal, 9)
+                    .padding(.top, 4)
                     .padding(.bottom, 6)
-                }
-                .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.16), value: addressFocused)
-        .background(widthReader)
-        // safeAreaInset keeps the floating glass bar pinned correctly and — crucially — lifts it above
-        // the keyboard when the address field is focused, instead of letting it run off-screen.
-        .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
-        .sheet(isPresented: $showTabs) { TabSwitcherView(tabs: tabs) }
-        .sheet(isPresented: $showSettings) { SettingsView() }
-        .sheet(isPresented: $showLibrary) {
-            LibraryView(
-                initialTab: libraryTab,
-                onOpen: { url in tabs.active.load(url) },
-                onOpenInNewTab: { url in tabs.newTab(url: url); syncEditing() }
-            )
-        }
-        .sheet(isPresented: $showPageInfo) { PageInfoView(model: active) }
-        .sheet(isPresented: $showDownloads) { DownloadsView() }
-        .sheet(isPresented: $showSummary) { SummarySheet(model: active) }
-        .sheet(isPresented: $showPageChat) { PageChatSheet(model: active) }
-        .sheet(item: readerBinding) { article in ReaderView(article: article) }
-        .alert(L("No readable article on this page."), isPresented: $showReaderUnavailable) {
-            Button(L("Done"), role: .cancel) {}
-        }
-        // Fire button (DuckDuckGo-style): one confirmed tap burns tabs + website data + favicons.
-        .confirmationDialog("Close all tabs and clear website data?",
-                            isPresented: $showBurnConfirm, titleVisibility: .visible) {
-            Button(L("Close Tabs & Clear Data"), role: .destructive) {
-                withAnimation(.smooth) { tabs.burn() }
-                syncEditing()
-            }
-        } message: {
-            Text("Closes every tab (including private) and erases cookies, caches, and site data. Bookmarks and history are kept.")
-        }
-        // Non-web scheme (tel:, mailto:, app link…) → never leave the app silently.
-        .alert("Open in another app?", isPresented: externalOpenPresented) {
-            Button(L("Cancel"), role: .cancel) { active.pendingExternalURL = nil }
-            Button(L("Open")) { active.confirmExternalOpen() }
-        } message: {
-            Text(active.pendingExternalURL?.absoluteString ?? "")
-        }
-        // HTTPS-Only upgrade failed → explicit consent before an unencrypted load.
-        .alert("Site doesn't support HTTPS", isPresented: httpFallbackPresented) {
-            Button(L("Go Back"), role: .cancel) { active.httpFallbackURL = nil }
-            Button(L("Use HTTP")) { active.continueWithHTTP() }
-        } message: {
-            Text("“\(active.httpFallbackURL?.host ?? "This site")” couldn't be loaded securely. Load it over an unencrypted connection just for this session?")
-        }
-        .onAppear {
-            syncEditing()
-            #if DEBUG
-            let env = ProcessInfo.processInfo.environment
-            if let q = env["SEARXLY_DEMO_QUERY"], !q.isEmpty {
-                let scope = SearchScope(rawValue: env["SEARXLY_DEMO_SCOPE"] ?? "") ?? .web
-                active.runSearch(q, scope: scope)
-                syncEditing()
-            }
-            if let raw = env["SEARXLY_DEMO_URL"], let url = URL(string: raw) {
-                // Loads a real page on launch — exercises the full visit path (history recording,
-                // favicon capture) without UI driving.
-                active.load(url)
-                syncEditing()
-            }
-            if env["SEARXLY_DEMO_FOCUS"] == "1" {
-                // REAL first-responder focus — used to verify focus is RETAINED (i.e. the field doesn't
-                // get rebuilt and drop the keyboard). If this state is stable, typing works.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { addressFocused = true }
-                // Set bound text AFTER focus settles (post the focus onChange that clears it) to prove
-                // the field renders typed text while focused + keyboard up.
-                if let text = env["SEARXLY_DEMO_TEXT"] {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { editingText = text }
+                    .transition(.opacity)
+                } else {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        SuggestionsView(
+                            query: editingText,
+                            allowRemote: !active.isPrivate,
+                            isPrivate: active.isPrivate,
+                            onSearch: { q in active.submit(q); addressFocused = false },
+                            onOpen: { url in active.load(url); addressFocused = false }
+                        )
+                        .padding(.horizontal, 9)
+                        .padding(.bottom, 6)
+                    }
+                    .transition(.opacity)
                 }
             }
-            if env["SEARXLY_DEMO_APPEARANCE"] == "focused" {
-                // Force only the focused *look* (no real keyboard) for deterministic screenshots.
-                debugForceFocused = true
-            }
-            if env["SEARXLY_DEMO_SEED"] == "1" { seedDemoLibrary() }
-            if let raw = env["SEARXLY_DEMO_SECOND_URL"], let url = URL(string: raw) {
-                // A second tab with a real page — populates the tab grid for headless screenshots.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { tabs.newTab(url: url) }
-            }
-            if env["SEARXLY_DEMO_COLLAPSE"] == "1" {
-                // simctl can't send scroll gestures — force the minimized-chrome look instead.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { active.debugForceCollapsed() }
-            }
-            if env["SEARXLY_DEMO_SWIPE"] == "1" {
-                // simctl can't do a fluid drag — load two pages, then park the gesture mid-swipe so the
-                // next tab's live preview sliding in is screenshottable.
-                active.load(URL(string: "https://en.wikipedia.org/wiki/Tiger")!)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                    _ = tabs.newTab(url: URL(string: "https://en.wikipedia.org/wiki/Lion")!)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) { tabs.switchToPrevious() }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 8.5) { dragX = -175 }
-            }
-            switch env["SEARXLY_DEMO_PANEL"] {
-            case "settings":
-                showSettings = true
-            case "library":
-                seedDemoLibrary()
-                showLibrary = true
-            case "tabs":
-                // Late enough for demo pages to load so the grid shows real snapshots.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { openTabs() }
-            case "pageinfo":
-                // Pair with SEARXLY_DEMO_URL; opens once the page has settled.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { showPageInfo = true }
-            case "summary":
-                // Pair with SEARXLY_DEMO_URL (+ SEARXLY_FAKE_AI=1 in the simulator).
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { showSummary = true }
-            case "reader":
-                DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) { openReader() }
-            case "downloads":
-                DownloadManager.shared.seedDemo()
-                showDownloads = true
-            case "reading":
-                ReadingListStore.shared.seedDemo()
-                libraryTab = .reading
-                showLibrary = true
-            default:
-                break
-            }
-            #endif
         }
-        .background { keyboardShortcuts }
-        .overlay { privacySnapshotCover }
-        .onAppear { consumePendingIntents() }
-        .onChange(of: intentRouter.pendingSearch) { consumePendingIntents() }
-        .onChange(of: intentRouter.pendingPrivateTab) { consumePendingIntents() }
-        .onChange(of: intentRouter.pendingNewSearch) { consumePendingIntents() }
-        .onChange(of: intentRouter.pendingReopenLast) { consumePendingIntents() }
-        .onChange(of: intentRouter.pendingURL) { consumePendingIntents() }
-        .onChange(of: intentRouter.pendingDownloads) { consumePendingIntents() }
-        .onChange(of: active.id) { syncEditing() }
-        .onChange(of: active.displayText) { if !addressFocused { syncEditing() } }
-        // A download just started → surface the Downloads sheet (Safari's downloads popover).
-        .onChange(of: downloads.startedGeneration) { showDownloads = true }
-        .onChange(of: addressFocused) { _, focused in
-            editingText = focused ? active.editText : active.displayText
-            if focused { active.expandChrome() }
-        }
-        // Publish the current page for Handoff so it can be picked up on the Mac (or any device
-        // signed into the same iCloud account). Never for private tabs or non-web content —
-        // `handoffURL` is nil there and the activity goes inactive.
-        .userActivity(NSUserActivityTypeBrowsingWeb, isActive: handoffURL != nil) { activity in
-            guard let url = handoffURL else { return }
-            activity.webpageURL = url
-            activity.title = active.pageTitle.isEmpty ? url.absoluteString : active.pageTitle
-            activity.isEligibleForHandoff = true
-            activity.isEligibleForSearch = false
-            activity.isEligibleForPrediction = false
-        }
-        // A tapped Spotlight bookmark hands us its URL → open it in a new tab.
-        .onContinueUserActivity(CSSearchableItemActionType) { activity in
-            if let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
-               let url = URL(string: id) {
-                intentRouter.pendingURL = url
-            }
-        }
-        // searxly:// deep links (Home Screen widgets, Share extension, Shortcuts) → the browser.
-        .onOpenURL { handleDeepLink($0) }
     }
+
+    private func configureHandoff(_ activity: NSUserActivity) {
+        guard let url = handoffURL else { return }
+        activity.webpageURL = url
+        activity.title = active.pageTitle.isEmpty ? url.absoluteString : active.pageTitle
+        activity.isEligibleForHandoff = true
+        activity.isEligibleForSearch = false
+        activity.isEligibleForPrediction = false
+    }
+
+    #if DEBUG
+    private func runDebugLaunchHooks() {
+        let env = ProcessInfo.processInfo.environment
+        if let q = env["SEARXLY_DEMO_QUERY"], !q.isEmpty {
+            let scope = SearchScope(rawValue: env["SEARXLY_DEMO_SCOPE"] ?? "") ?? .web
+            active.runSearch(q, scope: scope)
+            syncEditing()
+        }
+        if let raw = env["SEARXLY_DEMO_URL"], let url = URL(string: raw) {
+            active.load(url)
+            syncEditing()
+        }
+        if env["SEARXLY_DEMO_FOCUS"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { addressFocused = true }
+            if let text = env["SEARXLY_DEMO_TEXT"] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { editingText = text }
+            }
+        }
+        if env["SEARXLY_DEMO_APPEARANCE"] == "focused" { debugForceFocused = true }
+        if env["SEARXLY_DEMO_PRIVATE"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { tabs.enterPrivateMode(); syncEditing() }
+        }
+        if env["SEARXLY_DEMO_SEED"] == "1" { seedDemoLibrary() }
+        if let raw = env["SEARXLY_DEMO_SECOND_URL"], let url = URL(string: raw) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { tabs.newTab(url: url) }
+        }
+        if env["SEARXLY_DEMO_COLLAPSE"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { active.debugForceCollapsed() }
+        }
+        if env["SEARXLY_DEMO_SWIPE"] == "1" {
+            active.load(URL(string: "https://en.wikipedia.org/wiki/Tiger")!)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                _ = tabs.newTab(url: URL(string: "https://en.wikipedia.org/wiki/Lion")!)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) { tabs.switchToPrevious() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.5) { dragX = -175 }
+        }
+        switch env["SEARXLY_DEMO_PANEL"] {
+        case "settings": showSettings = true
+        case "library": seedDemoLibrary(); showLibrary = true
+        case "tabs": DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { openTabs() }
+        case "pageinfo": DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { showPageInfo = true }
+        case "summary": DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { showSummary = true }
+        case "reader": DispatchQueue.main.asyncAfter(deadline: .now() + 7.0) { openReader() }
+        case "downloads": DownloadManager.shared.seedDemo(); showDownloads = true
+        case "reading":
+            ReadingListStore.shared.seedDemo()
+            libraryTab = .reading
+            showLibrary = true
+        default: break
+        }
+    }
+    #endif
 
     /// Routes a `searxly://` deep link into the browser via IntentRouter. Hosts:
     /// `search` (focus a new search), `private` (new private tab), `reopen` (reopen last tab),
@@ -281,6 +294,17 @@ struct BrowserView: View {
         // open in a new tab.
         if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
             intentRouter.pendingURL = url
+            return
+        }
+        // An AirDropped / Files-opened sync bundle goes straight to the Receive screen. The file
+        // is read here while the security scope is valid; the sheet then only needs the bytes.
+        if url.isFileURL, url.pathExtension.lowercased() == SyncFile.fileExtension {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if let data = try? Data(contentsOf: url) {
+                SyncInbox.shared.pending = (data, url.lastPathComponent)
+                showSyncReceive = true
+            }
             return
         }
         guard url.scheme == "searxly" else { return }
@@ -307,23 +331,31 @@ struct BrowserView: View {
                 onOpenFavoriteNewTab: { url in tabs.newTab(url: url); syncEditing() },
                 onOpenStory: { result in active.open(result) },
                 onSeeAllNews: { query in active.runSearch(query, scope: .news) },
+                onPullToSearch: { addressFocused = true },
+                onRecentSearch: { query in active.runSearch(query) },
+                onOpenHistory: { libraryTab = .history; showLibrary = true },
+                onOpenSettings: { showSettings = true },
                 isPrivate: active.isPrivate
             )
         case .results:
             SearchResultsView(model: active)
         case .web:
-            // The page runs UNDER the floating glass bar (Safari): the whole web-mode stack
-            // ignores the bar's safe-area inset (the modifier must sit on the OUTERMOST view of
-            // the branch — an inner child can't outgrow its already-inset parent) and the scroll
-            // view compensates with a content inset, so there's never an opaque band.
+            // The page ends ABOVE the floating glass bar — see the note on `webContent` for why it
+            // does not draw underneath it. (This branch used to do the opposite; the comment that
+            // described the old model outlived it.)
             webContent
         }
     }
 
     private var webContent: some View {
         ZStack(alignment: .top) {
-            WKWebViewRepresentable(webView: active.webView)
+            WKWebViewRepresentable(webView: active.webView, model: active)
                 .id(active.id)
+                // Full-bleed under the floating glass bar (Safari's look): the page scrolls
+                // beneath the translucent chrome. Clearance comes from the scroll inset
+                // (BrowserModel.barInset covers the bar) and the chrome-lift stylesheet, which
+                // raises fixed cookie/consent banners above the bar so they stay tappable.
+                .ignoresSafeArea(.container, edges: .bottom)
             if let message = active.loadError {
                 ErrorPageView(
                     host: active.webView.url?.host ?? "",
@@ -336,7 +368,6 @@ struct BrowserView: View {
             // not the whole browser shell.
             WebProgressBar(model: active)
         }
-        .ignoresSafeArea(.container, edges: .bottom)
     }
 
     private func syncEditing() {
@@ -371,7 +402,7 @@ struct BrowserView: View {
         }
         if intentRouter.pendingPrivateTab {
             intentRouter.pendingPrivateTab = false
-            tabs.newTab(isPrivate: true)
+            tabs.enterPrivateMode()
             syncEditing()
         }
         if intentRouter.pendingNewSearch {
@@ -394,6 +425,14 @@ struct BrowserView: View {
             intentRouter.pendingDownloads = false
             showDownloads = true
         }
+        if intentRouter.pendingSummarize {
+            intentRouter.pendingSummarize = false
+            // Only meaningful with a page open and the model available; otherwise the intent
+            // just opens the app (no dead sheet).
+            if active.content == .web, PageIntelligence.isAvailable {
+                showSummary = true
+            }
+        }
     }
 
     /// Hardware-keyboard shortcuts (iPad / Magic Keyboard), Safari-style. Hidden zero-size
@@ -402,8 +441,11 @@ struct BrowserView: View {
         Group {
             Button("") { tabs.newTab(); syncEditing() }
                 .keyboardShortcut("t", modifiers: .command)
-            Button("") { tabs.newTab(isPrivate: true); syncEditing() }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+            Button("") {
+                if tabs.privateMode { tabs.newTab() } else { tabs.enterPrivateMode() }
+                syncEditing()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("") { addressFocused = true }
                 .keyboardShortcut("l", modifiers: .command)
             Button("") { withAnimation(.smooth) { tabs.close(active) }; syncEditing() }
@@ -433,11 +475,36 @@ struct BrowserView: View {
         )
     }
 
+
     private var httpFallbackPresented: Binding<Bool> {
         Binding(
             get: { active.httpFallbackURL != nil },
             set: { if !$0 { active.httpFallbackURL = nil } }
         )
+    }
+
+    private var httpsFallbackMessage: String {
+        let host = active.httpFallbackURL?.host ?? L("This site")
+        return String(format: L("“%@” couldn't be loaded securely. Load it over an unencrypted connection just for this session?"), host)
+    }
+
+    @ViewBuilder
+    private var readerLoadingOverlay: some View {
+        if active.readerLoading {
+            ZStack {
+                Color.black.opacity(0.28).ignoresSafeArea()
+                VStack(spacing: 12) {
+                    ProgressView().tint(Brand.text)
+                    Text(L("Opening Reader…"))
+                        .scaledFont(size: 14, weight: .medium)
+                        .foregroundStyle(Brand.textSecondary)
+                }
+                .padding(22)
+                .searxlyGlassCard(cornerRadius: 18)
+            }
+            .transition(.opacity)
+            .allowsHitTesting(true)
+        }
     }
 
     #if DEBUG
@@ -455,14 +522,14 @@ struct BrowserView: View {
     /// a private tab is open — so a private page never leaks into the multitasking preview, even when
     /// App Lock is off. Renders nothing while the scene is active or when no private tabs exist.
     @ViewBuilder private var privacySnapshotCover: some View {
-        if scenePhase != .active && tabs.hasPrivateTabs {
+        if scenePhase != .active && (tabs.privateMode || tabs.hasPrivateTabs) {
             ZStack {
                 Brand.bg.ignoresSafeArea()
                 VStack(spacing: 10) {
                     Image(systemName: "hand.raised.fill")
                         .scaledFont(size: 26, weight: .medium)
                         .foregroundStyle(Brand.textSecondary)
-                    Text("Private")
+                    Text(L("Private Mode"))
                         .scaledFont(size: 15, weight: .semibold)
                         .foregroundStyle(Brand.textSecondary)
                 }
@@ -474,16 +541,26 @@ struct BrowserView: View {
     // MARK: - Bottom bar (Safari-style floating Liquid Glass card)
 
     private var bottomBar: some View {
-        VStack(spacing: barCollapsed ? 0 : 9) {
+        VStack(spacing: barCollapsed ? 0 : 8) {
             HStack(spacing: 10) {
                 addressPill
                 if barFocused {
                     Button(L("Cancel")) { addressFocused = false; debugForceFocused = false }
-                        .font(.callout)
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(Brand.text)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+
+            // Hairline divider between the address field and the toolbar — only when both show.
+            if !barFocused && !barCollapsed {
+                Rectangle()
+                    .fill(Brand.hairline.opacity(0.85))
+                    .frame(height: 0.5)
+                    .padding(.horizontal, 6)
+                    .transition(.opacity)
+            }
+
             // Hidden while focused (keyboard up) and while minimized by scrolling. Structural branches
             // around the TOOLBAR are fine — never around the address TextField.
             if !barFocused && !barCollapsed {
@@ -491,13 +568,21 @@ struct BrowserView: View {
                     .transition(.opacity)
             }
         }
-        .padding(.horizontal, barCollapsed ? 8 : 11)
-        .padding(.vertical, barCollapsed ? 5 : 10)
+        .padding(.horizontal, barCollapsed ? 8 : 12)
+        .padding(.top, barCollapsed ? 5 : 10)
+        .padding(.bottom, barCollapsed ? 5 : 9)
         // ONE stable surface in both states — a tinted, rounded Liquid Glass card. It must never switch
         // background *type* by focus: doing so rebuilds the TextField inside and drops the keyboard.
         // Rounded (never flush) means no hard rim lines either.
-        .glassEffect(.regular.tint(barGlassTint), in: .rect(cornerRadius: barCollapsed ? 20 : 26))
-        .padding(.horizontal, barCollapsed ? 72 : 9)
+        .glassEffect(.regular.tint(barGlassTint), in: .rect(cornerRadius: barCollapsed ? 22 : 28))
+        .overlay {
+            RoundedRectangle(cornerRadius: barCollapsed ? 22 : 28, style: .continuous)
+                .strokeBorder(barRimStroke, lineWidth: 0.6)
+        }
+        // Soft lift so the dock reads as floating chrome, not a stuck slab.
+        .shadow(color: .black.opacity(colorScheme == .dark ? 0.38 : 0.10),
+                radius: barCollapsed ? 10 : 18, y: barCollapsed ? 2 : 6)
+        .padding(.horizontal, barCollapsed ? 68 : 10)
         .padding(.bottom, 4)
         .animation(.smooth(duration: 0.28), value: barFocused)
         .animation(.smooth(duration: 0.24), value: barCollapsed)
@@ -507,21 +592,35 @@ struct BrowserView: View {
     /// Private tabs get a noticeably deeper tint so the mode is always visible at a glance.
     private var barGlassTint: Color {
         if active.isPrivate {
-            return colorScheme == .dark ? Color.black.opacity(0.55) : Color.black.opacity(0.16)
+            return colorScheme == .dark
+                ? Color(red: 0.08, green: 0.06, blue: 0.16).opacity(0.72)
+                : Color(red: 0.28, green: 0.22, blue: 0.48).opacity(0.14)
         }
-        return colorScheme == .dark ? Color.black.opacity(0.32) : Color.black.opacity(0.05)
+        return colorScheme == .dark ? Color.black.opacity(0.36) : Color.black.opacity(0.045)
+    }
+
+    /// Rim light on the dock: brighter when focused (keyboard up), muted when collapsed.
+    private var barRimStroke: Color {
+        if active.isPrivate {
+            return colorScheme == .dark
+                ? Color(red: 0.55, green: 0.48, blue: 0.95).opacity(barFocused ? 0.28 : 0.14)
+                : Color(red: 0.35, green: 0.28, blue: 0.70).opacity(barFocused ? 0.22 : 0.12)
+        }
+        return Brand.text.opacity(barFocused ? 0.14 : (barCollapsed ? 0.05 : 0.08))
     }
 
     // MARK: - Interactive tab swipe (Safari-style)
 
-    /// The tab to the left / right of the active one (nil at the ends).
+    /// The tab to the left / right of the active one within the current space (nil at the ends).
     private var prevTab: BrowserModel? {
-        let i = tabs.activeIndex
-        return i > 0 ? tabs.tabs[i - 1] : nil
+        let s = tabs.spaceTabs
+        guard let i = s.firstIndex(where: { $0.id == tabs.activeID }), i > 0 else { return nil }
+        return s[i - 1]
     }
     private var nextTab: BrowserModel? {
-        let i = tabs.activeIndex
-        return i < tabs.tabs.count - 1 ? tabs.tabs[i + 1] : nil
+        let s = tabs.spaceTabs
+        guard let i = s.firstIndex(where: { $0.id == tabs.activeID }), i < s.count - 1 else { return nil }
+        return s[i + 1]
     }
 
     /// One interactive drag on the bottom bar. `.onChanged` moves `dragX` with the finger every frame
@@ -682,24 +781,36 @@ struct BrowserView: View {
     }
 
     private var addressPill: some View {
-        HStack(spacing: 8) {
-            if !barFocused {
-                // On web pages the lock is tappable → Page Info (security, shields, site settings).
-                Button {
-                    if active.content == .web { showPageInfo = true }
-                } label: {
-                    Image(systemName: pillIcon)
-                        .scaledFont(size: 13)
-                        .foregroundStyle(Brand.textTertiary)
+        HStack(spacing: barCollapsed ? 6 : 9) {
+            // Leading status: site lock / private / search. On web pages the lock is tappable → Page Info.
+            // Always present (opacity-gated when focused) so the TextField never jumps position on focus.
+            Button {
+                if !barFocused, active.content == .web { showPageInfo = true }
+            } label: {
+                ZStack {
+                    if !barFocused, active.content == .web, let host = addressHost {
+                        // Live favicon chip when we know the host — Safari-grade wayfinding.
+                        FaviconView(host: host, size: barCollapsed ? 16 : 18)
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    } else {
+                        Image(systemName: pillIcon)
+                            .scaledFont(size: barCollapsed ? 12 : 14, weight: .semibold)
+                            .foregroundStyle(pillIconColor)
+                            .symbolRenderingMode(.hierarchical)
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(active.content != .web)
-                .accessibilityLabel(active.content == .web ? "Page info" : "Search")
+                .frame(width: barCollapsed ? 18 : 22, height: barCollapsed ? 18 : 22)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(barFocused || active.content != .web)
+            .opacity(barFocused ? 0 : 1)
+            .frame(width: barFocused ? 0 : (barCollapsed ? 18 : 22))
+            .accessibilityLabel(active.content == .web ? "Page info" : (active.isPrivate ? "Private search" : "Search"))
 
             TextField(L("Search or enter address"), text: $editingText)
                 .textFieldStyle(.plain)
-                .font(.system(size: barCollapsed ? 13 : 17))
+                .scaledFont(size: barCollapsed ? 13.5 : 16.5, weight: barFocused ? .regular : .medium)
                 .foregroundStyle(Brand.text)
                 .tint(Brand.text)
                 .focused($addressFocused)
@@ -708,45 +819,116 @@ struct BrowserView: View {
                 .textInputAutocapitalization(.never)
                 .keyboardType(.webSearch)
                 .multilineTextAlignment(barFocused ? .leading : .center)
+                .lineLimit(1)
                 .onSubmit {
                     active.submit(editingText)
                     addressFocused = false
                 }
 
-            if !barFocused && active.content == .web && !barCollapsed {
-                if active.pageBlockedCount > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "shield.fill")
-                            .scaledFont(size: 10, weight: .medium)
-                        Text("\(active.pageBlockedCount)")
-                            .scaledFont(size: 11, weight: .semibold)
-                            .monospacedDigit()
+            // Trailing cluster — always laid out so the field width stays stable.
+            HStack(spacing: 4) {
+                if !barFocused && active.content == .web && !barCollapsed {
+                    if active.pageBlockedCount > 0 {
+                        Button { showPageInfo = true } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "shield.fill")
+                                    .scaledFont(size: 10, weight: .semibold)
+                                Text("\(active.pageBlockedCount)")
+                                    .scaledFont(size: 11, weight: .semibold)
+                                    .monospacedDigit()
+                            }
+                            .foregroundStyle(Brand.textSecondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Brand.text.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(active.pageBlockedCount) " + L("trackers blocked on this page"))
                     }
-                    .foregroundStyle(Brand.textTertiary)
-                    .accessibilityLabel("\(active.pageBlockedCount) trackers blocked on this page")
+                    // Tap = reload/stop; long-press = Safari's reload extras (desktop site).
+                    Menu {
+                        Button { active.toggleDesktopSite() } label: {
+                            Label(active.isDesktopSite ? L("Request Mobile Website") : L("Request Desktop Website"),
+                                  systemImage: active.isDesktopSite ? "iphone" : "desktopcomputer")
+                        }
+                    } label: {
+                        Image(systemName: active.isLoading ? "xmark" : "arrow.clockwise")
+                            .scaledFont(size: 13, weight: .semibold)
+                            .foregroundStyle(Brand.textSecondary)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Brand.text.opacity(0.06)))
+                            .contentShape(Circle())
+                    } primaryAction: {
+                        active.reloadOrStop()
+                    }
+                    .accessibilityLabel(active.isLoading ? "Stop" : "Reload")
                 }
-                Button { active.reloadOrStop() } label: {
-                    Image(systemName: active.isLoading ? "xmark" : "arrow.clockwise")
-                        .scaledFont(size: 13, weight: .medium)
-                        .foregroundStyle(Brand.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(active.isLoading ? "Stop" : "Reload")
-            }
 
-            if barFocused && !editingText.isEmpty {
-                Button { editingText = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(Brand.textTertiary)
+                if barFocused && !editingText.isEmpty {
+                    Button { editingText = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .scaledFont(size: 16, weight: .medium)
+                            .foregroundStyle(Brand.textTertiary)
+                            .symbolRenderingMode(.hierarchical)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L("Clear"))
                 }
-                .buttonStyle(.plain)
+
+                // Empty focused field: voice search + code scanner (the clear button's slot).
+                if barFocused && editingText.isEmpty {
+                    Button { showVoiceSearch = true } label: {
+                        Image(systemName: "mic")
+                            .scaledFont(size: 15, weight: .medium)
+                            .foregroundStyle(Brand.textSecondary)
+                            .frame(width: 26, height: 26)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L("Voice search"))
+                    .sheet(isPresented: $showVoiceSearch) {
+                        VoiceSearchSheet { text in
+                            addressFocused = false
+                            active.submit(text)
+                        }
+                        .preferredColorScheme(.dark)
+                    }
+
+                    Button { showQRScanner = true } label: {
+                        Image(systemName: "qrcode.viewfinder")
+                            .scaledFont(size: 15, weight: .medium)
+                            .foregroundStyle(Brand.textSecondary)
+                            .frame(width: 26, height: 26)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L("Scan Code"))
+                    .sheet(isPresented: $showQRScanner) {
+                        QRScannerSheet { payload in
+                            addressFocused = false
+                            active.submit(payload)
+                        }
+                    }
+                }
             }
         }
-        .padding(.horizontal, barCollapsed ? 12 : 15)
+        .padding(.horizontal, barCollapsed ? 12 : 14)
         .padding(.vertical, barCollapsed ? 7 : 11)
         // Recessed field inside the glass card (Safari look) — not a second glass layer.
-        .background(Capsule().fill(Brand.text.opacity(barFocused ? 0.11 : 0.07)))
-        .overlay(Capsule().strokeBorder(Brand.text.opacity(barFocused ? 0.10 : 0.06), lineWidth: 0.5))
+        .background(
+            Capsule()
+                .fill(Brand.text.opacity(barFocused ? 0.12 : (barCollapsed ? 0.05 : 0.075)))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(
+                    Brand.text.opacity(barFocused ? 0.16 : 0.06),
+                    lineWidth: barFocused ? 1.0 : 0.5
+                )
+        )
+        // Focus ring glow — calm, not neon.
+        .shadow(color: Brand.text.opacity(barFocused ? (colorScheme == .dark ? 0.18 : 0.08) : 0),
+                radius: barFocused ? 10 : 0, y: 0)
         // Safari's signature: swipe the address pill sideways to switch tabs (interactive — the page
         // tracks your finger), up for the grid. The mask (not a structural branch — see the typing-bug
         // rule) disables it entirely while editing, so a drag can never fight the TextField.
@@ -755,29 +937,52 @@ struct BrowserView: View {
 
     private var pillIcon: String {
         if active.isPrivate { return "hand.raised.fill" }
-        return active.content == .web ? "lock.fill" : "magnifyingglass"
+        switch active.content {
+        case .web:     return "lock.fill"
+        case .results: return "magnifyingglass"
+        case .home:    return "magnifyingglass"
+        }
+    }
+
+    private var pillIconColor: Color {
+        if active.isPrivate {
+            return colorScheme == .dark
+                ? Color(red: 0.72, green: 0.66, blue: 1.0).opacity(0.9)
+                : Color(red: 0.38, green: 0.30, blue: 0.72)
+        }
+        return Brand.textTertiary
+    }
+
+    /// Host for the address-bar favicon (web only).
+    private var addressHost: String? {
+        guard active.content == .web else { return nil }
+        let host = active.webView.url?.host ?? active.sessionURL?.host
+        return host?.replacingOccurrences(of: "www.", with: "")
     }
 
     private var toolbarRow: some View {
         HStack(spacing: 0) {
             historyNavButton("chevron.backward", enabled: active.canGoBack,
                              items: active.backHistory) { active.goBack() }
-                .accessibilityLabel("Back")
+                .accessibilityLabel(L("Back"))
             Spacer()
             historyNavButton("chevron.forward", enabled: active.canGoForward,
                              items: active.forwardHistory) { active.goForward() }
-                .accessibilityLabel("Forward")
+                .accessibilityLabel(L("Forward"))
             Spacer()
             pageMenu
-                .accessibilityLabel("Page options")
+                .accessibilityLabel(L("Page options"))
             Spacer()
-            navButton("book") { libraryTab = .bookmarks; showLibrary = true }
-                .accessibilityLabel("Bookmarks and history")
+            privateModeButton
+            Spacer()
+            libraryButton
+                .accessibilityLabel(L("Bookmarks and history"))
             Spacer()
             tabsButton
-                .accessibilityLabel("Tabs, \(tabs.tabs.count) open")
+                .accessibilityLabel(L("Tabs") + ", \(tabs.spaceTabs.count)")
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 4)
+        .padding(.top, 1)
         .contentShape(Rectangle())
         .simultaneousGesture(barDrag)
     }
@@ -812,14 +1017,52 @@ struct BrowserView: View {
         }
     }
 
+    /// Tap = Library (bookmarks); long-press = jump straight to a shelf, or bookmark this page.
+    private var libraryButton: some View {
+        Menu {
+            if active.content == .web, active.currentURLString != nil {
+                Button { active.toggleBookmarkCurrent() } label: {
+                    Label(active.isCurrentBookmarked ? L("Remove Bookmark") : L("Add Bookmark"),
+                          systemImage: active.isCurrentBookmarked ? "bookmark.fill" : "bookmark")
+                }
+                Divider()
+            }
+            Button { libraryTab = .bookmarks; showLibrary = true } label: {
+                Label(L("Bookmarks"), systemImage: "book")
+            }
+            Button { libraryTab = .reading; showLibrary = true } label: {
+                Label(L("Reading List"), systemImage: "eyeglasses")
+            }
+            Button { libraryTab = .history; showLibrary = true } label: {
+                Label(L("History"), systemImage: "clock.arrow.circlepath")
+            }
+            Button { showDownloads = true } label: {
+                Label(L("Downloads"), systemImage: "arrow.down.circle")
+            }
+        } label: {
+            Image(systemName: "book")
+                .scaledFont(size: 20, weight: .regular)
+                .foregroundStyle(Brand.text)
+                .frame(width: 44, height: 34)
+                .contentShape(Rectangle())
+        } primaryAction: {
+            libraryTab = .bookmarks
+            showLibrary = true
+        }
+    }
+
     /// Tap = tab overview; long-press = quick tab actions (Safari behavior).
     private var tabsButton: some View {
         Menu {
             Button { tabs.newTab(); syncEditing() } label: {
                 Label(L("New Tab"), systemImage: "plus.square")
             }
-            Button { tabs.newTab(isPrivate: true); syncEditing() } label: {
-                Label(L("New Private Tab"), systemImage: "hand.raised")
+            Button {
+                withAnimation(.smooth) { tabs.togglePrivateMode() }
+                syncEditing()
+            } label: {
+                Label(tabs.privateMode ? L("Leave Private Mode") : L("Private Mode"),
+                      systemImage: tabs.privateMode ? "hand.raised.slash" : "hand.raised.fill")
             }
             if !tabs.recentlyClosed.isEmpty {
                 Menu {
@@ -839,7 +1082,7 @@ struct BrowserView: View {
             } label: {
                 Label(L("Close Tab"), systemImage: "xmark")
             }
-            if tabs.tabs.count > 1 {
+            if tabs.spaceTabs.count > 1 {
                 Button(role: .destructive) {
                     withAnimation(.smooth) { tabs.closeAll() }
                     syncEditing()
@@ -899,7 +1142,7 @@ struct BrowserView: View {
                 if PageIntelligence.isAvailable {
                     Section(L("Intelligence")) {
                         Button { showSummary = true } label: {
-                            Label(L("Summarize Page"), systemImage: "sparkles")
+                            Label(L("Summarize Page"), systemImage: "apple.intelligence")
                         }
                         Button { showPageChat = true } label: {
                             Label(L("Ask About This Page"), systemImage: "bubble.left.and.text.bubble.right")
@@ -909,9 +1152,19 @@ struct BrowserView: View {
 
                 Section(L("View")) {
                     Button { openReader() } label: {
-                        Label(L("Reader"), systemImage: "doc.plaintext")
+                        Label(active.readerLoading ? L("Opening Reader…") : L("Reader"),
+                              systemImage: "doc.plaintext")
                     }
-                    Button { active.findOnPage() } label: {
+                    .disabled(active.readerLoading || active.isLoading)
+                    Button { translator.toggleTranslation(for: active.webView) } label: {
+                        Label(translator.isTranslated(active.webView) ? L("Show Original") : L("Translate Page"),
+                              systemImage: "character.bubble")
+                    }
+                    .disabled(translator.isTranslating || active.isLoading)
+                    Button {
+                        Haptics.tick()
+                        active.findOnPage()
+                    } label: {
                         Label(L("Find on Page…"), systemImage: "doc.text.magnifyingglass")
                     }
                     Menu {
@@ -927,6 +1180,18 @@ struct BrowserView: View {
                     } label: {
                         Label(L("Text Size"), systemImage: "textformat")
                     }
+                    // Offered whenever the page has media, because plenty of players (YouTube's
+                    // among them) never expose a PiP control of their own — this is the only way in.
+                    Button {
+                        Haptics.tick()
+                        Task {
+                            if await active.togglePictureInPicture() == false { showNoVideoForPiP = true }
+                        }
+                    } label: {
+                        Label(active.isInPictureInPicture ? L("Stop Picture in Picture")
+                                                          : L("Picture in Picture"),
+                              systemImage: "pip.enter")
+                    }
                     Button { active.toggleDesktopSite() } label: {
                         Label(active.isDesktopSite ? L("Request Mobile Website") : L("Request Desktop Website"),
                               systemImage: active.isDesktopSite ? "iphone" : "desktopcomputer")
@@ -938,8 +1203,12 @@ struct BrowserView: View {
                 Button { tabs.newTab(); syncEditing() } label: {
                     Label(L("New Tab"), systemImage: "plus.square")
                 }
-                Button { tabs.newTab(isPrivate: true); syncEditing() } label: {
-                    Label(L("New Private Tab"), systemImage: "hand.raised")
+                Button {
+                    withAnimation(.smooth) { tabs.togglePrivateMode() }
+                    syncEditing()
+                } label: {
+                    Label(tabs.privateMode ? L("Leave Private Mode") : L("Private Mode"),
+                          systemImage: tabs.privateMode ? "hand.raised.slash" : "hand.raised.fill")
                 }
                 if active.content == .web, let urlStr = active.currentURLString {
                     Button {
@@ -977,7 +1246,7 @@ struct BrowserView: View {
             RoundedRectangle(cornerRadius: 5)
                 .stroke(Brand.text, lineWidth: 1.7)
                 .frame(width: 22, height: 22)
-            Text("\(tabs.tabs.count)")
+            Text("\(tabs.spaceTabs.count)")
                 .scaledFont(size: 12, weight: .semibold)
                 .foregroundStyle(Brand.text)
         }
@@ -993,6 +1262,27 @@ struct BrowserView: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+    }
+
+    /// Bottom-bar Private Mode toggle — the always-visible entry (the tab overview holds the other).
+    /// Filled indigo hand when on, outline when off. Leaving wipes the private session immediately
+    /// (the user's choice); the icon flip + haptic + indigo chrome fade are the feedback.
+    private var privateModeButton: some View {
+        Button {
+            Haptics.tap()
+            withAnimation(.smooth) { tabs.togglePrivateMode() }
+            syncEditing()
+        } label: {
+            Image(systemName: tabs.privateMode ? "hand.raised.fill" : "hand.raised")
+                .scaledFont(size: 20, weight: .regular)
+                .foregroundStyle(tabs.privateMode
+                                 ? Color(red: 0.72, green: 0.66, blue: 1.0)
+                                 : Brand.text)
+                .frame(width: 44, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(tabs.privateMode ? L("Leave Private Mode") : L("Private Mode"))
     }
 }
 
@@ -1059,4 +1349,56 @@ private struct WebProgressBar: View {
 
 #Preview {
     BrowserView()
+}
+
+// MARK: - Translation + selection-intelligence host
+
+/// Attaches the on-device translation session + failure alert, and presents the text-selection
+/// edit-menu actions (Explain This → seeded page chat; Translate This → system translation
+/// popover). Lives in its own modifier so the browser shell's already-long chain doesn't grow
+/// (the type-checker gave out when it did).
+private struct TranslationHost: ViewModifier {
+    @Bindable var translator: PageTranslator
+    @Bindable var model: BrowserModel
+
+    private struct ExplainSeed: Identifiable {
+        let id = UUID()
+        let question: String
+    }
+
+    @State private var explainSeed: ExplainSeed?
+    @State private var selectionToTranslate = ""
+    @State private var showSelectionTranslation = false
+
+    func body(content: Content) -> some View {
+        content
+            .translationTask(translator.configuration) { session in
+                await translator.run(session)
+            }
+            .alert(translator.failureMessage ?? "", isPresented: presented) {
+                Button(L("Done"), role: .cancel) {}
+            }
+            .onChange(of: model.pendingSelectionExplain) { _, text in
+                guard let text else { return }
+                model.pendingSelectionExplain = nil
+                explainSeed = ExplainSeed(question: text)
+            }
+            .onChange(of: model.pendingSelectionTranslation) { _, text in
+                guard let text else { return }
+                model.pendingSelectionTranslation = nil
+                selectionToTranslate = text
+                showSelectionTranslation = true
+            }
+            .sheet(item: $explainSeed) { seed in
+                PageChatSheet(model: model, initialQuestion: seed.question)
+            }
+            .translationPresentation(isPresented: $showSelectionTranslation, text: selectionToTranslate)
+    }
+
+    private var presented: Binding<Bool> {
+        Binding(
+            get: { translator.failureMessage != nil },
+            set: { if !$0 { translator.failureMessage = nil } }
+        )
+    }
 }

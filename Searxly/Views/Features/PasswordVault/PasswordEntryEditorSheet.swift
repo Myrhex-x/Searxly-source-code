@@ -41,7 +41,13 @@ struct PasswordEntryEditorSheet: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    private var vault = PasswordVaultManager.shared
+    // TOTP: `totpInput` is what the user pasted this session, `hasStoredTOTP` reflects what is
+    // already saved, and `removeStoredTOTP` records an explicit removal so it survives until save.
+    @State private var totpInput: String = ""
+    @State private var hasStoredTOTP = false
+    @State private var removeStoredTOTP = false
+
+    private var vault: PasswordVaultManager { PasswordVaultManager.shared }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -93,6 +99,35 @@ struct PasswordEntryEditorSheet: View {
                     }
                 }
 
+                labeledField("Two-factor code (optional)") {
+                    if hasStoredTOTP {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            Text("A two-factor key is stored for this login.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Remove") {
+                                hasStoredTOTP = false
+                                removeStoredTOTP = true
+                                totpInput = ""
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            SecureField("otpauth://… or the setup key", text: $totpInput)
+                                .textFieldStyle(.roundedBorder)
+                            Text("Paste the setup key the site shows next to its QR code, or the full otpauth:// link.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+
                 labeledField("Notes (optional)") {
                     TextField("Recovery codes, hints…", text: $notes, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
@@ -128,6 +163,7 @@ struct PasswordEntryEditorSheet: View {
                 domain = entry.domain
                 username = entry.username
                 notes = entry.notes ?? ""
+                hasStoredTOTP = entry.hasTOTP
                 if password.isEmpty, let stored = vault.password(for: entry.id) {
                     password = stored
                 }
@@ -149,9 +185,20 @@ struct PasswordEntryEditorSheet: View {
         isSaving = true
         errorMessage = nil
 
+        // Validate the two-factor key BEFORE touching the vault. Saving the login first and then
+        // discovering the key is unparseable would leave a half-applied edit the user has to
+        // notice and redo; refusing up front keeps the whole save atomic from their point of view.
+        let pastedTOTP = totpInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pastedTOTP.isEmpty, TOTPGenerator.parse(pastedTOTP) == nil {
+            errorMessage = "That two-factor key wasn't recognised. Paste the otpauth:// link or the setup key exactly as the site shows it."
+            isSaving = false
+            return
+        }
+
         switch mode {
         case .add:
-            if vault.addEntry(domain: domain, username: username, password: password, notes: notes) != nil {
+            if let entry = vault.addEntry(domain: domain, username: username, password: password, notes: notes) {
+                applyTOTP(to: entry.id, pasted: pastedTOTP)
                 onSaved()
             } else {
                 errorMessage = "Could not save login. Check your entries and try again."
@@ -160,11 +207,21 @@ struct PasswordEntryEditorSheet: View {
 
         case .edit(let entry):
             if vault.updateEntry(id: entry.id, domain: domain, username: username, password: password, notes: notes) {
+                applyTOTP(to: entry.id, pasted: pastedTOTP)
                 onSaved()
             } else {
                 errorMessage = "Could not update login."
                 isSaving = false
             }
+        }
+    }
+
+    /// Applies the two-factor change. Already validated by `save()`, so this only moves bytes.
+    private func applyTOTP(to entryID: UUID, pasted: String) {
+        if !pasted.isEmpty {
+            vault.setTOTP(from: pasted, for: entryID)
+        } else if removeStoredTOTP {
+            vault.removeTOTP(for: entryID)
         }
     }
 }

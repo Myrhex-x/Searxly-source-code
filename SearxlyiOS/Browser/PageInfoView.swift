@@ -5,7 +5,6 @@
 //  The panel behind the address pill's lock icon (Safari's page menu ∪ Brave's shields panel):
 //  connection security, per-page tracker tally, the per-site shields toggle, remembered site
 //  preferences (desktop mode / text size), and Brave-style "Shred" (erase this site's data).
-//  Presented as a medium-detent sheet.
 //
 
 import SwiftUI
@@ -14,12 +13,20 @@ struct PageInfoView: View {
     let model: BrowserModel
     @Environment(\.dismiss) private var dismiss
     @State private var shredded = false
+    private var locale = AppLocale.shared
+
+    init(model: BrowserModel) {
+        self.model = model
+    }
 
     private var host: String { model.webView.url?.host ?? "" }
     private var displayHost: String { host.replacingOccurrences(of: "www.", with: "") }
-    private var isSecure: Bool { model.webView.url?.scheme?.lowercased() == "https" && model.webView.hasOnlySecureContent }
+    private var isSecure: Bool {
+        model.webView.url?.scheme?.lowercased() == "https" && model.webView.hasOnlySecureContent
+    }
 
     var body: some View {
+        let _ = locale.languageCode
         NavigationStack {
             Form {
                 Section {
@@ -32,7 +39,7 @@ struct PageInfoView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: isSecure ? "lock.fill" : "lock.open")
                                     .scaledFont(size: 10, weight: .semibold)
-                                Text(isSecure ? "Connection is encrypted" : "Connection is not fully secure")
+                                Text(isSecure ? L("Connection is encrypted") : L("Connection is not fully secure"))
                                     .scaledFont(size: 12)
                             }
                             .foregroundStyle(isSecure ? Brand.textSecondary : Color.red)
@@ -42,17 +49,18 @@ struct PageInfoView: View {
                 }
 
                 Section {
-                    LabeledContent("Trackers blocked on this page",
+                    LabeledContent(L("Trackers blocked on this page"),
                                    value: "\(model.pageBlockedCount)")
-                    Toggle("Shields for \(displayHost)", isOn: shieldsBinding)
+                    Toggle(String(format: L("Shields for %@"), displayHost), isOn: shieldsBinding)
+                        .tint(.green)
                 } header: {
                     Text(L("Shields"))
                 } footer: {
-                    Text("Lowering shields turns off ad & tracker blocking for this site only (reloads the page).")
+                    Text(L("Lowering shields turns off ad & tracker blocking for this site only (reloads the page)."))
                 }
 
                 Section {
-                    Toggle("Request Desktop Website", isOn: desktopBinding)
+                    Toggle(L("Request Desktop Website"), isOn: desktopBinding).tint(.green)
                     HStack {
                         Text(L("Text Size"))
                         Spacer()
@@ -71,19 +79,21 @@ struct PageInfoView: View {
                 } header: {
                     Text(L("Site Settings"))
                 } footer: {
-                    Text("Remembered for \(displayHost) — pages on this site always load this way.")
+                    Text(String(format: L("Remembered for %@ — pages on this site always load this way."), displayHost))
                 }
 
                 Section {
-                    Button(shredded ? "Site Data Erased" : "Erase Site Data & Reload", role: .destructive) {
+                    Button(shredded ? L("Site Data Erased") : L("Erase Site Data & Reload"), role: .destructive) {
                         model.shredCurrentSite()
                         shredded = true
                     }
                     .disabled(shredded)
                 } footer: {
-                    Text("Deletes cookies, caches, and storage that \(displayHost) keeps on this device, then reloads it signed out and fresh.")
+                    Text(String(format: L("Deletes cookies, caches, and storage that %@ keeps on this device, then reloads it signed out and fresh."), displayHost))
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Brand.bg.ignoresSafeArea())
             .navigationTitle(L("Page Info"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -92,6 +102,7 @@ struct PageInfoView: View {
                 }
             }
             .tint(Brand.text)
+            .preferredColorScheme(.dark)
         }
         .presentationDetents([.medium, .large])
     }

@@ -3,8 +3,10 @@
 //  SearxlyiOS
 //
 //  The AI Overview at the top of web results, on a Liquid Glass card: a grounded on-device answer
-//  (from the top result snippets) with [n] citations styled as quiet superscripts, favicon source
-//  chips (tap → open that result), and follow-up searches. Tap-only — the model runs on a Generate tap.
+//  (from the top result snippets) with [n] citations styled as quiet superscripts — tappable, each
+//  opens its source — favicon source chips (tap → open that result), and follow-up searches.
+//  Question-like queries generate automatically (the behavior Settings promises); everything else
+//  keeps a tap-to-Generate affordance so navigational searches never burn the model.
 //
 //  The card is a THIN view: all generation state lives on `model.aiOverview` (see AIOverviewModel), so
 //  it survives the results List recycling this row mid-generation.
@@ -18,19 +20,16 @@ import SwiftUI
 struct AIOverviewStatusRow: View {
     let availability: PageIntelligence.Availability
     private var appearance = AppearanceSettings.shared
-    @Environment(\.colorScheme) private var colorScheme
+    private var locale = AppLocale.shared
 
     init(availability: PageIntelligence.Availability) { self.availability = availability }
 
     var body: some View {
+        let _ = locale.languageCode
         HStack(spacing: 9) {
-            Image(systemName: "sparkles")
-                .scaledFont(size: 11, weight: .semibold)
-                .foregroundStyle(Brand.bg)
-                .frame(width: 21, height: 21)
-                .background(Brand.text, in: Circle())
+            AppleIntelligenceBadge(iconSize: 11, diameter: 21)
             Text(message)
-                .font(.system(size: 12.5 * appearance.textScale))
+                .font(.system(size: 12 * appearance.textScale))
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 6)
@@ -38,14 +37,12 @@ struct AIOverviewStatusRow: View {
                 ProgressView().controlSize(.mini).tint(Brand.textTertiary)
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .searxlyGlassCard(cornerRadius: 16)
         .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .glassEffect(.regular.tint(colorScheme == .dark ? Color.white.opacity(0.045) : Color.black.opacity(0.03)),
-                     in: .rect(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 0.5))
-        .padding(.horizontal, 14)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
         .onAppear { PageIntelligence.requestModelIfNeeded() }
         .accessibilityLabel(message)
     }
@@ -66,7 +63,7 @@ struct AIOverviewCard: View {
     let model: BrowserModel
 
     private var appearance = AppearanceSettings.shared
-    @Environment(\.colorScheme) private var colorScheme
+    private var locale = AppLocale.shared
 
     init(model: BrowserModel) {
         self.model = model
@@ -75,7 +72,11 @@ struct AIOverviewCard: View {
     /// All state is read from the stable per-tab model — the card owns none of it.
     private var ai: AIOverviewModel { model.aiOverview }
 
+    /// "Ask more" — a multi-turn chat grounded on the SAME top results (no new egress).
+    @State private var showAskMore = false
+
     var body: some View {
+        let _ = locale.languageCode
         let scale = appearance.textScale
         Group {
             if ai.phase == .idle {
@@ -83,33 +84,33 @@ struct AIOverviewCard: View {
                     HStack(spacing: 8) {
                         sparklesBadge
                         Text(L("AI Overview"))
-                            .font(.system(size: 14 * scale, weight: .semibold))
+                            .font(.system(size: 13 * scale, weight: .semibold))
                             .foregroundStyle(Brand.text)
                         Spacer()
                         Text(L("Generate"))
-                            .font(.system(size: 12.5 * scale, weight: .medium))
+                            .font(.system(size: 12 * scale, weight: .medium))
                             .foregroundStyle(Brand.textSecondary)
-                        Image(systemName: "chevron.right")
-                            .scaledFont(size: 10, weight: .semibold)
-                            .foregroundStyle(Brand.textTertiary)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(L("Generate AI overview of the search results"))
             } else {
-                VStack(alignment: .leading, spacing: 11) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 7) {
                         sparklesBadge
                         Text(L("AI Overview"))
-                            .font(.system(size: 14 * scale, weight: .semibold))
+                            .font(.system(size: 13 * scale, weight: .semibold))
                             .foregroundStyle(Brand.text)
                         if ai.phase == .streaming {
                             ProgressView().controlSize(.mini).tint(Brand.textTertiary)
                         }
-                        Spacer()
+                        Spacer(minLength: 0)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(ai.phase == .streaming ? L("AI Overview") + " — " + L("generating") : L("AI Overview"))
 
                     if ai.phase == .failed {
                         Button { runGenerate() } label: {
@@ -124,17 +125,32 @@ struct AIOverviewCard: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityHint(L("Tries the overview again"))
                     } else if !ai.answer.isEmpty {
                         Text(styledAnswer(ai.answer, scale: scale))
                             .foregroundStyle(Brand.textSecondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .environment(\.openURL, OpenURLAction { url in
+                                guard url.scheme == "searxly-cite",
+                                      let n = Int(url.host ?? ""), n >= 1, n <= model.results.count
+                                else { return .discarded }
+                                model.open(model.results[n - 1])
+                                return .handled
+                            })
+                    } else if ai.phase == .streaming {
+                        VStack(alignment: .leading, spacing: 6) {
+                            RoundedRectangle(cornerRadius: 3).fill(Brand.surface).frame(height: 10)
+                            RoundedRectangle(cornerRadius: 3).fill(Brand.surface).frame(width: 220, height: 10)
+                            RoundedRectangle(cornerRadius: 3).fill(Brand.surface).frame(width: 160, height: 10)
+                        }
+                        .redacted(reason: .placeholder)
+                        .opacity(0.7)
                     }
 
                     if ai.phase == .done {
-                        if !ai.followUps.isEmpty {
-                            followUps
-                        }
+                        if !ai.answer.isEmpty { askMoreChip(scale: scale) }
+                        if !ai.followUps.isEmpty { followUps }
                         sources
                         if !ai.answer.isEmpty {
                             Text(L("Generated on-device from these results — may contain mistakes."))
@@ -143,79 +159,108 @@ struct AIOverviewCard: View {
                         }
                     }
                 }
-                .padding(15)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
             }
         }
-        // ONE Liquid Glass surface for every phase (idle row grows into the full card).
-        .glassEffect(.regular.tint(glassTint), in: .rect(cornerRadius: 20))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Brand.hairline, lineWidth: 0.5)
-        )
+        .searxlyGlassCard(cornerRadius: 16)
         .padding(.horizontal, 14)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
         .animation(.smooth(duration: 0.25), value: ai.phase)
         // State lives on the model; here we only point it at the current query. NO onDisappear cancel —
         // the whole fix is that a recycled card must NOT tear down an in-flight generation.
         .onAppear {
             ai.sync(query: model.searchQuery)
+            autoGenerateIfWarranted()
             #if DEBUG
             if ProcessInfo.processInfo.environment["SEARXLY_DEMO_AUTOGEN"] == "1", ai.phase == .idle {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { runGenerate() }
             }
             #endif
         }
-        .onChange(of: model.searchQuery) { _, q in ai.sync(query: q) }
-        .accessibilityLabel("AI overview of the search results")
+        .onChange(of: model.searchQuery) { _, q in
+            ai.sync(query: q)
+            autoGenerateIfWarranted()
+        }
     }
 
     private func runGenerate() {
         ai.generate(results: model.results, suggestions: model.searchSuggestions, isPrivate: model.isPrivate)
     }
 
-    private var glassTint: Color {
-        colorScheme == .dark ? Color.white.opacity(0.045) : Color.black.opacity(0.03)
+    /// Question-like queries answer themselves — the tap-to-Generate step made the overview feel
+    /// broken ("nothing happens by itself"), and Settings already describes this exact behavior.
+    /// `.idle` guards recycled rows and failed runs from re-triggering in a loop.
+    private func autoGenerateIfWarranted() {
+        guard ai.phase == .idle, SearchIntelligence.isQuestionLike(model.searchQuery) else { return }
+        runGenerate()
     }
 
     private var sparklesBadge: some View {
-        Image(systemName: "sparkles")
-            .scaledFont(size: 11, weight: .semibold)
-            .foregroundStyle(Brand.bg)
-            .frame(width: 21, height: 21)
-            .background(Brand.text, in: Circle())
+        AppleIntelligenceBadge(iconSize: 11, diameter: 21)
     }
 
-    /// Citations like [1] or [2][4] render as quiet raised markers instead of raw brackets.
+    /// Opens a chat grounded on the same snippets the overview used — follow-up questions
+    /// without burning a fresh search or leaving the SERP.
+    private func askMoreChip(scale: CGFloat) -> some View {
+        Button { showAskMore = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "bubble.left.and.text.bubble.right")
+                    .font(.system(size: 11 * scale, weight: .semibold))
+                Text(L("Ask more"))
+                    .font(.system(size: 12.5 * scale, weight: .semibold))
+            }
+            .foregroundStyle(Brand.text)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(Brand.surfaceHi, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showAskMore) {
+            PageChatSheet(searchQuery: model.searchQuery, results: model.results)
+        }
+        .accessibilityHint(L("Chat about these search results, on-device"))
+    }
+
+    /// Citations like [1] or [2][4] render as quiet raised markers instead of raw brackets — and
+    /// carry a searxly-cite:// link so tapping one opens its source (handled by the openURL action
+    /// above). Ranges come from the match itself, so repeated markers all get styled.
     private func styledAnswer(_ text: String, scale: CGFloat) -> AttributedString {
         var attr = AttributedString(text)
-        attr.font = .system(size: 14.5 * scale)
-        guard let regex = try? NSRegularExpression(pattern: #"\[\d{1,2}\]"#) else { return attr }
+        attr.font = .system(size: 14 * scale)
+        guard let regex = try? NSRegularExpression(pattern: #"\[(\d{1,2})\]"#) else { return attr }
         let plain = String(text)
-        for match in regex.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)).reversed() {
+        for match in regex.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)) {
             guard let r = Range(match.range, in: plain),
-                  let ar = attr.range(of: String(plain[r]), options: .backwards) else { continue }
+                  let lo = AttributedString.Index(r.lowerBound, within: attr),
+                  let hi = AttributedString.Index(r.upperBound, within: attr) else { continue }
+            let ar = lo..<hi
             attr[ar].font = .system(size: 10 * scale, weight: .bold)
-            attr[ar].foregroundColor = Brand.textTertiary
+            attr[ar].foregroundColor = Brand.textSecondary
             attr[ar].baselineOffset = 3.5
+            if let nr = Range(match.range(at: 1), in: plain), let n = Int(plain[nr]) {
+                attr[ar].link = URL(string: "searxly-cite://\(n)")
+            }
         }
         return attr
     }
 
     /// Favicon + host chips for the grounded sources.
     private var sources: some View {
-        let count = ai.sourceCount > 0 ? ai.sourceCount : min(model.results.count, 8)
+        let count = ai.sourceCount > 0 ? ai.sourceCount : min(model.results.count, SearchIntelligence.groundingCount)
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 7) {
                 ForEach(Array(model.results.prefix(count).enumerated()), id: \.element.id) { i, result in
                     Button { model.open(result) } label: {
                         HStack(spacing: 5) {
                             Text("\(i + 1)")
-                                .scaledFont(size: 9.5, weight: .bold).monospacedDigit()
+                                .scaledFont(size: 10, weight: .bold).monospacedDigit()
                                 .foregroundStyle(Brand.textTertiary)
                             FaviconView(host: result.displayHost, size: 15)
                             Text(result.displayHost)
-                                .scaledFont(size: 11.5, weight: .medium)
+                                .scaledFont(size: 12, weight: .medium)
                                 .foregroundStyle(Brand.textSecondary)
                                 .lineLimit(1)
                         }
@@ -224,9 +269,11 @@ struct AIOverviewCard: View {
                         .background(Brand.surfaceHi.opacity(0.75), in: Capsule())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("\(L("Source")) \(i + 1): \(result.displayHost)")
                 }
             }
         }
+        .accessibilityLabel(L("Sources"))
     }
 
     /// Follow-up searches as quiet hairline rows (no boxes-in-boxes).
@@ -242,7 +289,7 @@ struct AIOverviewCard: View {
                             .scaledFont(size: 11, weight: .medium)
                             .foregroundStyle(Brand.textTertiary)
                         Text(q)
-                            .font(.system(size: 13.5 * appearance.textScale))
+                            .font(.system(size: 13 * appearance.textScale))
                             .foregroundStyle(Brand.text)
                             .lineLimit(1)
                         Spacer(minLength: 0)
@@ -254,6 +301,7 @@ struct AIOverviewCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("\(L("Search")): \(q)")
             }
         }
     }

@@ -21,6 +21,8 @@ struct SearxlyLogo: View {
     var animated: Bool = false
     var showShine: Bool = false
     var showTagline: Bool = true
+    /// Hero accent hairline under the wordmark. Off on iOS home/onboarding (logo alone is cleaner).
+    var showAccentBar: Bool = true
     /// Tint for the hero "sunlight" glow behind the wordmark. Defaults to white (standard edition);
     /// Searxly Maximum passes its orange so the paid edition's home hero glows orange, not white.
     var glowTint: Color = .white
@@ -79,7 +81,7 @@ struct SearxlyLogo: View {
                     }
                 }
 
-            if isHero {
+            if isHero && showAccentBar {
                 Capsule()
                     .fill(
                         LinearGradient(
@@ -107,7 +109,7 @@ struct SearxlyLogo: View {
                     .tracking(1.8)
             }
         }
-        .accessibilityLabel("Searxly — Private. Yours.")
+        .accessibilityLabel(showTagline ? "Searxly — Private. Yours." : "Searxly")
         .opacity(glassEnabled ? 0.98 : 0.92)
         .animation(.easeOut(duration: 0.22), value: glassEnabled)
         .onAppear { runEntranceIfNeeded() }

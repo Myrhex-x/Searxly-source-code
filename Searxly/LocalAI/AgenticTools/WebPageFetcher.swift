@@ -17,6 +17,7 @@
 //
 
 import Foundation
+import Network
 
 enum WebPageFetcher {
 
@@ -54,7 +55,10 @@ enum WebPageFetcher {
                 if resolvesInternal { return nil }
             }
 
-            let (data, response) = try await lane.session.data(for: request)
+            // Follow redirects through a session whose delegate re-applies the SSRF guard to EVERY hop.
+            // The checks above only vet the INITIAL URL; without this, a 3xx to http://127.0.0.1/ (or a
+            // link-local metadata address) would be followed automatically, straight past the guard.
+            let (data, response) = try await Self.guardedSession(viaTor: lane.viaTor).data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
 
             let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
@@ -178,6 +182,37 @@ enum WebPageFetcher {
         return false
     }
 
+    // MARK: - Redirect-following sessions (SSRF guard re-applied on every hop)
+
+    /// The redirect-validating session for a lane. `URLSession` follows 3xx automatically, so without a
+    /// delegate a redirect could bounce a fetch of a public URL to an internal address that the
+    /// initial-URL check never saw. Cached per lane (long-lived; the delegate is stateless).
+    static func guardedSession(viaTor: Bool) -> URLSession {
+        viaTor ? torGuardedSession : directGuardedSession
+    }
+
+    // delegateQueue: nil → URLSession runs delegate callbacks on its own serial background queue, so the
+    // redirect delegate's occasionally-blocking DNS classification never touches the main thread.
+
+    /// Direct lane: classify each redirect host by resolving it (catches DNS-based SSRF).
+    private static let directGuardedSession = URLSession(
+        configuration: .default,
+        delegate: SSRFRedirectGuard(allowDNS: true),
+        delegateQueue: nil
+    )
+
+    /// Tor lane: mirrors TorLane.torSession (ephemeral + SOCKS5h). The delegate classifies redirect
+    /// LITERALS only — a local DNS lookup would leak the host from the real IP, and private IPs aren't
+    /// routable through a Tor exit anyway.
+    private static let torGuardedSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.proxyConfigurations = [ProxyConfiguration(socksv5Proxy: WebViewFactory.torSocksEndpoint())]
+        config.timeoutIntervalForRequest = 25   // Tor circuits are slower than clearnet
+        return URLSession(configuration: config,
+                          delegate: SSRFRedirectGuard(allowDNS: false),
+                          delegateQueue: nil)
+    }()
+
     // MARK: - HTML → text
 
     private static func extractTitle(from html: String) -> String? {
@@ -219,5 +254,32 @@ enum WebPageFetcher {
                    "&ldquo;": "“", "&rdquo;": "”"]
         for (k, v) in map { s = s.replacingOccurrences(of: k, with: v) }
         return s
+    }
+}
+
+// MARK: - SSRF redirect guard
+
+/// Re-applies WebPageFetcher's SSRF guard to every HTTP redirect hop. `URLSession` follows 3xx
+/// responses automatically, so without this a fetch of a public URL could be bounced to an internal
+/// address (`http://127.0.0.1/…`, `http://169.254.169.254/…`) that the initial-URL check never sees.
+private final class SSRFRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    /// Direct lane resolves + classifies a redirect hostname (catches DNS-based SSRF); the Tor lane
+    /// classifies literals only — a local DNS lookup would leak, and private IPs aren't Tor-routable.
+    private let allowDNS: Bool
+    init(allowDNS: Bool) { self.allowDNS = allowDNS }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        // sanitizedURL rejects non-http(s), localhost/.local/.onion, and blocked IP literals.
+        guard let target = request.url,
+              WebPageFetcher.sanitizedURL(from: target.absoluteString) != nil else {
+            completionHandler(nil); return   // cancel → the 3xx is surfaced as-is; no internal fetch
+        }
+        if allowDNS, WebPageFetcher.hostHasBlockedAddress(target.host ?? "", allowDNS: true) {
+            completionHandler(nil); return   // hostname resolves to an internal address
+        }
+        completionHandler(request)   // public → public redirect: follow it unchanged
     }
 }

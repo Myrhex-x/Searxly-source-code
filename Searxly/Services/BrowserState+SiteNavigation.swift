@@ -109,9 +109,9 @@ extension BrowserState {
         let didStart = picked.startAccessingSecurityScopedResource()
         defer { if didStart { picked.stopAccessingSecurityScopedResource() } }
 
-        // Resolve the file to load and the folder WebKit may read from:
+        // Resolve the file to load and the URL WebKit may read from:
         //  • folder picked → open its index.html (or first *.html); read access = the folder.
-        //  • file picked   → open it directly; read access = its parent folder.
+        //  • file picked   → open it directly; read access = the file ITSELF (see below).
         let isDirectory = (try? picked.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
         let fileToLoad: URL
         let readAccessURL: URL
@@ -124,7 +124,13 @@ extension BrowserState {
             readAccessURL = picked
         } else {
             fileToLoad = picked
-            readAccessURL = picked.deletingLastPathComponent()
+            // Read access MUST be a path the sandbox actually granted us. NSOpenPanel extends the grant to
+            // the exact selection only — the chosen file, NOT its parent folder. Passing the parent here
+            // (which we hold no security scope for) means WebKit can't mint the read sandbox-extension for
+            // the WebContent process, and the page loads blank. Grant access to the file itself so it
+            // renders. (Same-folder assets it references still won't load — pick the enclosing FOLDER to
+            // view a project with its CSS/JS/images.)
+            readAccessURL = picked
         }
 
         // Fresh foreground tab that holds the security scope (on the URL the panel actually granted) for
@@ -137,6 +143,26 @@ extension BrowserState {
         showingWebContent = true
         searchText = fileToLoad.absoluteString
         loadLocalFileInWebView(fileToLoad, readAccessURL: readAccessURL, recordInHistory: false)
+    }
+
+    /// Opens a local `file://` URL that arrived from outside the address bar — "Open With Searxly" /
+    /// double-click / drag onto the Dock icon (delivered via `.onOpenURL`), or a file dragged onto the
+    /// window. Opens it in a fresh foreground tab and retains any security-scoped access for the tab's
+    /// lifetime so WebKit can read the bytes. (Files handed over by Finder/LaunchServices arrive with a
+    /// grant that isn't a scoped-bookmark URL, so `retainSecurityScopedAccess` is a harmless no-op there —
+    /// the grant already covers the load; drag-and-drop DOES yield a scoped URL, which we then hold.)
+    func openLocalFileURL(_ url: URL) {
+        guard url.isFileURL else { return }
+        clearNativeSearch()
+        let tab = BrowserTab(kind: .web)
+        tab.retainSecurityScopedAccess(to: url)
+        tabs.append(tab)
+        selectedTabID = tab.id
+        showingWebContent = true
+        searchText = url.absoluteString
+        // Read access = the file itself: we hold a grant for exactly this file, not its parent folder
+        // (see loadLocalFileInWebView / openLocalFile for the sandbox rationale).
+        loadLocalFileInWebView(url, readAccessURL: url, recordInHistory: false)
     }
 
     /// Finds the entry HTML file in a picked folder: index.html / index.htm if present, otherwise the
@@ -256,9 +282,19 @@ extension BrowserState {
 
     // MARK: - Onion (Tor) navigation
 
-    /// Entry point for opening a `.onion` URL. Onion routing is opt-in (TorManager.isEnabled, off by
-    /// default). When it's off, a quick "Enable Tor?" prompt is shown; enabling it opens the site.
+    /// Entry point for opening a `.onion` URL. Onion routing is opt-in in the base app
+    /// (TorManager.isEnabled, off by default). When it's off, a quick "Enable Tor?" prompt is shown.
+    ///
+    /// Searxly Maximum always keeps Tor available — including while Maximum Privacy rides the
+    /// **Searxly VPN** lane. .onion hosts only resolve over Tor's SOCKS (SOCKS5h); a live VPN alone
+    /// can't open them. So Maximum never prompts: it enables Tor and opens a dedicated onion tab,
+    /// leaving clearnet on the VPN while the onion tab exits through Tor (typically Tor-over-VPN).
     func openOnionURL(_ url: URL) {
+        if Edition.isMaximum {
+            TorManager.shared.isEnabled = true
+            performOpenOnionURL(url)
+            return
+        }
         guard TorManager.shared.isEnabled else {
             pendingOnionURL = url
             showTorDisclosure = true
@@ -387,8 +423,20 @@ extension BrowserState {
 
     /// Stops Tor once no onion tabs remain — resource + privacy hygiene. Safe to call often; no-ops
     /// when an onion tab is still open or Tor is already stopped/stopping. Call after any tab removal.
+    ///
+    /// **Never** tear Tor down while Maximum Privacy is on the Tor kill-switch lane: Tor is carrying
+    /// every tab and every search, not just onion tabs. Stopping it here was the classic failure where
+    /// closing the last .onion (or never opening one) left the kill switch closed — "VPN or Tor isn't
+    /// connected" — even if the user had a VPN tunnel up that the gate was still ignoring.
+    ///
+    /// On the VPN protection lane, Tor is only needed for onion tabs, so it still stops when the last
+    /// onion tab closes (and will start again the next time someone opens a .onion).
     func stopTorIfNoOnionTabsRemain() {
         guard !tabs.contains(where: { $0.privacyMode == .onion }) else { return }
+        if PrivacyManager.shared.appPrivacyMode == .maximum,
+           PrivacyManager.shared.maxProtection == .tor {
+            return
+        }
         switch TorManager.shared.status {
         case .stopped, .stopping:
             return

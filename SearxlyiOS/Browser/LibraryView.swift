@@ -249,7 +249,7 @@ struct LibraryView: View {
                         }
                     } header: {
                         Text(group.title)
-                            .scaledFont(size: 12.5, weight: .semibold)
+                            .scaledFont(size: 12, weight: .semibold)
                             .foregroundStyle(Brand.textSecondary)
                     }
                 }

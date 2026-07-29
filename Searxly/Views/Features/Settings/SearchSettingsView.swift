@@ -8,7 +8,6 @@ import AppKit
 
 struct SearchSettingsView: View {
     @Binding var knowledgePanelEnabled: Bool
-    @Binding var localPackEnabled: Bool
 
     @AppStorage(AppLanguage.overrideKey) private var appLanguageOverride: String = ""
     @AppStorage("searchQueryHistoryEnabled") private var searchQueryHistoryEnabled: Bool = true
@@ -17,14 +16,13 @@ struct SearchSettingsView: View {
     /// Language in effect when this pane opened — used to offer a relaunch once it changes.
     @State private var languageWhenOpened: String = ""
 
-    /// The local map pack is blocked in Maximum Privacy (its map picture is served by Apple).
-    private var isMaximumPrivacy: Bool { PrivacyManager.shared.appPrivacyMode == .maximum }
-
     var body: some View {
         SettingsPane {
             SettingsPaneHeader(
                 title: "Search",
-                subtitle: "Control how Searxly presents search results on your Mac."
+                subtitle: Edition.isMaximum
+                    ? "Result presentation and ranking, resolved on this Mac. Nothing in this pane changes what leaves the device."
+                    : "Control how Searxly presents search results on your Mac."
             )
 
             languageSection
@@ -33,49 +31,31 @@ struct SearchSettingsView: View {
 
             SettingsSection(
                 title: "Knowledge panel",
-                footer: "Shows entity cards on the right side of web results. Disable this if you want zero external connections — your main search always stays private through your local SearXNG."
+                footer: Edition.isMaximum
+                    ? "Entity cards are not available in Searxly Maximum — they fetch Grokipedia outside your local SearXNG."
+                    : "Shows entity cards on the right side of web results. Disable this if you want zero external connections — your main search always stays private through your local SearXNG."
             ) {
-                SettingsCallout(
-                    title: "Connects directly to Grokipedia",
-                    message: "When enabled, Searxly fetches article data directly from grokipedia.com for every entity card shown. Your search query reaches Grokipedia's servers — it does not go through your private SearXNG instance. Grokipedia can see what you searched and your IP address (or your VPN exit IP if a VPN is active).",
-                    tint: .orange,
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-
-                SettingsToggleRow(
-                    title: "Knowledge panel on search results",
-                    description: "Google-style info cards for brands, people, and dictionary words.",
-                    isOn: $knowledgePanelEnabled
-                )
-            }
-
-            SettingsSection(
-                title: "Local map pack",
-                footer: "Shows a map plus nearby places at the top of results for place searches like “pharmacie perpignan”. Off by default — when a place search is detected, Searxly offers to turn it on. Your other searches always stay private through your local SearXNG."
-            ) {
-                SettingsCallout(
-                    title: "Place info is private; the map is drawn by Apple",
-                    message: "When enabled, place searches geocode the city and fetch nearby listings from OpenStreetMap through the Searxly gateway — OpenStreetMap only ever sees the gateway, never you. The map picture itself is drawn by Apple Maps, so Apple sees the map area you look at (never your search query). Requires a configured gateway.",
-                    tint: .secondary,
-                    systemImage: "mappin.and.ellipse"
-                )
-
-                if isMaximumPrivacy {
+                if Edition.isMaximum {
                     SettingsCallout(
-                        title: "Unavailable in Maximum Privacy",
-                        message: "Because the map is served by Apple, the local map pack is disabled while Maximum Privacy is on. Lower the privacy mode to use it.",
+                        title: "Unavailable in Searxly Maximum",
+                        message: "Knowledge cards connect directly to Grokipedia (outside your private SearXNG). Maximum keeps search local-only, so this surface is removed.",
                         tint: .orange,
                         systemImage: "lock.fill"
                     )
-                }
+                } else {
+                    SettingsCallout(
+                        title: "Connects directly to Grokipedia",
+                        message: "When enabled, Searxly fetches article data directly from grokipedia.com for every entity card shown. Your search query reaches Grokipedia's servers — it does not go through your private SearXNG instance. Grokipedia can see what you searched and your IP address (or your VPN exit IP if a VPN is active).",
+                        tint: .orange,
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
 
-                SettingsToggleRow(
-                    title: "Local map pack for place searches",
-                    description: "Map and nearby places for queries like “restaurant lyon” or “pharmacie perpignan”.",
-                    isOn: $localPackEnabled
-                )
-                .disabled(isMaximumPrivacy)
-                .opacity(isMaximumPrivacy ? 0.5 : 1)
+                    SettingsToggleRow(
+                        title: "Knowledge panel on search results",
+                        description: "Google-style info cards for brands, people, and dictionary words.",
+                        isOn: $knowledgePanelEnabled
+                    )
+                }
             }
         }
     }

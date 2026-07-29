@@ -3,13 +3,15 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 110;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		BF1E14582FE07FB70064DE5C /* SearxlyHelper.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BFA000030000000000000001 /* P256K in Frameworks */ = {isa = PBXBuildFile; productRef = BFA000020000000000000001 /* P256K */; };
 		BFA000050000000000000001 /* libsecp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = BFA000040000000000000001 /* libsecp256k1 */; };
+		BFAA010000000000000000AC /* SearxlyWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BFAA010000000000000000A8 /* SearxlyWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BFAB010000000000000000BC /* SearxlyShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BFAB010000000000000000B8 /* SearxlyShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BFB000030000000000000001 /* Bulwark in Frameworks */ = {isa = PBXBuildFile; productRef = BFB000020000000000000001 /* Bulwark */; };
 		BFC000030000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BFC000020000000000000001 /* Sparkle */; };
 		BFDD000000000000000000AE /* SearxlyHelper.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -28,6 +30,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = BF1E144C2FE07FB70064DE5C;
 			remoteInfo = SearxlyHelper;
+		};
+		BFAA010000000000000000AB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BF13CDA62FC3421E0081D8C8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BFAA010000000000000000A1;
+			remoteInfo = SearxlyWidgets;
+		};
+		BFAB010000000000000000BB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BF13CDA62FC3421E0081D8C8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BFAB010000000000000000B1;
+			remoteInfo = SearxlyShareExtension;
 		};
 		BFDD000000000000000000AD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -48,21 +64,37 @@
 /* Begin PBXCopyFilesBuildPhase section */
 		BF1E145D2FE07FB70064DE5C /* Embed XPC Services */ = {
 			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
 			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
-			dstSubfolder = Product;
+			dstSubfolderSpec = 16;
 			files = (
 				BF1E14582FE07FB70064DE5C /* SearxlyHelper.xpc in Embed XPC Services */,
 			);
 			name = "Embed XPC Services";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BFAD010000000000000000D1 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BFAA010000000000000000AC /* SearxlyWidgets.appex in Embed Foundation Extensions */,
+				BFAB010000000000000000BC /* SearxlyShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BFDD000000000000000000A8 /* Embed XPC Services */ = {
 			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
 			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
-			dstSubfolder = Product;
+			dstSubfolderSpec = 16;
 			files = (
 				BFDD000000000000000000AE /* SearxlyHelper.xpc in Embed XPC Services */,
 			);
 			name = "Embed XPC Services";
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
 
@@ -70,6 +102,8 @@
 		BF1057010000000000000008 /* SearxlyiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SearxlyiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF13CDAE2FC3421E0081D8C8 /* Searxly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Searxly.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = SearxlyHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
+		BFAA010000000000000000A8 /* SearxlyWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SearxlyWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		BFAB010000000000000000B8 /* SearxlyShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SearxlyShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFC04F1600000000000000C1 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		BFDD000000000000000000AB /* SearxlyMaximum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SearxlyMaximum.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFE0000100000000000000A2 /* SearxlyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SearxlyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -82,6 +116,20 @@
 				Info.plist,
 			);
 			target = BF1E144C2FE07FB70064DE5C /* SearxlyHelper */;
+		};
+		BFAA010000000000000000AD /* Exceptions for "SearxlyWidgets" folder in "SearxlyWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"SearxlyWidgets-Info.plist",
+			);
+			target = BFAA010000000000000000A1 /* SearxlyWidgets */;
+		};
+		BFAB010000000000000000BD /* Exceptions for "SearxlyShareExtension" folder in "SearxlyShareExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"ShareExtension-Info.plist",
+			);
+			target = BFAB010000000000000000B1 /* SearxlyShareExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -114,6 +162,27 @@
 			path = SearxlyHelper;
 			sourceTree = "<group>";
 		};
+		BFAA010000000000000000A9 /* SearxlyWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BFAA010000000000000000AD /* Exceptions for "SearxlyWidgets" folder in "SearxlyWidgets" target */,
+			);
+			path = SearxlyWidgets;
+			sourceTree = "<group>";
+		};
+		BFAB010000000000000000B9 /* SearxlyShareExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BFAB010000000000000000BD /* Exceptions for "SearxlyShareExtension" folder in "SearxlyShareExtension" target */,
+			);
+			path = SearxlyShareExtension;
+			sourceTree = "<group>";
+		};
+		BFAC010000000000000000C1 /* SearxlyWidgetShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SearxlyWidgetShared;
+			sourceTree = "<group>";
+		};
 		BFE0000100000000000000A3 /* SearxlyTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = SearxlyTests;
@@ -124,11 +193,14 @@
 /* Begin PBXFrameworksBuildPhase section */
 		BF1057010000000000000006 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BF13CDAB2FC3421E0081D8C8 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 				BFA000030000000000000001 /* P256K in Frameworks */,
 				BFA000050000000000000001 /* libsecp256k1 in Frameworks */,
@@ -136,14 +208,32 @@
 				BFC000030000000000000001 /* Sparkle in Frameworks */,
 				BFF000030000000000000001 /* onnxruntime in Frameworks */,
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BF1E144A2FE07FB70064DE5C /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BFAA010000000000000000A6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BFAB010000000000000000B6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BFDD000000000000000000A6 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 				BFDD000000000000000000B1 /* P256K in Frameworks */,
 				BFDD000000000000000000B2 /* libsecp256k1 in Frameworks */,
@@ -151,11 +241,14 @@
 				BFDD000000000000000000B4 /* Sparkle in Frameworks */,
 				BFDD000000000000000000B5 /* onnxruntime in Frameworks */,
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BFE0000100000000000000A5 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -171,6 +264,7 @@
 				BF1057010000000000000009 /* SearxlyiOS */,
 				BF1057010000000000000010 /* SearxlyShared */,
 				BF13CDAF2FC3421E0081D8C8 /* Products */,
+				BFF1CDE53018C106005EFA7D /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -182,8 +276,20 @@
 				BFE0000100000000000000A2 /* SearxlyTests.xctest */,
 				BF1057010000000000000008 /* SearxlyiOS.app */,
 				BFDD000000000000000000AB /* SearxlyMaximum.app */,
+				BFAA010000000000000000A8 /* SearxlyWidgets.appex */,
+				BFAB010000000000000000B8 /* SearxlyShareExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		BFF1CDE53018C106005EFA7D /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				BFAC010000000000000000C1 /* SearxlyWidgetShared */,
+				BFAA010000000000000000A9 /* SearxlyWidgets */,
+				BFAB010000000000000000B9 /* SearxlyShareExtension */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -196,12 +302,18 @@
 				BF1057010000000000000005 /* Sources */,
 				BF1057010000000000000006 /* Frameworks */,
 				BF1057010000000000000007 /* Resources */,
+				BFAD010000000000000000D1 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
+			);
+			dependencies = (
+				BFAA010000000000000000AA /* PBXTargetDependency */,
+				BFAB010000000000000000BA /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				BF1057010000000000000009 /* SearxlyiOS */,
 				BF1057010000000000000010 /* SearxlyShared */,
+				BFAC010000000000000000C1 /* SearxlyWidgetShared */,
 			);
 			name = SearxlyiOS;
 			productName = SearxlyiOS;
@@ -251,6 +363,8 @@
 			);
 			buildRules = (
 			);
+			dependencies = (
+			);
 			fileSystemSynchronizedGroups = (
 				BF1E144E2FE07FB70064DE5C /* SearxlyHelper */,
 			);
@@ -258,6 +372,47 @@
 			productName = SearxlyHelper;
 			productReference = BF1E144D2FE07FB70064DE5C /* SearxlyHelper.xpc */;
 			productType = "com.apple.product-type.xpc-service";
+		};
+		BFAA010000000000000000A1 /* SearxlyWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BFAA010000000000000000A2 /* Build configuration list for PBXNativeTarget "SearxlyWidgets" */;
+			buildPhases = (
+				BFAA010000000000000000A5 /* Sources */,
+				BFAA010000000000000000A6 /* Frameworks */,
+				BFAA010000000000000000A7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BFAA010000000000000000A9 /* SearxlyWidgets */,
+				BFAC010000000000000000C1 /* SearxlyWidgetShared */,
+			);
+			name = SearxlyWidgets;
+			productName = SearxlyWidgets;
+			productReference = BFAA010000000000000000A8 /* SearxlyWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		BFAB010000000000000000B1 /* SearxlyShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BFAB010000000000000000B2 /* Build configuration list for PBXNativeTarget "SearxlyShareExtension" */;
+			buildPhases = (
+				BFAB010000000000000000B5 /* Sources */,
+				BFAB010000000000000000B6 /* Frameworks */,
+				BFAB010000000000000000B7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BFAB010000000000000000B9 /* SearxlyShareExtension */,
+			);
+			name = SearxlyShareExtension;
+			productName = SearxlyShareExtension;
+			productReference = BFAB010000000000000000B8 /* SearxlyShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		BFDD000000000000000000A1 /* SearxlyMaximum */ = {
 			isa = PBXNativeTarget;
@@ -356,7 +511,7 @@
 				BFC000010000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				BFF000010000000000000001 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 			);
-			preferredProjectObjectVersion = 110;
+			preferredProjectObjectVersion = 77;
 			productRefGroup = BF13CDAF2FC3421E0081D8C8 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -366,6 +521,8 @@
 				BFE0000100000000000000A1 /* SearxlyTests */,
 				BF1057010000000000000001 /* SearxlyiOS */,
 				BFDD000000000000000000A1 /* SearxlyMaximum */,
+				BFAA010000000000000000A1 /* SearxlyWidgets */,
+				BFAB010000000000000000B1 /* SearxlyShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -373,23 +530,45 @@
 /* Begin PBXResourcesBuildPhase section */
 		BF1057010000000000000007 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BF13CDAC2FC3421E0081D8C8 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BF1E144B2FE07FB70064DE5C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BFAA010000000000000000A7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BFAB010000000000000000B7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BFDD000000000000000000A7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
@@ -397,106 +576,114 @@
 		BFD000010000000000000001 /* Bundle SearXNG runtime */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
-			name = "Bundle SearXNG runtime";
-			shellPath = /bin/sh;
-			shellScript = (
-				"set -e",
-				"RUNTIME_SRC=\"${SRCROOT}/build/searxng-runtime\"",
-				"RUNTIME_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/searxng-runtime\"",
-				"if [ ! -x \"$RUNTIME_SRC/python/bin/python3.12\" ]; then",
-				"  echo \"note: SearXNG runtime missing - building it (first build only)...\"",
-				"  \"${SRCROOT}/scripts/build-searxng-runtime.sh\"",
-				"fi",
-				"mkdir -p \"$RUNTIME_DST\"",
-				"/usr/bin/rsync -a --delete \"$RUNTIME_SRC/\" \"$RUNTIME_DST/\"",
-				"echo \"Bundled SearXNG runtime -> $RUNTIME_DST\"",
-				"",
+			buildActionMask = 2147483647;
+			files = (
 			);
+			inputPaths = (
+			);
+			name = "Bundle SearXNG runtime";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nRUNTIME_SRC=\"${SRCROOT}/build/searxng-runtime\"\nRUNTIME_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/searxng-runtime\"\nif [ ! -x \"$RUNTIME_SRC/python/bin/python3.12\" ]; then\n  echo \"note: SearXNG runtime missing - building it (first build only)...\"\n  \"${SRCROOT}/scripts/build-searxng-runtime.sh\"\nfi\nmkdir -p \"$RUNTIME_DST\"\n/usr/bin/rsync -a --delete \"$RUNTIME_SRC/\" \"$RUNTIME_DST/\"\necho \"Bundled SearXNG runtime -> $RUNTIME_DST\"\n";
 		};
 		BFD000020000000000000002 /* Bundle Tor runtime */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
-			name = "Bundle Tor runtime";
-			shellPath = /bin/sh;
-			shellScript = (
-				"set -e",
-				"TOR_SRC=\"${SRCROOT}/build/tor-runtime\"",
-				"TOR_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/tor-runtime\"",
-				"if [ ! -x \"$TOR_SRC/tor\" ]; then",
-				"  echo \"warning: Tor runtime missing at $TOR_SRC/tor - onion support will be disabled. Run scripts/fetch-tor-runtime.sh to enable it.\"",
-				"  exit 0",
-				"fi",
-				"mkdir -p \"$TOR_DST\"",
-				"/usr/bin/rsync -a --delete --delete-excluded --exclude=pluggable_transports \"$TOR_SRC/\" \"$TOR_DST/\"",
-				"echo \"Bundled Tor runtime -> $TOR_DST\"",
-				"",
+			buildActionMask = 2147483647;
+			files = (
 			);
+			inputPaths = (
+			);
+			name = "Bundle Tor runtime";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nTOR_SRC=\"${SRCROOT}/build/tor-runtime\"\nTOR_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/tor-runtime\"\nif [ ! -x \"$TOR_SRC/tor\" ]; then\n  echo \"warning: Tor runtime missing at $TOR_SRC/tor - onion support will be disabled. Run scripts/fetch-tor-runtime.sh to enable it.\"\n  exit 0\nfi\nmkdir -p \"$TOR_DST\"\n/usr/bin/rsync -a --delete --delete-excluded --exclude=pluggable_transports \"$TOR_SRC/\" \"$TOR_DST/\"\necho \"Bundled Tor runtime -> $TOR_DST\"\n";
 		};
 		BFDD000000000000000000A9 /* Bundle SearXNG runtime */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
-			name = "Bundle SearXNG runtime";
-			shellPath = /bin/sh;
-			shellScript = (
-				"set -e",
-				"RUNTIME_SRC=\"${SRCROOT}/build/searxng-runtime\"",
-				"RUNTIME_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/searxng-runtime\"",
-				"if [ ! -x \"$RUNTIME_SRC/python/bin/python3.12\" ]; then",
-				"  echo \"note: SearXNG runtime missing - building it (first build only)...\"",
-				"  \"${SRCROOT}/scripts/build-searxng-runtime.sh\"",
-				"fi",
-				"mkdir -p \"$RUNTIME_DST\"",
-				"/usr/bin/rsync -a --delete \"$RUNTIME_SRC/\" \"$RUNTIME_DST/\"",
-				"echo \"Bundled SearXNG runtime -> $RUNTIME_DST\"",
-				"",
+			buildActionMask = 2147483647;
+			files = (
 			);
+			inputPaths = (
+			);
+			name = "Bundle SearXNG runtime";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nRUNTIME_SRC=\"${SRCROOT}/build/searxng-runtime\"\nRUNTIME_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/searxng-runtime\"\nif [ ! -x \"$RUNTIME_SRC/python/bin/python3.12\" ]; then\n  echo \"note: SearXNG runtime missing - building it (first build only)...\"\n  \"${SRCROOT}/scripts/build-searxng-runtime.sh\"\nfi\nmkdir -p \"$RUNTIME_DST\"\n/usr/bin/rsync -a --delete \"$RUNTIME_SRC/\" \"$RUNTIME_DST/\"\necho \"Bundled SearXNG runtime -> $RUNTIME_DST\"\n";
 		};
 		BFDD000000000000000000AA /* Bundle Tor runtime */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
-			name = "Bundle Tor runtime";
-			shellPath = /bin/sh;
-			shellScript = (
-				"set -e",
-				"TOR_SRC=\"${SRCROOT}/build/tor-runtime\"",
-				"TOR_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/tor-runtime\"",
-				"if [ ! -x \"$TOR_SRC/tor\" ]; then",
-				"  echo \"warning: Tor runtime missing at $TOR_SRC/tor - onion support will be disabled. Run scripts/fetch-tor-runtime.sh to enable it.\"",
-				"  exit 0",
-				"fi",
-				"mkdir -p \"$TOR_DST\"",
-				"/usr/bin/rsync -a --delete \"$TOR_SRC/\" \"$TOR_DST/\"",
-				"echo \"Bundled Tor runtime -> $TOR_DST\"",
-				"",
+			buildActionMask = 2147483647;
+			files = (
 			);
+			inputPaths = (
+			);
+			name = "Bundle Tor runtime";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nTOR_SRC=\"${SRCROOT}/build/tor-runtime\"\nTOR_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/tor-runtime\"\nif [ ! -x \"$TOR_SRC/tor\" ]; then\n  echo \"warning: Tor runtime missing at $TOR_SRC/tor - onion support will be disabled. Run scripts/fetch-tor-runtime.sh to enable it.\"\n  exit 0\nfi\nmkdir -p \"$TOR_DST\"\n/usr/bin/rsync -a --delete \"$TOR_SRC/\" \"$TOR_DST/\"\necho \"Bundled Tor runtime -> $TOR_DST\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		BF1057010000000000000005 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BF13CDAA2FC3421E0081D8C8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BF1E14492FE07FB70064DE5C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BFAA010000000000000000A5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BFAB010000000000000000B5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BFDD000000000000000000A5 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 		BFE0000100000000000000A4 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
 			files = (
 			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
@@ -505,6 +692,16 @@
 			isa = PBXTargetDependency;
 			target = BF1E144C2FE07FB70064DE5C /* SearxlyHelper */;
 			targetProxy = BF1E14562FE07FB70064DE5C /* PBXContainerItemProxy */;
+		};
+		BFAA010000000000000000AA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BFAA010000000000000000A1 /* SearxlyWidgets */;
+			targetProxy = BFAA010000000000000000AB /* PBXContainerItemProxy */;
+		};
+		BFAB010000000000000000BA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BFAB010000000000000000B1 /* SearxlyShareExtension */;
+			targetProxy = BFAB010000000000000000BB /* PBXContainerItemProxy */;
 		};
 		BFDD000000000000000000AC /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -519,18 +716,23 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		BF1057010000000000000003 /* Debug configuration for PBXNativeTarget "SearxlyiOS" */ = {
+		BF1057010000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = SearxlyiOS/SearxlyiOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = KKRU446268;
+				CURRENT_PROJECT_VERSION = 6;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "SearxlyiOS-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Searxly;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Searxly uses the camera only while you scan a QR code from the address bar.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Face ID to unlock the app when App Lock is enabled.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Searxly uses the microphone only while you use voice search.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Voice search is recognized on this device; your speech never leaves it.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -541,8 +743,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9;
-				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyiOS;
+				MARKETING_VERSION = 0.9.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -554,18 +756,23 @@
 			};
 			name = Debug;
 		};
-		BF1057010000000000000004 /* Release configuration for PBXNativeTarget "SearxlyiOS" */ = {
+		BF1057010000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = SearxlyiOS/SearxlyiOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = KKRU446268;
+				CURRENT_PROJECT_VERSION = 6;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "SearxlyiOS-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Searxly;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Searxly uses the camera only while you scan a QR code from the address bar.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Searxly uses Face ID to unlock the app when App Lock is enabled.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Searxly uses the microphone only while you use voice search.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Voice search is recognized on this device; your speech never leaves it.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -576,8 +783,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9;
-				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyiOS;
+				MARKETING_VERSION = 0.9.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -589,7 +796,7 @@
 			};
 			name = Release;
 		};
-		BF13CDB72FC3421F0081D8C8 /* Debug configuration for PBXProject "Searxly" */ = {
+		BF13CDB72FC3421F0081D8C8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -657,7 +864,7 @@
 			};
 			name = Debug;
 		};
-		BF13CDB82FC3421F0081D8C8 /* Release configuration for PBXProject "Searxly" */ = {
+		BF13CDB82FC3421F0081D8C8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -717,7 +924,7 @@
 			};
 			name = Release;
 		};
-		BF13CDBA2FC3421F0081D8C8 /* Debug configuration for PBXNativeTarget "Searxly" */ = {
+		BF13CDBA2FC3421F0081D8C8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = BFC04F1600000000000000C1 /* Config.xcconfig */;
 			buildSettings = {
@@ -727,9 +934,9 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 8;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = KKRU446268;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -743,7 +950,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LSMinimumSystemVersion = 15.0;
-				MARKETING_VERSION = 0.9.6;
+				MARKETING_VERSION = 1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -757,7 +964,7 @@
 			};
 			name = Debug;
 		};
-		BF13CDBB2FC3421F0081D8C8 /* Release configuration for PBXNativeTarget "Searxly" */ = {
+		BF13CDBB2FC3421F0081D8C8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = BFC04F1600000000000000C1 /* Config.xcconfig */;
 			buildSettings = {
@@ -767,9 +974,9 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 8;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = KKRU446268;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -783,7 +990,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LSMinimumSystemVersion = 15.0;
-				MARKETING_VERSION = 0.9.6;
+				MARKETING_VERSION = 1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -797,14 +1004,14 @@
 			};
 			name = Release;
 		};
-		BF1E145B2FE07FB70064DE5C /* Debug configuration for PBXNativeTarget "SearxlyHelper" */ = {
+		BF1E145B2FE07FB70064DE5C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = SearxlyHelper/SearxlyHelper.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = KKRU446268;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -825,14 +1032,14 @@
 			};
 			name = Debug;
 		};
-		BF1E145C2FE07FB70064DE5C /* Release configuration for PBXNativeTarget "SearxlyHelper" */ = {
+		BF1E145C2FE07FB70064DE5C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = SearxlyHelper/SearxlyHelper.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = KKRU446268;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -853,7 +1060,113 @@
 			};
 			name = Release;
 		};
-		BFDD000000000000000000A2 /* Debug configuration for PBXNativeTarget "SearxlyMaximum" */ = {
+		BFAA010000000000000000A3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SearxlyWidgets/SearxlyWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 6;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SearxlyWidgets/SearxlyWidgets-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.9.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly.Widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BFAA010000000000000000A4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SearxlyWidgets/SearxlyWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 6;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SearxlyWidgets/SearxlyWidgets-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.9.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly.Widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BFAB010000000000000000B3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 6;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SearxlyShareExtension/ShareExtension-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.9.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BFAB010000000000000000B4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 6;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SearxlyShareExtension/ShareExtension-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.9.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.Searxly.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		BFDD000000000000000000A2 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = BFC04F1600000000000000C1 /* Config.xcconfig */;
 			buildSettings = {
@@ -865,7 +1178,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = KKRU446268;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -880,7 +1193,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LSMinimumSystemVersion = 15.0;
-				MARKETING_VERSION = 0.9.5;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyMaximum;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -895,7 +1208,7 @@
 			};
 			name = Debug;
 		};
-		BFDD000000000000000000A3 /* Release configuration for PBXNativeTarget "SearxlyMaximum" */ = {
+		BFDD000000000000000000A3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = BFC04F1600000000000000C1 /* Config.xcconfig */;
 			buildSettings = {
@@ -907,7 +1220,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = KKRU446268;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -922,7 +1235,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LSMinimumSystemVersion = 15.0;
-				MARKETING_VERSION = 0.9.5;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.myrhex.SearxlyMaximum;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -937,13 +1250,13 @@
 			};
 			name = Release;
 		};
-		BFE0000100000000000000A7 /* Debug configuration for PBXNativeTarget "SearxlyTests" */ = {
+		BFE0000100000000000000A7 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = KKRU446268;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
@@ -955,13 +1268,13 @@
 			};
 			name = Debug;
 		};
-		BFE0000100000000000000A8 /* Release configuration for PBXNativeTarget "SearxlyTests" */ = {
+		BFE0000100000000000000A8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = KKRU446268;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
@@ -979,49 +1292,73 @@
 		BF1057010000000000000002 /* Build configuration list for PBXNativeTarget "SearxlyiOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BF1057010000000000000003 /* Debug configuration for PBXNativeTarget "SearxlyiOS" */,
-				BF1057010000000000000004 /* Release configuration for PBXNativeTarget "SearxlyiOS" */,
+				BF1057010000000000000003 /* Debug */,
+				BF1057010000000000000004 /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		BF13CDA92FC3421E0081D8C8 /* Build configuration list for PBXProject "Searxly" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BF13CDB72FC3421F0081D8C8 /* Debug configuration for PBXProject "Searxly" */,
-				BF13CDB82FC3421F0081D8C8 /* Release configuration for PBXProject "Searxly" */,
+				BF13CDB72FC3421F0081D8C8 /* Debug */,
+				BF13CDB82FC3421F0081D8C8 /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		BF13CDB92FC3421F0081D8C8 /* Build configuration list for PBXNativeTarget "Searxly" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BF13CDBA2FC3421F0081D8C8 /* Debug configuration for PBXNativeTarget "Searxly" */,
-				BF13CDBB2FC3421F0081D8C8 /* Release configuration for PBXNativeTarget "Searxly" */,
+				BF13CDBA2FC3421F0081D8C8 /* Debug */,
+				BF13CDBB2FC3421F0081D8C8 /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		BF1E145A2FE07FB70064DE5C /* Build configuration list for PBXNativeTarget "SearxlyHelper" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BF1E145B2FE07FB70064DE5C /* Debug configuration for PBXNativeTarget "SearxlyHelper" */,
-				BF1E145C2FE07FB70064DE5C /* Release configuration for PBXNativeTarget "SearxlyHelper" */,
+				BF1E145B2FE07FB70064DE5C /* Debug */,
+				BF1E145C2FE07FB70064DE5C /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BFAA010000000000000000A2 /* Build configuration list for PBXNativeTarget "SearxlyWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BFAA010000000000000000A3 /* Debug */,
+				BFAA010000000000000000A4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BFAB010000000000000000B2 /* Build configuration list for PBXNativeTarget "SearxlyShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BFAB010000000000000000B3 /* Debug */,
+				BFAB010000000000000000B4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		BFDD000000000000000000A4 /* Build configuration list for PBXNativeTarget "SearxlyMaximum" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BFDD000000000000000000A2 /* Debug configuration for PBXNativeTarget "SearxlyMaximum" */,
-				BFDD000000000000000000A3 /* Release configuration for PBXNativeTarget "SearxlyMaximum" */,
+				BFDD000000000000000000A2 /* Debug */,
+				BFDD000000000000000000A3 /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		BFE0000100000000000000A6 /* Build configuration list for PBXNativeTarget "SearxlyTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				BFE0000100000000000000A7 /* Debug configuration for PBXNativeTarget "SearxlyTests" */,
-				BFE0000100000000000000A8 /* Release configuration for PBXNativeTarget "SearxlyTests" */,
+				BFE0000100000000000000A7 /* Debug */,
+				BFE0000100000000000000A8 /* Release */,
 			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */

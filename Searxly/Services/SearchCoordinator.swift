@@ -66,9 +66,6 @@ extension BrowserState {
         SpeculativeSearchPrefetcher.shared.invalidate()
         cancelKnowledgePanelTask()
         knowledgePanelState = .hidden
-        cancelLocalPackTask()
-        localPackDetected = nil
-        localPackState = .hidden
         searchResults = []
         searchErrorMessage = nil
         lastSearchQuery = ""
@@ -258,10 +255,14 @@ extension BrowserState {
     }
 
     func setKnowledgePanelEnabled(_ enabled: Bool) {
-        guard enabled != knowledgePanelEnabled else { return }
-        knowledgePanelEnabled = enabled
-        Persistence.setKnowledgePanelEnabled(enabled)
-        if !enabled {
+        // Searxly Maximum never offers knowledge cards (Grokipedia is an external hop).
+        let effective = Edition.isMaximum ? false : enabled
+        guard effective != knowledgePanelEnabled else { return }
+        knowledgePanelEnabled = effective
+        if !Edition.isMaximum {
+            Persistence.setKnowledgePanelEnabled(effective)
+        }
+        if !effective {
             cancelKnowledgePanelTask()
             knowledgePanelState = .hidden
         } else if !searchResults.isEmpty {
@@ -305,36 +306,9 @@ extension BrowserState {
 
     // MARK: - Search Bangs
 
-    /// Maps DuckDuckGo-style bangs to their search URL templates.
-    /// `%s` is replaced with the URL-encoded query.
-    static let bangs: [String: String] = [
-        "g":    "https://www.google.com/search?q=%s",
-        "yt":   "https://www.youtube.com/results?search_query=%s",
-        "gh":   "https://github.com/search?q=%s",
-        "r":    "https://www.reddit.com/search/?q=%s",
-        "so":   "https://stackoverflow.com/search?q=%s",
-        "a":    "https://www.amazon.com/s?k=%s",
-        "w":    "https://en.wikipedia.org/wiki/Special:Search?search=%s",
-        "img":  "https://www.google.com/search?tbm=isch&q=%s",
-        "maps": "https://www.google.com/maps/search/%s",
-        "tw":   "https://twitter.com/search?q=%s",
-        "npm":  "https://www.npmjs.com/search?q=%s",
-        "pypi": "https://pypi.org/search/?q=%s",
-        "wb":   "https://web.archive.org/web/*/%s",
-        "ddg":  "https://duckduckgo.com/?q=%s",
-        "b":    "https://www.bing.com/search?q=%s",
-    ]
-
-    /// If `query` starts with `!bang`, returns the resolved URL; otherwise nil.
+    /// The table lives in SearxlyShared/SearchBangs.swift so iOS resolves the same bangs.
     static func resolveBang(_ query: String) -> URL? {
-        guard query.hasPrefix("!") else { return nil }
-        let parts = query.dropFirst().split(separator: " ", maxSplits: 1)
-        guard parts.count >= 1 else { return nil }
-        let bang = parts[0].lowercased()
-        let rest = parts.count > 1 ? String(parts[1]) : ""
-        guard let template = bangs[bang] else { return nil }
-        let encoded = rest.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? rest
-        return URL(string: template.replacingOccurrences(of: "%s", with: encoded))
+        SearchBangs.resolve(query)
     }
 
     private static func sameResultsLayout(_ a: String?, _ b: String?) -> Bool {
@@ -446,7 +420,6 @@ extension BrowserState {
         // query, not the results), so the card is ready by the time results land instead of starting
         // afterwards. The result is committed once the search settles — see commitKnowledgePanelIfReady.
         beginKnowledgePanelResolution()
-        beginLocalPackResolution()
 
         let effectiveQuery = query
         lastEffectiveSearchQuery = effectiveQuery
@@ -525,7 +498,6 @@ extension BrowserState {
         }
         isLoadingSearch = false
         commitKnowledgePanelIfReady()
-        commitLocalPackIfReady()
         // Arm live auto-refresh if we landed on the news tab in Latest mode.
         syncNewsAutoRefresh()
     }
@@ -551,7 +523,8 @@ extension BrowserState {
     func beginKnowledgePanelResolution() {
         cancelKnowledgePanelTask()
 
-        guard knowledgePanelEnabled,
+        guard !Edition.isMaximum,
+              knowledgePanelEnabled,
               !lastSearchQuery.isEmpty,
               currentSearchCategory != "images",
               currentSearchCategory != "videos",
@@ -584,7 +557,8 @@ extension BrowserState {
             return
         }
 
-        guard knowledgePanelEnabled,
+        guard !Edition.isMaximum,
+              knowledgePanelEnabled,
               !searchResults.isEmpty,
               currentSearchCategory != "images",
               currentSearchCategory != "videos" else {
@@ -601,115 +575,6 @@ extension BrowserState {
             )
         } else {
             knowledgePanelState = .hidden
-        }
-    }
-
-    // MARK: - Local pack
-
-    /// Whether the local pack can appear at all right now: a query on the All tab, the gateway configured,
-    /// and NOT Maximum Privacy (the map is drawn by Apple, so Maximum blocks the whole feature).
-    private var localPackEligible: Bool {
-        SearxlyGateway.isConfigured
-            && currentSearchCategory == nil
-            && PrivacyManager.shared.appPrivacyMode != .maximum
-            && !lastSearchQuery.isEmpty
-    }
-
-    func cancelLocalPackTask() {
-        localPackTask?.cancel()
-        localPackTask = nil
-        localPackResolved = nil
-    }
-
-    /// Re-evaluate the local pack for the current search — used when the feature is toggled on while
-    /// results are already on screen.
-    func refreshLocalPack() {
-        beginLocalPackResolution()
-    }
-
-    /// Evaluates the local pack for `lastSearchQuery`. When the feature is ON, resolves places in parallel
-    /// with the search (committed later by `commitLocalPackIfReady`). When it's OFF, records the detected
-    /// query so an opt-in prompt can be offered once results land. Hidden / no-op when ineligible.
-    func beginLocalPackResolution() {
-        cancelLocalPackTask()
-        localPackDetected = nil
-
-        guard localPackEligible, let detected = LocalPackQueryDetector.detect(lastSearchQuery) else {
-            localPackState = .hidden
-            return
-        }
-        localPackDetected = detected
-
-        guard localPackEnabled else {
-            // Off → fetch nothing; the opt-in prompt is offered in commit once results are in.
-            localPackState = .hidden
-            return
-        }
-
-        let query = lastSearchQuery
-        localPackState = .loading
-        localPackTask = Task {
-            let data = await LocalPlacesResolver.resolve(query: query, detected: detected)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard !Task.isCancelled, self.lastSearchQuery == query else { return }
-                self.localPackResolved = (query, data)
-                self.commitLocalPackIfReady()
-            }
-        }
-    }
-
-    /// Settles the local pack once the search has real results. Enabled + resolved → the pack; off → the
-    /// opt-in prompt (unless dismissed this session); otherwise hidden. Mirrors the knowledge panel's
-    /// "commit only when both the fetch and the search have landed" gating.
-    func commitLocalPackIfReady() {
-        guard !isLoadingSearch else { return }
-
-        guard localPackEligible,
-              !searchResults.isEmpty,
-              let detected = localPackDetected,
-              LocalPackQueryDetector.detect(lastSearchQuery) == detected else {
-            localPackState = .hidden
-            return
-        }
-
-        if localPackEnabled {
-            // Wait for the resolution to land (the task calls back here when it finishes).
-            guard let resolved = localPackResolved, resolved.query == lastSearchQuery else { return }
-            localPackState = resolved.data.map(LocalPackDisplayState.ready) ?? .hidden
-        } else {
-            localPackState = localPackPromptDismissed ? .hidden : .prompt(detected)
-        }
-    }
-
-    /// Enables the local pack from the SERP opt-in prompt, then resolves + shows it for the current query.
-    /// Refuses in Maximum Privacy (defensive — the prompt isn't offered there in the first place).
-    func enableLocalPackFromPrompt() {
-        guard PrivacyManager.shared.appPrivacyMode != .maximum else { return }
-        localPackEnabled = true
-        Persistence.setLocalPackEnabled(true)
-        beginLocalPackResolution()
-    }
-
-    /// Dismisses the opt-in prompt and suppresses it for the rest of the session (the user can still turn
-    /// the feature on anytime in Settings → Search).
-    func dismissLocalPackPrompt() {
-        localPackPromptDismissed = true
-        localPackState = .hidden
-    }
-
-    func setLocalPackEnabled(_ enabled: Bool) {
-        // Never enable while Maximum Privacy is active (the map picture is served by Apple).
-        if enabled && PrivacyManager.shared.appPrivacyMode == .maximum { return }
-        guard enabled != localPackEnabled else { return }
-        localPackEnabled = enabled
-        Persistence.setLocalPackEnabled(enabled)
-        if !enabled {
-            cancelLocalPackTask()
-            localPackDetected = nil
-            localPackState = .hidden
-        } else if !searchResults.isEmpty {
-            refreshLocalPack()
         }
     }
 

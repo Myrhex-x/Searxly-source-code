@@ -20,14 +20,17 @@ import SwiftUI
 
 enum SettingsTheme {
     /// Page background. Near-black in dark, paper-white (matching AdaptiveChrome.canvasLight) in light.
+    /// Pitch black in Searxly Maximum, whose canvas is #000 everywhere (see AdaptiveChrome.canvasDark).
     static let canvas = AdaptiveChrome.dynamic(
         light: Color(red: 0.973, green: 0.973, blue: 0.98),
-        dark: Color(red: 0.039, green: 0.039, blue: 0.047)
+        dark: Edition.isMaximum ? .black : Color(red: 0.039, green: 0.039, blue: 0.047)
     )
-    /// Sidebar / header chrome — a hair off the canvas.
+    /// Sidebar / header chrome — a hair off the canvas. Maximum keeps it ON the canvas instead: the
+    /// site's own model, where `--bg` and `--bg-raised` are both #000 and only cards lift off it. The
+    /// `hairline` tokens below already separate the settings sidebar from the page, so nothing is lost.
     static let canvasRaised = AdaptiveChrome.dynamic(
         light: .white,
-        dark: Color(red: 0.071, green: 0.071, blue: 0.082)
+        dark: Edition.isMaximum ? .black : Color(red: 0.071, green: 0.071, blue: 0.082)
     )
 
     /// Card surfaces. Dark: translucent white lift over the canvas. Light: opaque white cards

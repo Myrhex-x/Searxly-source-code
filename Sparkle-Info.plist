@@ -20,11 +20,6 @@
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 
-	<!-- Only used for city-less place searches like "mcdonalds" / "restaurant near me" — to find places
-	     near you. One coarse fix, never stored or shared. Searches with an explicit city need no location. -->
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Searxly uses your location only to find places near you when you search for something like “restaurant” or “mcdonalds” without naming a city. It’s used once for that search and never stored or shared.</string>
-
 	<!-- Searxly gateway app token. Substituted at build time from SEARXLY_GATEWAY_APP_TOKEN
 	     (blank default in Config.xcconfig; real value layered in via the gitignored Secrets.xcconfig).
 	     A soft gate only — the upstream 0x / io.net keys live on the gateway server, never here.
@@ -80,6 +75,44 @@
 			<array>
 				<string>http</string>
 				<string>https</string>
+			</array>
+		</dict>
+	</array>
+
+	<!--
+		Local document handling. Declaring these standard web UTIs is what makes macOS list Searxly under
+		a local file's "Open With" menu, lets it be set as the default handler for .html, and delivers a
+		double-clicked / dragged-onto-the-Dock file to the app (via SwiftUI's .onOpenURL → openExternalURL
+		→ openLocalFileURL). Role = Viewer (a browser displays these); LSHandlerRank = Alternate so Searxly
+		is offered alongside the system default rather than seizing it. Reading the opened file is covered
+		by the user-selected-files sandbox entitlement (the Open/double-click grant).
+	-->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>HTML document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.html</string>
+				<string>public.xhtml</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Web document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.svg-image</string>
+				<string>com.adobe.pdf</string>
 			</array>
 		</dict>
 	</array>

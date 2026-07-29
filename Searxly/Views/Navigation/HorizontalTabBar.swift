@@ -52,26 +52,19 @@ struct HorizontalTabBar: View {
                     }
                 }
 
-                // New Tab Button
+                // New Tab Button. ⌘T / ⌘⇧T are File-menu commands (SearxlyApp) so they work over a
+                // focused web page; this button is the pointer path only, no shortcut of its own.
                 Button(action: newTabAction) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .semibold))
                         .padding(8)
                 }
-                .keyboardShortcut("t", modifiers: .command)
                 .buttonStyle(.plain)
                 .background(toolbarMaterial, in: Circle())
                 .searxlyGlass(glassEnabled ? .interactive : .clear, in: Circle())
                 .padding(.leading, 4)
                 .help("New Tab (⌘T)")
                 .accessibilityLabel(Text("New Tab"))
-
-                // Hidden button providing ⌘⇧T for private tabs (Rank 1)
-                Button(action: newPrivateTabAction) {
-                    EmptyView()
-                }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
-                .accessibilityHidden(true)
             }
             .padding(.horizontal, 48)
         }

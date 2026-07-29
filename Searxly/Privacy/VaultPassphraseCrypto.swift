@@ -13,7 +13,15 @@ import CommonCrypto
 nonisolated enum VaultPassphraseCrypto: Sendable {
     private static let saltLength = 16
     private static let verifierLength = 32
-    private static let iterations = 150_000
+
+    /// Work factor for verifiers written from now on. OWASP's current floor for PBKDF2-HMAC-SHA256.
+    /// Measured at ~90 ms on Apple Silicon, which is the whole cost budget for one unlock attempt.
+    static let currentIterations = 600_000
+
+    /// What shipped before the bump. Verifiers stored without an explicit count were written at this
+    /// value, so they must keep verifying at it — see `PasswordVaultManager.verifyPassphrase`, which
+    /// re-derives at `currentIterations` once the old passphrase checks out.
+    static let legacyIterations = 150_000
 
     static func generateSalt() -> Data? {
         var bytes = [UInt8](repeating: 0, count: saltLength)
@@ -22,8 +30,8 @@ nonisolated enum VaultPassphraseCrypto: Sendable {
         return Data(bytes)
     }
 
-    static func deriveVerifier(passphrase: String, salt: Data) -> Data? {
-        guard !passphrase.isEmpty, salt.count >= saltLength else { return nil }
+    static func deriveVerifier(passphrase: String, salt: Data, iterations: Int = currentIterations) -> Data? {
+        guard !passphrase.isEmpty, salt.count >= saltLength, iterations > 0 else { return nil }
         return try? pbkdf2(
             password: Data(passphrase.utf8),
             salt: salt,
@@ -32,8 +40,8 @@ nonisolated enum VaultPassphraseCrypto: Sendable {
         )
     }
 
-    static func verify(passphrase: String, salt: Data, verifier: Data) -> Bool {
-        guard let derived = deriveVerifier(passphrase: passphrase, salt: salt) else { return false }
+    static func verify(passphrase: String, salt: Data, verifier: Data, iterations: Int = currentIterations) -> Bool {
+        guard let derived = deriveVerifier(passphrase: passphrase, salt: salt, iterations: iterations) else { return false }
         return derived.count == verifier.count
             && derived.withUnsafeBytes { d in
                 verifier.withUnsafeBytes { v in

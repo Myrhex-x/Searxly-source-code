@@ -94,6 +94,19 @@ extension BrowserState {
             )
             historyTitleObserverRegistered = true
         }
+
+        // Media playback state from the `searxlyMedia` bridge → keep mid-playback tabs resident and
+        // remember their position (so switching away from a playing YouTube tab and back doesn't reload
+        // and restart it). object == nil so we receive every reporting webView; we map it to its tab.
+        if !mediaStateObserverRegistered {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleTabMediaStateChanged(_:)),
+                name: .tabMediaStateChanged,
+                object: nil
+            )
+            mediaStateObserverRegistered = true
+        }
     }
 
     func saveAllData() {
@@ -158,7 +171,7 @@ extension BrowserState {
         saveSidebarPreferences()
     }
 
-    /// Snap helper used by the chevron buttons in the sidebar.
+    /// Snap helper used by ⌘S / View ▸ Toggle Sidebar (rail ↔ expanded).
     /// If currently wide, collapses to canonical rail and remembers the prior width.
     /// If narrow, restores to the last comfortable expanded width (or default).
     func toggleSidebarCollapse() {
@@ -175,7 +188,7 @@ extension BrowserState {
     // MARK: - Password Vault (web page integration)
 
     func fillCurrentPageWithLogin(username: String, password: String) {
-        guard PasswordVaultManager.shared.autofillEnabled else { return }
+        guard PasswordVaultManager.shared.isAutofillActive else { return }
         // callAsyncJavaScript passes arguments as proper JSON-encoded named parameters so
         // no manual escaping is needed — passwords with backticks, ${ } or other special
         // characters cannot break out of the JS context.
@@ -216,10 +229,81 @@ extension BrowserState {
                                           completionHandler: nil)
     }
 
+    /// Fills a two-factor code into the current page. 2FA prompts almost always live on a SECOND
+    /// page shown after the password is accepted, which is why this is a separate action rather
+    /// than part of `fillCurrentPageWithLogin`.
+    ///
+    /// Handles both shapes sites use: one field for the whole code, and the row of single-digit
+    /// boxes that GitHub, Stripe and friends render (each box gets one digit, with input events
+    /// dispatched per box so the page's own advance-to-next-field logic still runs).
+    func fillCurrentPageWithTOTP(_ code: String) {
+        guard PasswordVaultManager.shared.isAutofillActive else { return }
+        let js = """
+        (function() {
+            function fillField(el, value) {
+                try {
+                    const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+                    if (desc && desc.set) { desc.set.call(el, value); }
+                    else { el.value = value; }
+                } catch(e) { el.value = value; }
+                el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            function isVisible(el) {
+                if (el.disabled || el.readOnly) return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }
+
+            const all = Array.from(document.querySelectorAll('input')).filter(isVisible);
+
+            // Split-digit inputs: several short numeric boxes, one character each.
+            const boxes = all.filter(function(el) {
+                const max = parseInt(el.getAttribute('maxlength') || '0', 10);
+                const type = (el.type || 'text').toLowerCase();
+                return max === 1 && (type === 'text' || type === 'tel' || type === 'number');
+            });
+            if (boxes.length >= code.length) {
+                for (let i = 0; i < code.length; i++) { fillField(boxes[i], code[i]); }
+                boxes[Math.min(code.length, boxes.length) - 1].dispatchEvent(new Event('blur', { bubbles: true }));
+                return;
+            }
+
+            // Single field. `autocomplete="one-time-code"` is the standard signal and is checked
+            // first; the name/id patterns are the fallback for sites that never adopted it.
+            const scored = all.filter(function(el) {
+                const type = (el.type || 'text').toLowerCase();
+                return type === 'text' || type === 'tel' || type === 'number';
+            });
+            let target = scored.find(function(el) {
+                return (el.getAttribute('autocomplete') || '').toLowerCase() === 'one-time-code';
+            });
+            if (!target) {
+                target = scored.find(function(el) {
+                    const hay = ((el.name || '') + ' ' + (el.id || '') + ' ' +
+                                 (el.getAttribute('aria-label') || '') + ' ' +
+                                 (el.placeholder || '')).toLowerCase();
+                    return /otp|totp|2fa|mfa|one[-_ ]?time|auth(entication)?[-_ ]?code|verification[-_ ]?code|security[-_ ]?code/.test(hay);
+                });
+            }
+            if (target) {
+                fillField(target, code);
+                target.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+        })();
+        """
+        activeWebView.callAsyncJavaScript(js,
+                                          arguments: ["code": code],
+                                          in: nil,
+                                          in: .page,
+                                          completionHandler: nil)
+    }
+
     /// Fills only password field(s) on the current page. Used for "generate password directly here" flows
     /// on signup / create-account pages (no username required).
     func fillCurrentPageWithPassword(_ password: String) {
-        guard PasswordVaultManager.shared.suggestPasswordsEnabled else { return }
+        guard PasswordVaultManager.shared.isSuggestPasswordsActive else { return }
         let js = """
         (function() {
             const passFields = document.querySelectorAll('input[type="password"]');
@@ -247,7 +331,7 @@ extension BrowserState {
     /// and immediately fills it into the password field(s) on the current web page.
     /// This lets users create passwords "directly in the browser" without leaving the page.
     func generateAndFillPasswordOnCurrentPage() {
-        guard PasswordVaultManager.shared.suggestPasswordsEnabled else { return }
+        guard PasswordVaultManager.shared.isSuggestPasswordsActive else { return }
 
         Task { @MainActor in
             let domain = currentWebDomain ?? ""
@@ -266,7 +350,7 @@ extension BrowserState {
 
     /// Switches to a web tab for the given domain (if one exists) and fills login fields.
     func fillLoginForDomain(domain: String, username: String, password: String) {
-        guard PasswordVaultManager.shared.autofillEnabled else { return }
+        guard PasswordVaultManager.shared.isAutofillActive else { return }
 
         let normalized = PasswordVaultManager.normalizeDomain(domain)
 
@@ -382,7 +466,7 @@ extension BrowserState {
 
             guard has else { return }
 
-            guard PasswordVaultManager.shared.offerToSaveEnabled else { return }
+            guard PasswordVaultManager.shared.isOfferToSaveActive else { return }
 
             // Debounced offer notification (for save flows)
             let domain = self.currentWebDomain ?? ""
@@ -415,6 +499,7 @@ extension BrowserState {
     }
 
     func ensureAndSelectPasswordsVaultTab() {
+        guard PasswordVaultManager.isAvailable else { return }
         ensureAndSelectUtilityTab(.passwords)
     }
     // Tab management (sidebar actions call these)
@@ -433,7 +518,11 @@ extension BrowserState {
     /// foreground tab. .onion links route to their own Tor tab via loadInWebView, so we don't pre-spawn
     /// an empty standard tab for them.
     func openExternalURL(_ url: URL) {
-        if url.isOnionService {
+        if url.isFileURL {
+            // "Open With Searxly" / double-click / drag-to-Dock of a local .html file. Route through the
+            // local-file opener so the tab retains the sandbox grant and WebKit gets the right read access.
+            openLocalFileURL(url)
+        } else if url.isOnionService {
             loadInWebView(url)
         } else {
             newTab()
@@ -465,6 +554,13 @@ extension BrowserState {
     }
 
     func closeTab(_ tab: BrowserTab) {
+        // Tell the extension engine this tab is going away (chrome.tabs.onRemoved), while its webView
+        // is still alive. Standard web tabs only — private/onion/utility tabs aren't exposed to Lane A.
+        if #available(macOS 15.4, *), ExtensionFeatures.laneAEnabled,
+           tab.privacyMode == .standard, tab.kind == .web, let webView = tab.webView {
+            ExtensionManager.shared.tabClosed(webView)
+        }
+
         // Pause media *before* we remove the tab from the array. When the last strong ref
         // to the BrowserTab disappears, its webView is released; we want the pause JS to
         // have run while the webView is still alive and attached to a WebContent process.
@@ -664,6 +760,11 @@ extension BrowserState {
         // earlier build so it can't resurface the hidden marketplace.
         if !ExtensionFeatures.programEnabled {
             snapshots.removeAll { $0.kind == .extensions }
+        }
+        // Password vault is Maximum-only — drop any vault tab persisted by an older base build (or a
+        // Maximum session restored into the base app).
+        if !PasswordVaultManager.isAvailable {
+            snapshots.removeAll { $0.kind == .passwords }
         }
         if !snapshots.isEmpty {
             // Lazy restore: every web tab is created as a hibernated stub (no WKWebView, no page load).

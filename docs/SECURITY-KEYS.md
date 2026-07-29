@@ -26,10 +26,11 @@ committed to `main`, live on Vercel). Verified:
 ```
 $ curl -sSI https://www.searxly.app/.well-known/apple-app-site-association
 HTTP/2 200 ; content-type: application/json
-{ "webcredentials": { "apps": ["KKRU446268.com.myrhex.Searxly"] } }
+{ "webcredentials": { "apps": ["<TEAMID>.com.myrhex.Searxly"] } }
 ```
 
-Nothing to do here unless the Team ID or bundle ID changes (then update that file + redeploy).
+`<TEAMID>` is the 10-character Apple Team ID of whoever signs the build — the deployed file carries the
+real one. Nothing to do here unless the Team ID or bundle ID changes (then update that file + redeploy).
 
 ## ⬜ Entitlement — your step (you have the Developer Program)
 

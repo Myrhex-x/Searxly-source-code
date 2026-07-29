@@ -6,6 +6,14 @@
 	<array>
 		<string>webcredentials:www.searxly.app</string>
 	</array>
+	<!-- Passkeys / security keys (YubiKey) in web pages. WKWebView does WebAuthn natively, but ONLY with
+	     this restricted entitlement (the same gate Chrome and Firefox went through). Apple granted it on the
+	     account 2026-07-23. It requires the "Web Browser Public Key Credential" capability to be enabled on
+	     the com.myrhex.Searxly App ID and present in the provisioning profile — build with automatic signing
+	     + -allowProvisioningUpdates (or enable it in the portal) so the profile regenerates, or code signing
+	     fails. Once signed, web passkey / YubiKey logins (e.g. X/Twitter 2FA) complete with no app code. -->
+	<key>com.apple.developer.web-browser.public-key-credential</key>
+	<true/>
 	<key>com.apple.developer.networking.vpn.api</key>
 	<array>
 		<string>allow-vpn</string>
@@ -57,7 +65,5 @@
 	<array>
 		<string>$(AppIdentifierPrefix)com.myrhex.Searxly</string>
 	</array>
-	<key>com.apple.security.personal-information.location</key>
-	<true/>
 </dict>
 </plist>

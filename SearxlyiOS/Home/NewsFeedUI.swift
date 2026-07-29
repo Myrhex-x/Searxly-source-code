@@ -88,18 +88,21 @@ struct NewsThumbView: View {
     @State private var failed = false
 
     var body: some View {
-        ZStack {
-            Brand.surface
-            if let image {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else if failed {
-                Image(systemName: "newspaper")
-                    .scaledFont(size: 17, weight: .regular)
-                    .foregroundStyle(Brand.textTertiary)
-            } else {
-                ProgressView().controlSize(.small).tint(Brand.textTertiary)
+        // Brand.surface (a flexible Color) takes exactly the frame the parent proposes; the image is an
+        // OVERLAY on top of it, so its `scaledToFill` overflow is clipped to that box and can never bleed
+        // into the surrounding text — the top-story hero used to spill over the headline below it.
+        Brand.surface
+            .overlay {
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else if failed {
+                    Image(systemName: "newspaper")
+                        .scaledFont(size: 17, weight: .regular)
+                        .foregroundStyle(Brand.textTertiary)
+                } else {
+                    ProgressView().controlSize(.small).tint(Brand.textTertiary)
+                }
             }
-        }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -135,13 +138,16 @@ struct HomeTopStoryHero: View {
     var body: some View {
         Button { onOpen(lead) } label: {
             VStack(alignment: .leading, spacing: 12) {
-                NewsThumbView(result: lead, requestWidth: 1000, requestHeight: 560, cornerRadius: 16)
+                // 800×450 (not 1000×560): image services often reject an over-large request outright,
+                // which is what left the hero blank — this size still fills the 210-pt banner sharply.
+                NewsThumbView(result: lead, requestWidth: 800, requestHeight: 450, cornerRadius: 16)
                     .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210)
+                    .clipped()
                     .overlay(alignment: .topLeading) {
                         HStack(spacing: 5) {
                             if badge.dot { PulsingLiveDot(size: 6, color: .white) }
                             Text(badge.text)
-                                .scaledFont(size: 11.5, weight: .bold)
+                                .scaledFont(size: 12, weight: .bold)
                                 .tracking(0.6)
                                 .foregroundStyle(.white)
                         }
@@ -161,7 +167,7 @@ struct HomeTopStoryHero: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if let snippet = lead.newsCleanSnippet, !snippet.isEmpty {
                         Text(snippet)
-                            .scaledFont(size: 14.5)
+                            .scaledFont(size: 14)
                             .foregroundStyle(Brand.textSecondary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
@@ -315,7 +321,7 @@ struct NewsRowContent: View {
                     }
                 }
                 Text(result.title)
-                    .scaledFont(size: 15.5, weight: .medium)
+                    .scaledFont(size: 15, weight: .medium)
                     .foregroundStyle(Brand.text)
                     .lineLimit(titleLines)
                     .multilineTextAlignment(.leading)

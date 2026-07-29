@@ -12,6 +12,15 @@ import AppKit
 
 final class SearxlyWebView: WKWebView {
 
+    // MARK: - Tor circuit isolation (Searxly Maximum — see TorCircuitIsolation)
+
+    /// Random per-tab token mixed into the per-site SOCKS credential, so the same site opened in two
+    /// tabs never shares a circuit. Created on the tab's first Tor-routed main-frame navigation.
+    var torCircuitTabToken: String?
+    /// The first-party site (approximated registrable domain) the main frame currently belongs to.
+    /// A main-frame navigation to a different site rotates the tab's Tor circuits.
+    var torFirstPartySite: String?
+
     override init(frame frameRect: CGRect, configuration: WKWebViewConfiguration) {
         super.init(frame: frameRect, configuration: configuration)
         // Safari-like trackpad behaviors (off by default on WKWebView):

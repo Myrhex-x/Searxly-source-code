@@ -113,6 +113,21 @@ enum BackupManager {
         let appData: Data
         let encryptionKey: Data?   // optional
 
+        /// Envelope version written by this build. v1 derived at 150k PBKDF2 rounds; v2 raised that to
+        /// OWASP's current floor. The byte is what tells `decrypted(from:)` which count to use, so
+        /// backups exported by older builds keep restoring — bump this, never re-use a version.
+        static let currentFormatVersion: UInt8 = 2
+
+        /// PBKDF2 work factor for a given envelope version. Unknown versions have no answer and must
+        /// be rejected rather than guessed at.
+        static func kdfIterations(forFormatVersion version: UInt8) -> Int? {
+            switch version {
+            case 1: return 150_000
+            case 2: return 600_000
+            default: return nil
+            }
+        }
+
         /// Encrypts the backup using a password (PBKDF2-HMAC-SHA256 + AES-GCM).
         func encryptedPayload(using password: String) throws -> Data {
             var saltBytes = [UInt8](repeating: 0, count: 16)
@@ -120,7 +135,8 @@ enum BackupManager {
                 throw BackupManager.BackupError.writeFailed
             }
             let salt = Data(saltBytes)
-            let key = try Self.deriveKey(from: password, salt: salt)
+            let key = try Self.deriveKey(from: password, salt: salt,
+                                         formatVersion: Self.currentFormatVersion)
 
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
@@ -130,7 +146,7 @@ enum BackupManager {
 
             // Format: "SBKP" + version (1 byte) + salt (16) + combined sealed box
             var result = Data("SBKP".utf8)
-            result.append(1) // version
+            result.append(Self.currentFormatVersion)
             result.append(salt)
             result.append(sealed.combined ?? Data())
 
@@ -143,15 +159,16 @@ enum BackupManager {
             let bytes = Data(payload)
             guard bytes.count > 22,
                   bytes.prefix(4) == Data("SBKP".utf8),
-                  bytes[4] == 1 else {
+                  Self.kdfIterations(forFormatVersion: bytes[4]) != nil else {
                 throw BackupError.corruptedBackup
             }
+            let formatVersion = bytes[4]
 
             // Copy out of the slices so downstream APIs never see a non-zero startIndex.
             let salt = Data(bytes[5..<21])
             let ciphertext = Data(bytes[21...])
 
-            let key = try Self.deriveKey(from: password, salt: salt)
+            let key = try Self.deriveKey(from: password, salt: salt, formatVersion: formatVersion)
 
             do {
                 let sealedBox = try AES.GCM.SealedBox(combined: ciphertext)
@@ -165,12 +182,16 @@ enum BackupManager {
             }
         }
 
-        private static func deriveKey(from password: String, salt: Data) throws -> SymmetricKey {
+        private static func deriveKey(from password: String, salt: Data,
+                                      formatVersion: UInt8) throws -> SymmetricKey {
+            guard let iterations = kdfIterations(forFormatVersion: formatVersion) else {
+                throw BackupError.corruptedBackup
+            }
             let passwordData = Data(password.utf8)
             let derived = try PBKDF2(
                 password: passwordData,
                 salt: salt,
-                iterations: 150_000,
+                iterations: iterations,
                 keyLength: 32
             )
             return SymmetricKey(data: derived)

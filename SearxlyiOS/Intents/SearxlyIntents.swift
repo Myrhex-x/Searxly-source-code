@@ -29,6 +29,8 @@ final class IntentRouter {
     var pendingURL: URL?
     /// Show the Downloads sheet (Siri).
     var pendingDownloads = false
+    /// Summarize the page in the active tab with on-device intelligence (Siri / Shortcuts).
+    var pendingSummarize = false
     private init() {}
 }
 
@@ -48,8 +50,8 @@ struct SearchSearxlyIntent: AppIntent {
 }
 
 struct OpenPrivateTabIntent: AppIntent {
-    static let title: LocalizedStringResource = "Open Private Tab"
-    static let description = IntentDescription("Open a new private tab in Searxly.")
+    static let title: LocalizedStringResource = "Enter Private Mode"
+    static let description = IntentDescription("Switch Searxly into Private Mode.")
     static let openAppWhenRun = true
 
     @MainActor
@@ -83,6 +85,18 @@ struct OpenDownloadsIntent: AppIntent {
     }
 }
 
+struct SummarizeCurrentPageIntent: AppIntent {
+    static let title: LocalizedStringResource = "Summarize Current Page"
+    static let description = IntentDescription("Summarize the page open in Searxly with on-device intelligence — the page never leaves your device.")
+    static let openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        IntentRouter.shared.pendingSummarize = true
+        return .result()
+    }
+}
+
 struct SearxlyShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -97,11 +111,11 @@ struct SearxlyShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: OpenPrivateTabIntent(),
             phrases: [
-                "Open a private tab in \(.applicationName)",
-                "New private tab in \(.applicationName)",
+                "Turn on Private Mode in \(.applicationName)",
+                "Private Mode in \(.applicationName)",
             ],
-            shortTitle: "Private Tab",
-            systemImageName: "hand.raised"
+            shortTitle: "Private Mode",
+            systemImageName: "hand.raised.fill"
         )
         AppShortcut(
             intent: ReopenLastTabIntent(),
@@ -120,6 +134,15 @@ struct SearxlyShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Downloads",
             systemImageName: "arrow.down.circle"
+        )
+        AppShortcut(
+            intent: SummarizeCurrentPageIntent(),
+            phrases: [
+                "Summarize this page in \(.applicationName)",
+                "Summarize my \(.applicationName) page",
+            ],
+            shortTitle: "Summarize",
+            systemImageName: "apple.intelligence"
         )
     }
 }

@@ -9,6 +9,7 @@
 
 import Foundation
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -25,6 +26,13 @@ final class ShieldSettings {
     /// Dedicated YouTube ad blocking / skipping layer (rides on top of the master switch).
     var youtubeAdBlock: Bool {
         didSet { defaults.set(youtubeAdBlock, forKey: "searxly.ios.shields.youtube") }
+    }
+
+    /// Distraction-free YouTube: hides Shorts, comments, and recommendations. Independent of the
+    /// ad blocker (and of the master switch) — it is an attention preference, not a shield.
+    /// Default OFF; applies to new tabs, and to open tabs after a reload.
+    var youtubeDistractionFree: Bool {
+        didSet { defaults.set(youtubeDistractionFree, forKey: "searxly.ios.shields.youtubeFocus") }
     }
 
     /// Canvas / audio farbling + hardware clamps (per-session random seed, Brave-style).
@@ -60,6 +68,12 @@ final class ShieldSettings {
     /// Hide cookie-consent banners and their scroll locks (never auto-accepts — see CookieBannerShield).
     var blockCookieBanners: Bool {
         didSet { defaults.set(blockCookieBanners, forKey: "searxly.ios.shields.cookieBanners") }
+    }
+
+    /// Darken light websites (invert-filter approach; already-dark pages are left alone).
+    /// New tabs pick it up immediately, open tabs after a reload. Default OFF.
+    var websiteDarkMode: Bool {
+        didSet { defaults.set(websiteDarkMode, forKey: "searxly.ios.shields.websiteDarkMode") }
     }
 
     /// Require Face ID / passcode to reveal private tabs after leaving the app (Safari/Chrome-style).
@@ -153,30 +167,51 @@ final class ShieldSettings {
 
     /// Lifetime count of tracker/ad requests attempted against pages the user visited while
     /// shields were up. Approximate by design (see TrackerTally) — a floor, not an exact audit.
-    private(set) var lifetimeTrackersBlocked: Int {
-        didSet {
-            defaults.set(lifetimeTrackersBlocked, forKey: "searxly.ios.shields.lifetimeBlocked")
-            SharedPrivacyStats.setLifetimeBlocked(lifetimeTrackersBlocked)  // feed the Home Screen widget
-        }
-    }
+    /// Disk / widget writes are coalesced via `scheduleStatsPersist` (not every batch).
+    private(set) var lifetimeTrackersBlocked: Int
 
     /// Per-tracker-domain hit counts (top offenders for the Privacy Report). Tracker company
     /// domains only — never the sites the user visited.
-    private(set) var trackerDomainCounts: [String: Int] {
-        didSet { defaults.set(trackerDomainCounts, forKey: "searxly.ios.shields.trackerDomains") }
-    }
+    private(set) var trackerDomainCounts: [String: Int]
+
+    @ObservationIgnored private var statsPersistTask: Task<Void, Never>?
+    @ObservationIgnored private var statsDirty = false
 
     func addBlockedTrackers(_ n: Int, domains: [String] = []) {
         guard n > 0 else { return }
         lifetimeTrackersBlocked += n
-        guard !domains.isEmpty else { return }
-        var counts = trackerDomainCounts
-        for d in domains { counts[d, default: 0] += 1 }
-        // Keep the table bounded: prune to the 100 biggest offenders.
-        if counts.count > 100 {
-            counts = Dictionary(uniqueKeysWithValues: counts.sorted { $0.value > $1.value }.prefix(100).map { ($0.key, $0.value) })
+        if !domains.isEmpty {
+            var counts = trackerDomainCounts
+            for d in domains { counts[d, default: 0] += 1 }
+            // Keep the table bounded: prune to the 100 biggest offenders.
+            if counts.count > 100 {
+                counts = Dictionary(uniqueKeysWithValues: counts.sorted { $0.value > $1.value }.prefix(100).map { ($0.key, $0.value) })
+            }
+            trackerDomainCounts = counts
         }
-        trackerDomainCounts = counts
+        scheduleStatsPersist()
+    }
+
+    private func scheduleStatsPersist() {
+        statsDirty = true
+        if statsPersistTask != nil { return }
+        statsPersistTask = Task { [weak self] in
+            // A full second of quiet: trackers fire in bursts; one UserDefaults write is enough.
+            try? await Task.sleep(for: .milliseconds(900))
+            guard let self, !Task.isCancelled else { return }
+            self.flushStatsPersist()
+        }
+    }
+
+    /// Writes lifetime + domain tallies to UserDefaults and refreshes the widget snapshot.
+    func flushStatsPersist() {
+        statsPersistTask?.cancel()
+        statsPersistTask = nil
+        guard statsDirty else { return }
+        statsDirty = false
+        defaults.set(lifetimeTrackersBlocked, forKey: "searxly.ios.shields.lifetimeBlocked")
+        defaults.set(trackerDomainCounts, forKey: "searxly.ios.shields.trackerDomains")
+        SharedPrivacyStats.setLifetimeBlocked(lifetimeTrackersBlocked)
     }
 
     var topTrackers: [(domain: String, count: Int)] {
@@ -187,6 +222,8 @@ final class ShieldSettings {
     func resetStats() {
         lifetimeTrackersBlocked = 0
         trackerDomainCounts = [:]
+        statsDirty = true
+        flushStatsPersist()
     }
 
     // MARK: - Init
@@ -197,6 +234,7 @@ final class ShieldSettings {
         }
         blockAdsAndTrackers = bool("searxly.ios.shields.adblock", default: true)
         youtubeAdBlock = bool("searxly.ios.shields.youtube", default: true)
+        youtubeDistractionFree = bool("searxly.ios.shields.youtubeFocus", default: false)
         fingerprintProtection = bool("searxly.ios.shields.fingerprint", default: true)
         gpcSignal = bool("searxly.ios.shields.gpc", default: true)
         httpsOnly = bool("searxly.ios.shields.httpsOnly", default: true)
@@ -204,6 +242,7 @@ final class ShieldSettings {
         deAMP = bool("searxly.ios.shields.deAMP", default: true)
         clearDataOnExit = bool("searxly.ios.shields.clearOnExit", default: false)
         blockCookieBanners = bool("searxly.ios.shields.cookieBanners", default: true)
+        websiteDarkMode = bool("searxly.ios.shields.websiteDarkMode", default: false)
         lockPrivateTabs = bool("searxly.ios.shields.lockPrivateTabs", default: false)
         onlineSuggestions = bool("searxly.ios.shields.onlineSuggestions", default: false)
         resultSiteIcons = bool("searxly.ios.shields.resultSiteIcons", default: true)
@@ -216,5 +255,11 @@ final class ShieldSettings {
         shieldsOffHosts = Set(UserDefaults.standard.stringArray(forKey: "searxly.ios.shields.offHosts") ?? [])
         lifetimeTrackersBlocked = UserDefaults.standard.integer(forKey: "searxly.ios.shields.lifetimeBlocked")
         trackerDomainCounts = (UserDefaults.standard.dictionary(forKey: "searxly.ios.shields.trackerDomains") as? [String: Int]) ?? [:]
+        // Coalesced stats must land before suspend so the Home Screen widget / next launch match.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushStatsPersist() }
+        }
     }
 }

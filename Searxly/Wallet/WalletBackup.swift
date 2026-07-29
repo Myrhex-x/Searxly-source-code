@@ -16,7 +16,16 @@ nonisolated enum WalletBackup {
 
     static let fileExtension = "searxlybackup"
     private static let currentVersion = 1
-    private static let defaultRounds: UInt32 = 200_000
+    /// OWASP's current floor for PBKDF2-HMAC-SHA256. ~90 ms on Apple Silicon; this file is decrypted
+    /// once, at restore, so the cost is invisible to the user and buys ~3× against offline cracking.
+    private static let defaultRounds: UInt32 = 600_000
+
+    /// `rounds` is read back out of the file, so it is attacker-controlled input on restore. Clamp it
+    /// to a range instead of trusting it: the floor is the lowest count Searxly ever shipped (200k),
+    /// so a tampered file cannot claim a trivially-crackable KDF, and the ceiling stops a file with an
+    /// absurd count from wedging the app in a multi-hour derivation.
+    private static let minimumAcceptedRounds = 200_000
+    private static let maximumAcceptedRounds = 10_000_000
 
     /// On-disk format. Only salt + ciphertext are stored; the password is never written.
     private struct Payload: Codable {
@@ -49,9 +58,10 @@ nonisolated enum WalletBackup {
     static func restore(fileData: Data, password: String) -> [String]? {
         guard let payload = try? JSONDecoder().decode(Payload.self, from: fileData),
               let salt = Data(base64Encoded: payload.salt),
-              let combined = Data(base64Encoded: payload.data) else { return nil }
+              let combined = Data(base64Encoded: payload.data),
+              (minimumAcceptedRounds...maximumAcceptedRounds).contains(payload.rounds) else { return nil }
 
-        let key = deriveKey(password: password, salt: salt, rounds: UInt32(max(1, payload.rounds)))
+        let key = deriveKey(password: password, salt: salt, rounds: UInt32(payload.rounds))
         guard let box = try? AES.GCM.SealedBox(combined: combined),
               let plaintext = try? AES.GCM.open(box, using: SymmetricKey(data: key)),
               let phrase = String(data: plaintext, encoding: .utf8) else { return nil }

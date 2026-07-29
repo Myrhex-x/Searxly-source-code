@@ -101,16 +101,20 @@ struct SecurityKeySettingsSection: View {
                         description: "After Touch ID, also tap a key to unlock Searxly. (App Lock must be on.)",
                         isOn: Binding(get: { manager.requireForAppLock }, set: { manager.requireForAppLock = $0 })
                     )
-                    SettingsToggleRow(
-                        title: "Require for Password Vault",
-                        description: "Tap a key to unlock the vault.",
-                        isOn: Binding(get: { manager.requireForVault }, set: { manager.requireForVault = $0 })
-                    )
-                    SettingsToggleRow(
-                        title: "Require for Wallet",
-                        description: "Tap a key to open the wallet. (Signing transactions still uses your Ledger.)",
-                        isOn: Binding(get: { manager.requireForWallet }, set: { manager.requireForWallet = $0 })
-                    )
+                    if PasswordVaultManager.isAvailable {
+                        SettingsToggleRow(
+                            title: "Require for Password Vault",
+                            description: "Tap a key to unlock the vault.",
+                            isOn: Binding(get: { manager.requireForVault }, set: { manager.requireForVault = $0 })
+                        )
+                    }
+                    if !Edition.isMaximum {
+                        SettingsToggleRow(
+                            title: "Require for Wallet",
+                            description: "Tap a key to open the wallet. (Signing transactions still uses your Ledger.)",
+                            isOn: Binding(get: { manager.requireForWallet }, set: { manager.requireForWallet = $0 })
+                        )
+                    }
                 }
             }
         }

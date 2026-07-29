@@ -6,8 +6,9 @@
 //
 //  Security model:
 //   - Seed is AES-GCM encrypted with a key derived from the user's PIN via PBKDF2-SHA256
-//     (200k iterations) using a per-wallet RANDOM salt (prevents precomputed/rainbow attacks
-//     across wallets).
+//     (600k iterations) using a per-wallet RANDOM salt (prevents precomputed/rainbow attacks
+//     across wallets). Blobs written at the older 200k count still decrypt, and are re-encrypted
+//     at 600k the first time their secret is presented.
 //   - A second copy of the seed is encrypted with a key derived from the high-entropy recovery
 //     code, so "forgot PIN" can genuinely re-key the seed to a new PIN.
 //   - All items are device-only (kSecAttrAccessibleWhenUnlockedThisDeviceOnly), never iCloud-synced.
@@ -47,7 +48,19 @@ nonisolated enum WalletKeychain {
     private static let portfolioHistoryAccount = "wallet-portfolio-history"
     private static let pinAttemptsAccount = "wallet-pin-attempts"
 
-    private static let pbkdf2Rounds: UInt32 = 200_000
+    /// OWASP's current floor for PBKDF2-HMAC-SHA256 (~90 ms on Apple Silicon).
+    ///
+    /// Worth being honest about what this does and does not buy: against a 6-digit PIN the KDF is not
+    /// the control that matters — 10^6 candidates falls to a GPU at any iteration count anyone would
+    /// tolerate at unlock. Offline brute force is stopped by the Secure-Enclave wrap in
+    /// `storeCiphertextBound`, and online attempts by the `pinAttemptsAccount` lockout. The bump
+    /// matters for the HIGH-entropy secrets that share this KDF — the recovery code and imported
+    /// keys — and costs nothing worth keeping for the PIN, so all of them use the same count.
+    private static let pbkdf2Rounds: UInt32 = 600_000
+
+    /// The count that shipped before the bump. Blobs written by older builds still decrypt at it, and
+    /// are re-encrypted at `pbkdf2Rounds` the first time their secret is presented.
+    private static let legacyPBKDF2Rounds: UInt32 = 200_000
 
     // MARK: - Seed (PIN-encrypted)
 
@@ -71,9 +84,14 @@ nonisolated enum WalletKeychain {
             return nil
         }
         if let salt = loadSalt() {
-            let words = decryptSeed(encrypted, secret: pin, salt: salt)
-            if words == nil { Log.security.error("WalletKeychain.loadSeed: ciphertext present but AES-GCM decrypt failed (wrong PIN or key/salt mismatch)") }
-            return words
+            guard let result = decryptSeedAllowingLegacyRounds(encrypted, secret: pin, salt: salt) else {
+                Log.security.error("WalletKeychain.loadSeed: ciphertext present but AES-GCM decrypt failed (wrong PIN or key/salt mismatch)")
+                return nil
+            }
+            if !result.atCurrentRounds {
+                saveSeed(result.words, pin: pin)   // re-encrypt at the current work factor
+            }
+            return result.words
         }
         // Legacy wallet (created before per-wallet salts): decrypt with the old fixed-salt/100k KDF,
         // then transparently migrate it to the new random-salt/200k KDF so it's upgraded going forward.
@@ -197,8 +215,17 @@ nonisolated enum WalletKeychain {
     }
 
     static func loadImportedKeys(pin: String) -> [Int: Data] {
-        guard let encrypted = loadCiphertext(unbound: importedKeysAccount, bound: importedKeysBoundAccount), let salt = loadSalt(),
-              let decrypted = try? decryptAES(encrypted, key: deriveKey(from: pin, salt: salt)),
+        guard let encrypted = loadCiphertext(unbound: importedKeysAccount, bound: importedKeysBoundAccount),
+              let salt = loadSalt() else { return [:] }
+
+        // Same current-then-legacy rounds fallback as the seed; this blob carries raw private keys.
+        var atCurrentRounds = true
+        var plaintext = try? decryptAES(encrypted, key: deriveKey(from: pin, salt: salt))
+        if plaintext == nil {
+            plaintext = try? decryptAES(encrypted, key: deriveKey(from: pin, salt: salt, rounds: legacyPBKDF2Rounds))
+            atCurrentRounds = false
+        }
+        guard let decrypted = plaintext,
               let map = try? JSONSerialization.jsonObject(with: decrypted) as? [String: String] else { return [:] }
         var result = [Int: Data]()
         for (k, v) in map {
@@ -210,6 +237,9 @@ nonisolated enum WalletKeychain {
                 i = n
             }
             result[idx] = Data(bytes)
+        }
+        if !atCurrentRounds, !result.isEmpty {
+            saveImportedKeys(result, pin: pin)   // re-encrypt at the current work factor
         }
         return result
     }
@@ -303,7 +333,12 @@ nonisolated enum WalletKeychain {
 
     static func loadRecoverySeed(recoveryCode: String) -> [String]? {
         guard let encrypted = loadItem(account: recoverySeedAccount), let salt = loadSalt() else { return nil }
-        return decryptSeed(encrypted, secret: recoveryCode.uppercased(), salt: salt)
+        let code = recoveryCode.uppercased()
+        guard let result = decryptSeedAllowingLegacyRounds(encrypted, secret: code, salt: salt) else { return nil }
+        if !result.atCurrentRounds {
+            saveRecoverySeed(result.words, recoveryCode: code)   // re-encrypt at the current work factor
+        }
+        return result.words
     }
 
     // MARK: - Biometric unlock secret
@@ -357,15 +392,35 @@ nonisolated enum WalletKeychain {
 
     // MARK: - Crypto
 
-    private static func decryptSeed(_ encrypted: Data, secret: String, salt: Data) -> [String]? {
-        let key = deriveKey(from: secret, salt: salt)
+    private static func decryptSeed(_ encrypted: Data, secret: String, salt: Data,
+                                    rounds: UInt32 = pbkdf2Rounds) -> [String]? {
+        let key = deriveKey(from: secret, salt: salt, rounds: rounds)
         guard let decrypted = try? decryptAES(encrypted, key: key),
               let phrase = String(data: decrypted, encoding: .utf8) else { return nil }
         let words = phrase.components(separatedBy: " ").filter { !$0.isEmpty }
         return words.isEmpty ? nil : words
     }
 
-    private static func deriveKey(from secret: String, salt: Data) -> Data {
+    /// Decrypts at the current work factor, falling back to the pre-bump one. `atCurrentRounds` is
+    /// false when the legacy count is what worked — the caller holds the secret at that moment and is
+    /// the only one who can re-encrypt, so it re-saves to complete the upgrade.
+    ///
+    /// Each PIN/recovery-code blob migrates independently, when its own secret is next presented;
+    /// there is no moment where the PIN and the recovery code are both in hand, so a single
+    /// wallet-wide rounds marker would be lying about whichever blob had not been re-keyed yet.
+    private static func decryptSeedAllowingLegacyRounds(
+        _ encrypted: Data, secret: String, salt: Data
+    ) -> (words: [String], atCurrentRounds: Bool)? {
+        if let words = decryptSeed(encrypted, secret: secret, salt: salt, rounds: pbkdf2Rounds) {
+            return (words, true)
+        }
+        if let words = decryptSeed(encrypted, secret: secret, salt: salt, rounds: legacyPBKDF2Rounds) {
+            return (words, false)
+        }
+        return nil
+    }
+
+    private static func deriveKey(from secret: String, salt: Data, rounds: UInt32 = pbkdf2Rounds) -> Data {
         var derived = [UInt8](repeating: 0, count: 32)
         salt.withUnsafeBytes { saltPtr in
             _ = CCKeyDerivationPBKDF(
@@ -373,7 +428,7 @@ nonisolated enum WalletKeychain {
                 secret, secret.utf8.count,
                 saltPtr.bindMemory(to: UInt8.self).baseAddress, salt.count,
                 CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-                pbkdf2Rounds,
+                rounds,
                 &derived, 32
             )
         }

@@ -1,10 +1,12 @@
 # Searxly iOS — Extensions integration guide
 
 Everything below is **written, typechecked against the iOS SDK, and wired on the app side.** The only
-thing that can't be scripted is *creating the two extension targets* — this project is Xcode-16 format
-(`objectVersion 110`, file-system-synchronized groups), which the `xcodeproj` gem can't edit, and
-hand-writing target plumbing risks the project file. Creating a target in Xcode is a ~2-minute,
-foolproof GUI step, so that part is left to you. Steps are exact.
+thing that can't be scripted is *creating the two extension targets* — the project uses
+file-system-synchronized groups (open with **Xcode 26** stable for App Store builds; keep
+`objectVersion` ≤ 77 for that). Creating a target in Xcode is a ~2-minute GUI step. Steps are exact.
+
+**App / App Group ids:** main app bundle is `com.myrhex.Searxly`; App Group for widgets is
+`group.com.myrhex.searxly` (must match `SharedPrivacyStats.appGroup`).
 
 ---
 
@@ -86,6 +88,20 @@ default browser you need the managed entitlement **`com.apple.developer.web-brow
 3. Users then pick Searxly under **Settings ▸ Apps ▸ Default Apps ▸ Browser App**.
 
 Until Apple grants it, there is nothing more to build — the plumbing is in place.
+
+---
+
+## 4) Unit tests  (`SearxlyiOSTests/NavigationGuardTests.swift`)
+
+Deterministic tests for the shields' pure URL logic (tracking-param stripping, De-AMP, scheme
+classification) and the widget's shared-count bridge.
+
+1. Xcode ▸ **File ▸ New ▸ Target… ▸ Unit Testing Bundle**. Product name **`SearxlyIOSTests`**;
+   set **Target to be Tested = SearxlyiOS**. Finish.
+2. Delete the generated boilerplate test file; add **`SearxlyiOSTests/NavigationGuardTests.swift`** to
+   the new target (it uses `@testable import SearxlyiOS`).
+3. **⌘U** to run. (The `SharedPrivacyStatsTests` round-trip needs the App Group from step 1 of the
+   widget section to be present on the app target; the `NavigationGuardTests` have no dependencies.)
 
 ---
 

@@ -45,7 +45,9 @@ struct DownloadsView: View {
             if !manager.active.isEmpty {
                 Section(L("In Progress")) {
                     ForEach(manager.active) { item in
-                        ActiveRow(item: item) { manager.removeActive(item.id) }
+                        ActiveRow(item: item,
+                                  onCancel: { manager.removeActive(item.id) },
+                                  onRetry: { manager.retry(item.id) })
                             .listRowBackground(Brand.surface)
                     }
                 }
@@ -105,6 +107,7 @@ struct DownloadsView: View {
 private struct ActiveRow: View {
     let item: DownloadManager.Active
     let onCancel: () -> Void
+    let onRetry: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -125,12 +128,21 @@ private struct ActiveRow: View {
                     ProgressView(value: item.fraction)
                         .tint(Brand.text)
                     Text(progressLabel)
-                        .scaledFont(size: 11.5)
+                        .scaledFont(size: 12)
                         .foregroundStyle(Brand.textTertiary)
                         .monospacedDigit()
                 }
             }
             Spacer(minLength: 6)
+            if item.failed && item.canResume {
+                Button(action: onRetry) {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .scaledFont(size: 20)
+                        .foregroundStyle(Brand.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("Retry"))
+            }
             Button(action: onCancel) {
                 Image(systemName: "xmark.circle.fill")
                     .scaledFont(size: 20)

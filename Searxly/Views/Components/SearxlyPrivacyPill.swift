@@ -19,6 +19,7 @@ struct SearxlyPrivacyPill: View {
     private let gate = PrivacyGate.shared
     private let vpn = SystemVPNManager.shared
     private let tor = TorManager.shared
+    private let managed = ManagedVPNService.shared
 
     var glassEnabled: Bool = true
     var toolbarMaterial: Material = .regularMaterial
@@ -180,10 +181,24 @@ struct SearxlyPrivacyPill: View {
             }
             .padding(.top, 2)
 
-            // Folded-in Tor content: the live 3-hop circuit visualization the standalone Tor pill used
-            // to show (that pill is hidden in Maximum + Tor — see BrowserHeaderView.foldTorIntoMaximumPill).
+            // Folded-in network detail. BOTH standalone pills are hidden in Maximum
+            // (BrowserHeaderView.foldTorIntoMaximumPill), so this panel is the only place the live
+            // network is visible — it has to carry what each of them showed, or the lane it replaces
+            // ends up worse off than it was. Tor gets its 3-hop circuit; the VPN gets the same exit-node
+            // map, picker and pass readout the base app's VPN pill has.
             if usingTor {
                 TorCircuitView(relays: tor.circuit, destinationHost: nil, tint: statusTint)
+            } else {
+                // `activeNode`, never `selectedNode` — a per-user cert pins the tunnel to the node it was
+                // bought for, so the selection can name a country the traffic never reaches.
+                // `home: nil` — the base pill plots your real location from an IP lookup. Maximum makes
+                // no such probe, and through a live tunnel the lookup would report the exit anyway.
+                VPNLocationMap(nodes: vpn.availableNodes,
+                               selectedID: vpn.activeNode?.id ?? "",
+                               connected: vpn.isConnected, home: nil) { node in
+                    Task { await vpn.selectNode(node) }
+                }
+                passRow
             }
 
             if usingTor && tor.status == .running {
@@ -208,6 +223,42 @@ struct SearxlyPrivacyPill: View {
                 .disabled(tor.rebuilding)
             }
         }
+    }
+
+    /// The base VPN panel's footer, folded in: how long this lane has left, and the way to Settings → VPN.
+    /// Load-bearing in Maximum rather than trivia — when the pass runs out the app drops itself back to
+    /// Tor, so "42d left" reads as "42 days until browsing gets slower", and it's the only warning there is.
+    @ViewBuilder
+    private var passRow: some View {
+        if let pass = managed.currentPass, pass.isActive {
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(statusTint)
+                Text(passLabel(pass))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 6)
+                Button {
+                    showingPanel = false
+                    NotificationCenter.default.post(name: .openSettingsToVPN, object: nil)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("Manage")
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func passLabel(_ pass: VPNAccessPass) -> String {
+        if pass.isOwner { return "Owner · unlimited" }
+        if pass.isMaximumComp { return "Included with Maximum · \(pass.daysRemaining)d left" }
+        return "Plan · \(pass.daysRemaining)d left"
     }
 
     private var connectingBody: some View {
@@ -242,9 +293,11 @@ struct SearxlyPrivacyPill: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // Surface the concrete Tor start failure (was previously swallowed — the pill only showed a
-            // generic "connecting" line, so a failed "Start Tor" looked like it did nothing).
-            if usingTor, let err = tor.lastError, !err.isEmpty {
+            // Surface the concrete start failure for whichever lane is selected (previously swallowed —
+            // the pill only showed a generic "connecting" line, so a failed start looked like it did
+            // nothing). Both lanes: a VPN that can't come up is exactly as stuck as a Tor that can't,
+            // and reading "Connecting to the Searxly VPN…" forever is how a dead lane stays invisible.
+            if let err = usingTor ? tor.lastError : vpn.lastError, !err.isEmpty {
                 Text(err)
                     .font(.system(size: 10))
                     .foregroundStyle(.orange)
@@ -301,8 +354,10 @@ struct SearxlyPrivacyPill: View {
 
             Spacer()
 
-            // Quick switcher for the backing network. Searxly Maximum is Tor-only — the managed VPN
-            // isn't part of that edition — so the VPN⇄Tor switcher is hidden there.
+            // Quick switcher for the backing network. Searxly Maximum picks its lane in one place —
+            // Settings → Privacy & Data (the "Privacy settings" link above lands there) — so the
+            // inline switcher stays out of that edition rather than becoming a second control fighting
+            // over the same state.
             if !Edition.isMaximum {
                 Menu {
                     ForEach(MaxProtection.allCases, id: \.self) { opt in

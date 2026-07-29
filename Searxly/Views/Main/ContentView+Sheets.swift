@@ -41,6 +41,9 @@ private struct MenuCommandNotifications: ViewModifier {
     // @Bindable (not let) because the panic-wipe confirmation alert needs a Binding into
     // the @Observable BrowserState.
     @Bindable var browserState: BrowserState
+    /// ⌘S / View ▸ Toggle Sidebar. Owned by ContentView so auto-hide pin state can live next to
+    /// the hover-reveal flags (both are view chrome, not BrowserState).
+    let onToggleSidebar: () -> Void
 
     func body(content: Content) -> some View {
         content
@@ -69,6 +72,10 @@ private struct MenuCommandNotifications: ViewModifier {
                 // ⌘F (and the ☰ menu's Find on Page) — show the find bar on the current page.
                 browserState.showFindInPage()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .reloadPageRequested)) { _ in
+                // ⌘R — reload the current web page (menu command so it works over focused WKWebView).
+                browserState.reload()
+            }
             .onReceive(NotificationCenter.default.publisher(for: .openLocalFileRequested)) { _ in
                 // ⌘O (File ▸ Open File…) — pick a local HTML file / web-project folder to view.
                 browserState.openLocalFile()
@@ -78,11 +85,9 @@ private struct MenuCommandNotifications: ViewModifier {
                 browserState.toggleReaderModeAction()
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleSidebarRequested)) { _ in
-                // ⌘S (and View ▸ Toggle Sidebar) — collapse/expand the left tab rail with the same
-                // spring the sidebar chevron buttons use.
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
-                    browserState.toggleSidebarCollapse()
-                }
+                // ⌘S (and View ▸ Toggle Sidebar) — auto-hide: pin/unpin the overlay tab panel;
+                // classic: collapse/expand the left tab rail. Same spring as the chevron.
+                onToggleSidebar()
             }
             // On-device page translation (☰ → Translate Page). The session lives on this modifier;
             // PageTranslator sets `configuration` to start a run, and the framework presents its own
@@ -116,6 +121,10 @@ private struct SettingsNavigationCommands: ViewModifier {
                 browserState.settingsInitialCategory = .privacy
                 browserState.showingSettings = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsToAgenticTools)) { _ in
+                browserState.settingsInitialCategory = .agenticTools
+                browserState.showingSettings = true
+            }
             .onReceive(NotificationCenter.default.publisher(for: .importDataRequested)) { _ in
                 // If Settings is open, dismiss it first so we don't stack sheet-over-sheet.
                 if browserState.showingSettings {
@@ -126,6 +135,24 @@ private struct SettingsNavigationCommands: ViewModifier {
                 } else {
                     browserState.showingImportData = true
                 }
+            }
+    }
+}
+
+/// File ▸ New Tab (⌘T) / New Private Tab (⌘⇧T). The handlers live on ContentView because opening the
+/// tab is only half the job — the caret has to land in the address bar, and that focus state is the
+/// view's. Its own modifier so ContentView's notification chain stays inside the type-checker's budget.
+private struct TabCommandNotifications: ViewModifier {
+    let onNewTab: () -> Void
+    let onNewPrivateTab: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .newTabRequested)) { _ in
+                onNewTab()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .newPrivateTabRequested)) { _ in
+                onNewPrivateTab()
             }
     }
 }
@@ -150,6 +177,38 @@ private struct TabLifecycleNotifications: ViewModifier {
                     except: browserState.selectedTab,
                     among: browserState.tabs
                 )
+            }
+    }
+}
+
+/// Lane A (WebExtensions) tab-API bridge: an extension asked to activate / close / create a tab, and
+/// tab-selection changes fire chrome.tabs.onActivated. Bundled as a modifier so the main view body
+/// stays under the type-checker's complexity ceiling.
+private struct LaneAExtensionNotifications: ViewModifier {
+    let browserState: BrowserState
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .laneASelectTabByWebView)) { note in
+                guard let wv = note.object as? WKWebView,
+                      let tab = browserState.tabs.first(where: { $0.webView === wv }) else { return }
+                browserState.selectedTabID = tab.id
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .laneACloseTabByWebView)) { note in
+                guard let wv = note.object as? WKWebView,
+                      let tab = browserState.tabs.first(where: { $0.webView === wv }) else { return }
+                browserState.closeTab(tab)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .laneANewTabRequested)) { _ in
+                guard ExtensionFeatures.programEnabled else { return }
+                browserState.newTab()
+            }
+            .onChange(of: browserState.selectedTabID) { _, _ in
+                if #available(macOS 15.4, *), ExtensionFeatures.laneAEnabled {
+                    let tab = browserState.selectedTab
+                    let standard = tab?.privacyMode == .standard && !(tab?.kind.isUtility ?? true)
+                    ExtensionManager.shared.setActiveTab(standard ? tab?.webView : nil)
+                }
             }
     }
 }
@@ -287,11 +346,20 @@ extension ContentView {
                 browserState.ensureAndSelectPasswordsVaultTab()
             }
             .onReceive(NotificationCenter.default.publisher(for: .showExtensionsTabRequested)) { _ in
+                // The full-page Extensions marketplace was removed — management now lives in
+                // Settings → Extensions (installs come from the Chrome Web Store). Every legacy entry
+                // point that posted this now opens that settings pane instead.
                 guard ExtensionFeatures.programEnabled else { return }
-                browserState.ensureAndSelectUtilityTab(.extensions)
+                browserState.settingsInitialCategory = .extensions
+                browserState.showingSettings = true
             }
+            .modifier(LaneAExtensionNotifications(browserState: browserState))
             .modifier(OnionTabNotifications(browserState: browserState))
             .modifier(TabLifecycleNotifications(browserState: browserState))
+            .modifier(TabCommandNotifications(
+                onNewTab: { newTab() },
+                onNewPrivateTab: { newPrivateTab() }
+            ))
             .onReceive(NotificationCenter.default.publisher(for: .dataRestoredFromBackup)) { _ in
                 hasCompletedInitialLaunchLoad = false
                 browserState.handleDataRestored()
@@ -304,7 +372,7 @@ extension ContentView {
             }
             // (showPowerHubTabRequested and showHoldersCommunityTabRequested receivers removed with the power hub + holders community tabs.)
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("Searxly.FillLoginRequested"))) { notification in
-                guard PasswordVaultManager.shared.autofillEnabled else { return }
+                guard PasswordVaultManager.shared.isAutofillActive else { return }
                 if let info = notification.userInfo as? [String: String],
                    let user = info["username"],
                    let pass = info["password"] {
@@ -312,7 +380,7 @@ extension ContentView {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("Searxly.OfferSaveLogin"))) { notification in
-                guard passwordVault.offerToSaveEnabled else { return }
+                guard passwordVault.isOfferToSaveActive else { return }
                 if let domain = (notification.userInfo as? [String: String])?["domain"], !domain.isEmpty {
                     webSaveDomain = domain
                     browserState.extractCredentialsFromCurrentPage { username, password in
@@ -340,14 +408,25 @@ extension ContentView {
             }
             .onReceive(NotificationCenter.default.publisher(for: .openURLInNewTab)) { note in
                 if let url = note.object as? URL {
-                    if note.userInfo?["background"] as? Bool == true {
-                        browserState.openURLInBackgroundTab(url)   // ⌘-click
+                    // Explicit modifier-clicks always win: ⌘-click = background (true), ⌘⇧-click =
+                    // foreground (false). Automatic opens (target="_blank", window.open, "Open Link in New
+                    // Tab") carry no flag → follow the "Open new tabs in the background" preference.
+                    let explicitBackground = note.userInfo?["background"] as? Bool
+                    let background = explicitBackground
+                        ?? UserDefaults.standard.bool(forKey: NavigationCoordinatorKeys.openNewTabsInBackground)
+                    // Onion links need a Tor-routed tab (openExternalURL handles that) — never a plain
+                    // background web tab, which would try to load .onion directly and fail.
+                    if background && !url.isOnionService {
+                        browserState.openURLInBackgroundTab(url)
                     } else {
-                        browserState.openExternalURL(url)          // target=_blank / ⌘⇧-click
+                        browserState.openExternalURL(url)
                     }
                 }
             }
-            .modifier(MenuCommandNotifications(browserState: browserState))
+            .modifier(MenuCommandNotifications(
+                browserState: browserState,
+                onToggleSidebar: { handleToggleSidebar() }
+            ))
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 NotificationManager.shared.isBrowserActive = browserState.showingWebContent
                 // Resume the (battery-saving) idle hibernation timer paused on background.
@@ -395,10 +474,6 @@ extension ContentView {
             knowledgePanelEnabled: Binding(
                 get: { browserState.knowledgePanelEnabled },
                 set: { browserState.setKnowledgePanelEnabled($0) }
-            ),
-            localPackEnabled: Binding(
-                get: { browserState.localPackEnabled },
-                set: { browserState.setLocalPackEnabled($0) }
             ),
             showingClearData: $browserState.showingClearData,
             initialCategory: browserState.settingsInitialCategory
@@ -458,19 +533,27 @@ extension ContentView {
     func utilityTabContent(for tab: BrowserTab) -> some View {
         switch tab.kind {
         case .passwords:
-            PasswordVaultTabView(
-                tab: tab,
-                glassEnabled: glassEnabled,
-                toolbarMaterial: toolbarMaterial,
-                onFillLogin: { domain, username, password in
-                    browserState.fillLoginForDomain(domain: domain, username: username, password: password)
-                },
-                onOpenSite: { domain in
-                    if let url = URL(string: "https://\(domain)") {
-                        browserState.loadInWebView(url)
+            // Vault is Maximum-only; base builds never open this kind (session restore strips it).
+            if PasswordVaultManager.isAvailable {
+                PasswordVaultTabView(
+                    tab: tab,
+                    glassEnabled: glassEnabled,
+                    toolbarMaterial: toolbarMaterial,
+                    onFillLogin: { domain, username, password in
+                        browserState.fillLoginForDomain(domain: domain, username: username, password: password)
+                    },
+                    onFillTOTP: { code in
+                        browserState.fillCurrentPageWithTOTP(code)
+                    },
+                    onOpenSite: { domain in
+                        if let url = URL(string: "https://\(domain)") {
+                            browserState.loadInWebView(url)
+                        }
                     }
-                }
-            )
+                )
+            } else {
+                Color.clear
+            }
         case .bookmarks:
             BookmarksHistoryView(
                 bookmarks: $browserState.bookmarks,
@@ -491,14 +574,14 @@ extension ContentView {
             ))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .extensions:
-            // Extensions program is disabled for release (ExtensionFeatures.programEnabled). This tab
-            // kind should be unreachable — restore drops it and all entry points are hidden — but if
-            // one slips through, close it instead of exposing the marketplace.
-            if ExtensionFeatures.programEnabled {
-                ExtensionsMarketplaceView(onClose: { browserState.closeTab(tab) })
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                Color.clear.onAppear { browserState.closeTab(tab) }
+            // The full-page Extensions marketplace was removed. This tab kind is no longer created;
+            // any stray/restored one redirects to Settings → Extensions and closes itself.
+            Color.clear.onAppear {
+                browserState.closeTab(tab)
+                if ExtensionFeatures.programEnabled {
+                    browserState.settingsInitialCategory = .extensions
+                    browserState.showingSettings = true
+                }
             }
         case .web:
             EmptyView()
@@ -549,6 +632,28 @@ extension ContentView {
             EncryptionRecoveryView(glassEnabled: glassEnabled, toolbarMaterial: toolbarMaterial)
                 .transition(.opacity)
                 .zIndex(1000)
+        }
+    }
+
+    /// Blocks the entire app until Searxly Maximum is activated. Deliberately the OUTERMOST gate — an
+    /// unlicensed copy shows nothing else: not the browser, not onboarding, not even the App Lock, since
+    /// there is nothing yet to protect. Never appears in the base app (`requiresActivation` is a
+    /// constant false there, so this is dead-stripped).
+    ///
+    /// Reads `LicenseManager.shared` directly (not via `@State`) so Observation registers the gate
+    /// field. A full-bleed black background is drawn even before the view's own content appears, so a
+    /// slow first paint can never flash the browser underneath.
+    @ViewBuilder
+    var maximumActivationOverlay: some View {
+        if LicenseManager.shared.requiresActivation {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                MaximumActivationView(glassEnabled: glassEnabled)
+            }
+            .transition(.opacity)
+            .zIndex(1001)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
         }
     }
 

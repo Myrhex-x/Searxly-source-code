@@ -37,17 +37,38 @@ final class DownloadBridge {
         download.delegate = proxy
     }
 
-    /// Picks a non-colliding destination in ~/Downloads for `suggestedFilename`. WKDownload requires a
-    /// destination that does NOT already exist, so colliding names are disambiguated with " (1)",
-    /// " (2)", … like Safari. `nonisolated` because it is pure filesystem math and runs from the
-    /// download delegate callback.
+    /// Picks a non-colliding destination for `suggestedFilename`: ~/Downloads normally, or the
+    /// wiped-on-quit session folder during an amnesic session (a file in ~/Downloads would outlive
+    /// the session — see `AmnesiaMode.sessionDownloadsDirectory`). WKDownload requires a destination
+    /// that does NOT already exist, so colliding names are disambiguated with " (1)", " (2)", … like
+    /// Safari. `nonisolated` because it is pure filesystem math and runs from the download delegate
+    /// callback.
     nonisolated static func uniqueDownloadsURL(for suggestedFilename: String) -> URL {
+        if AmnesiaMode.isActive {
+            let dir = AmnesiaMode.sessionDownloadsDirectory
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return uniqueURL(in: dir, for: suggestedFilename)
+        }
+        return uniqueURL(in: permanentDownloadsDirectory(), for: suggestedFilename)
+    }
+
+    /// A non-colliding destination in ~/Downloads regardless of amnesic mode — where "Keep" moves a
+    /// session-only download so it survives quitting.
+    nonisolated static func uniquePermanentURL(for suggestedFilename: String) -> URL {
+        uniqueURL(in: permanentDownloadsDirectory(), for: suggestedFilename)
+    }
+
+    private nonisolated static func permanentDownloadsDirectory() -> URL {
         let fm = FileManager.default
-        let dir = (try? fm.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+        return (try? fm.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
             ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+    }
+
+    private nonisolated static func uniqueURL(in dir: URL, for suggestedFilename: String) -> URL {
+        let fm = FileManager.default
 
         // Strip any path components a server might smuggle in via the suggested name so the file can
-        // never land outside the Downloads folder.
+        // never land outside the chosen folder.
         var name = (suggestedFilename as NSString).lastPathComponent
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty || name == "/" { name = "download" }
@@ -136,6 +157,10 @@ final class DownloadProxy: NSObject, WKDownloadDelegate {
             // filesystem I/O and nothing waits on it).
             if stripProvenance, let url = finishedURL {
                 Task.detached { AntiForensics.stripProvenance(from: url) }
+            }
+            // Safety nudge: warn if the finished file can run code (Gatekeeper still vets it on open).
+            if let url = finishedURL {
+                Task { @MainActor in AntiForensics.warnIfExecutableDownload(url) }
             }
             Log.web.info("Download finished")
         } else {

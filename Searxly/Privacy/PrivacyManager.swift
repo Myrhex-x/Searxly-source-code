@@ -82,10 +82,15 @@ final class PrivacyManager {
         if Edition.isMaximum {
             appPrivacyMode = .maximum
             // Protection network is user-selectable in Maximum: Tor (default, most private) or the faster
-            // Searxly VPN. Respect the persisted choice, but fall back to Tor if VPN was picked and isn't
-            // currently unlocked (payments off today → VPN is free; this is the seam for later).
-            if maxProtection == .vpn && !LicenseManager.shared.isUnlocked(.fasterVPN) {
+            // Searxly VPN. Respect the persisted choice, but fall back to Tor when the VPN lane has no
+            // active pass — booting into `.vpn` with nothing to connect leaves the kill switch closed, so
+            // every search and page is blocked until enforceAccess() gets around to correcting it.
+            //
+            // Read straight off the persisted pass rather than ManagedVPNService.shared: that singleton's
+            // init calls back into PrivacyManager.shared, which is still initializing right here.
+            if maxProtection == .vpn && !(persistedData.vpnAccessPass?.isActive ?? false) {
                 maxProtection = .tor
+                Persistence.setMaxProtection(.tor)
             }
         }
 
@@ -214,12 +219,34 @@ final class PrivacyManager {
         Log.privacy.info("PrivacyManager: appPrivacyMode set to \(mode.rawValue, privacy: .public)")
     }
 
+    /// Whether the faster Searxly VPN lane can be selected right now. Tor is the default and always
+    /// free; the VPN needs an active pass — the included 45-day welcome comp (MaximumVPNComp) on a
+    /// fresh Maximum install, or one bought/renewed in Settings → VPN once that lapses.
+    ///
+    /// The UI reads this to disable the VPN option and say why, rather than letting the user pick a
+    /// lane that `setMaxProtection` would silently refuse.
+    ///
+    /// In practice the pass is the only thing this turns on: `isUnlocked(.fasterVPN)` is true for any
+    /// licensed copy, and an unlicensed Maximum never reaches the browser (MaximumActivationView is the
+    /// outermost gate). It stays in as the seam for a tier that ships the VPN separately from the app —
+    /// but if that ever happens, the UI needs a second reason string, because "buy a pass" would then be
+    /// the wrong advice for a license problem.
+    ///
+    /// The base app has no lane gate here: it lets you select the VPN without a pass and explains via
+    /// PrivacyGate.blockReason ("buy one in Settings → VPN, or switch to Tor"), since it has no Tor
+    /// fallback to drop you onto.
+    var canSelectVPNProtection: Bool {
+        guard Edition.isMaximum else { return true }
+        return LicenseManager.shared.isUnlocked(.fasterVPN) && ManagedVPNService.shared.hasActivePass
+    }
+
     /// Sets which network Maximum Privacy enforces (Searxly VPN or Tor) and persists it.
     func setMaxProtection(_ protection: MaxProtection) {
-        // Tor is the default and always free. The faster Searxly VPN lane is user-selectable in Maximum
-        // but will one day require a paid Maximum license — while payments are off it's free (see Licensing).
+        // Backstop for the `canSelectVPNProtection` gate the UI already applies: hold on Tor rather than
+        // hand the kill switch a lane that can't come up (which would block every search and page).
         var protection = protection
-        if Edition.isMaximum, protection == .vpn, !LicenseManager.shared.isUnlocked(.fasterVPN) {
+        if protection == .vpn, !canSelectVPNProtection {
+            Log.privacy.info("PrivacyManager: VPN protection requested without an active pass — holding on Tor")
             protection = .tor
         }
         guard protection != maxProtection else { return }

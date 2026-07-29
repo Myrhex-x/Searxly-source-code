@@ -37,7 +37,13 @@ enum KnowledgeCardService {
         guard isEntityLike(q) else { return nil }
         if let hit = cache[q.lowercased()] { return hit }
 
-        let lang = language == "auto" ? "en" : language
+        // Resolve any tag (including "auto") to a real Wikipedia language — system/app default,
+        // never hard-coded English unless the device itself is English.
+        let lang = AppLocale.wikipediaCode(
+            for: (language == "auto" || language.isEmpty)
+                ? AppLocale.shared.languageCode
+                : language
+        )
         var card = await fetchSummary(query: q, language: lang)
 
         // Grokipedia is the DEFAULT source (macOS SERP source policy). Slug preference:
@@ -135,6 +141,7 @@ struct KnowledgeCardView: View {
 
     @State private var thumb: UIImage?
     private var appearance = AppearanceSettings.shared
+    private var locale = AppLocale.shared
 
     init(card: KnowledgeCard, onOpen: @escaping (URL) -> Void) {
         self.card = card
@@ -144,7 +151,9 @@ struct KnowledgeCardView: View {
     @State private var expanded = false
 
     var body: some View {
+        let _ = locale.languageCode
         let scale = appearance.textScale
+        let sourceName = L(card.source.rawValue)
         VStack(alignment: .leading, spacing: 0) {
             // Tap the card body to expand/collapse (Google-style); the footer row opens the article.
             Button {
@@ -177,7 +186,7 @@ struct KnowledgeCardView: View {
                                     .rotationEffect(.degrees(expanded ? 180 : 0))
                             }
                             Text(card.extract)
-                                .font(.system(size: 13.5 * scale))
+                                .font(.system(size: 13 * scale))
                                 .foregroundStyle(Brand.textSecondary)
                                 .lineLimit(expanded ? nil : 4)
                         }
@@ -209,7 +218,7 @@ struct KnowledgeCardView: View {
             // Attribution + open-article affordance.
             Button { onOpen(card.pageURL) } label: {
                 HStack(spacing: 4) {
-                    Text(expanded ? "\(L("Read on")) \(card.source.rawValue)" : card.source.rawValue)
+                    Text(expanded ? "\(L("Read on")) \(sourceName)" : sourceName)
                         .font(.system(size: 11 * scale, weight: .medium))
                     Image(systemName: "arrow.up.right")
                         .scaledFont(size: 9, weight: .semibold)
@@ -219,21 +228,21 @@ struct KnowledgeCardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Read the full article on \(card.source.rawValue)")
+            .accessibilityLabel("\(L("Read on")) \(sourceName)")
         }
-        .padding(14)
-        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(12)
+        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Brand.hairline, lineWidth: 0.5)
         )
         .padding(.horizontal, 14)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
         .task(id: card.thumbnail) {
             guard let url = card.thumbnail else { return }
             thumb = await RemoteThumbLoader.load(candidates: [url], referer: nil)
         }
-        .accessibilityLabel("Knowledge card: \(card.title)")
+        .accessibilityLabel("\(L("Knowledge card")): \(card.title)")
     }
 }

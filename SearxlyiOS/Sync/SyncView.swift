@@ -24,7 +24,7 @@ struct SyncView: View {
                     Label(L("Send from This iPhone"), systemImage: "square.and.arrow.up")
                 }
             } footer: {
-                Text("Sync your bookmarks and history between your devices without a server or account. One device makes an encrypted file and a code; the other opens the file and enters the code. The file is useless to anyone without the code, and nothing is ever uploaded.")
+                Text(L("Sync your bookmarks and history between your devices without a server or account. One device makes an encrypted file and a code; the other opens the file and enters the code. The file is useless to anyone without the code, and nothing is ever uploaded."))
             }
         }
         .navigationTitle(L("Sync"))
@@ -35,7 +35,21 @@ struct SyncView: View {
 
 // MARK: - Receive
 
-private struct ReceiveSyncView: View {
+/// Holds a sync file handed to the app from outside (AirDrop "Open in Searxly" → onOpenURL),
+/// until ReceiveSyncView appears and consumes it.
+@MainActor
+@Observable
+final class SyncInbox {
+    static let shared = SyncInbox()
+    var pending: (data: Data, name: String)?
+
+    func take() -> (data: Data, name: String)? {
+        defer { pending = nil }
+        return pending
+    }
+}
+
+struct ReceiveSyncView: View {
     @State private var importedData: Data?
     @State private var importedName: String = ""
     @State private var code = ""
@@ -53,9 +67,9 @@ private struct ReceiveSyncView: View {
                           systemImage: "doc.badge.plus")
                 }
             } header: {
-                Text("Step 1")
+                Text(L("Step 1"))
             } footer: {
-                Text("On your Mac, choose Send, then AirDrop the file to this iPhone (or save it to Files). Here, pick that file.")
+                Text(L("On your other device, choose Send, then AirDrop the file to this iPhone (or save it to Files). Here, pick that file."))
             }
 
             if importedData != nil {
@@ -68,9 +82,9 @@ private struct ReceiveSyncView: View {
                     Button(L("Merge")) { merge() }
                         .disabled(!SyncCrypto.isComplete(code))
                 } header: {
-                    Text("Step 2")
+                    Text(L("Step 2"))
                 } footer: {
-                    Text("Enter the code shown on your Mac.")
+                    Text(L("Enter the code shown on the sending device."))
                 }
             }
 
@@ -91,6 +105,12 @@ private struct ReceiveSyncView: View {
                       allowedContentTypes: [SyncFile.type, .data],
                       allowsMultipleSelection: false) { outcome in
             handlePicked(outcome)
+        }
+        .task {
+            if let handed = SyncInbox.shared.take() {
+                importedData = handed.data
+                importedName = handed.name
+            }
         }
     }
 
@@ -143,7 +163,7 @@ private struct SendSyncView: View {
                 }
                 Button(L("New Code")) { regenerate() }
             } footer: {
-                Text("You'll enter this code on the receiving device. Generate a fresh one any time.")
+                Text(L("You'll enter this code on the receiving device. Generate a fresh one any time."))
             }
 
             Section {
@@ -153,7 +173,7 @@ private struct SendSyncView: View {
                     }
                 }
             } footer: {
-                Text("AirDrop the file to your Mac, then enter the code above in Searxly on the Mac. Bookmarks: \(LibraryStore.shared.bookmarks.count) · History: \(LibraryStore.shared.history.count).")
+                Text(L("AirDrop the file to your other device, then enter the code above in Searxly there.") + " " + L("Bookmarks:") + " \(LibraryStore.shared.bookmarks.count) · " + L("History:") + " \(LibraryStore.shared.history.count)")
             }
 
             if let error {

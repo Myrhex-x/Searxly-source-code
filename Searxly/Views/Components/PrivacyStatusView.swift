@@ -26,8 +26,36 @@ struct PrivacyStatusView: View {
 
     private var hasSite: Bool { !host.isEmpty }
 
+    /// Homograph-safe host for the user-facing labels (friendly Unicode for legit international
+    /// domains, punycode for suspicious mixed-script ones). `host` itself stays the raw `.host` value
+    /// so the permission / extension store lookups keep using the canonical key.
+    private var displayHost: String { DomainSafety.displayHost(forHost: host) }
+
+    /// The site identity with the true registrable domain emphasized, so a subdomain trick like
+    /// `apple.com.evil.ru` reads as evil.ru at a glance.
+    private var siteIdentity: Text {
+        let split = DomainSafety.emphasisSplit(forHost: host)
+        return Text(split.prefix).foregroundColor(.secondary)
+            + Text(split.registrable).fontWeight(.semibold).foregroundColor(.primary)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
+            // Site identity header — the true registrable domain, emphasized and homograph-safe, so
+            // the "am I on the real site?" answer is unambiguous.
+            if hasSite {
+                HStack(spacing: 7) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    siteIdentity
+                        .font(.system(size: 13.5))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Divider()
+            }
+
             // Connection. Onion rides Tor; everything else on the open web is HTTPS because the app
             // enforces HTTPS-only for clearnet at the network layer (App Transport Security).
             statusRow(
@@ -40,7 +68,7 @@ struct PrivacyStatusView: View {
 
             if hasSite {
                 Divider()
-                sectionLabel("Permissions on \(host)")
+                sectionLabel("Permissions on \(displayHost)")
                 permissionRow(.camera)
                 permissionRow(.microphone)
             }
@@ -69,7 +97,7 @@ struct PrivacyStatusView: View {
 
             if hasSite, !installedExtensions.isEmpty {
                 Divider()
-                sectionLabel("Extensions on \(host)")
+                sectionLabel("Extensions on \(displayHost)")
                 ForEach(installedExtensions) { ext in
                     extensionRow(ext)
                 }

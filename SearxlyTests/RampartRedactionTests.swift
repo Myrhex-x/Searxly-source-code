@@ -268,4 +268,69 @@ final class RampartRedactionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(count, 2)
         XCTAssertEqual(session.reveal(scrubbed), original)   // round-trips back to the real text
     }
+
+    /// A one/two-character "name" (the "In" in "Sign In") is an NER false positive and must never be
+    /// redacted — regardless of the model's confidence — via the short-name guard.
+    func testShortWordNeverRedactedAsName() {
+        XCTAssertTrue(RampartNER.isLowValueNameSpan(base: "GIVEN_NAME", text: "In"))
+        XCTAssertTrue(RampartNER.isLowValueNameSpan(base: "SURNAME", text: "It"))
+        XCTAssertFalse(RampartNER.isLowValueNameSpan(base: "GIVEN_NAME", text: "John"))
+        XCTAssertFalse(RampartNER.isLowValueNameSpan(base: "EMAIL", text: "hi"))   // guard is names-only
+    }
+
+    /// The over-redaction fix: the Agentic Tools threshold (0.75) + short-name guard stop mangling
+    /// public/company names and common words in search results, while still redacting a real full name
+    /// and always redacting deterministic identifiers (email).
+    func testAgenticThresholdReducesOverRedaction() async throws {
+        guard await RampartRedactor.shared.modelAvailable() else {
+            throw XCTSkip("Rampart ONNX model not bundled — heuristic-only build")
+        }
+        let keep: Set<String> = [RampartEntity.url.rawValue, RampartEntity.city.rawValue,
+                                 RampartEntity.state.rawValue, RampartEntity.zipCode.rawValue]
+        let text = "Anthropic Claude AI. Please Sign In to your account. Contact John Smith at john@example.com."
+
+        let loose = await RampartRedactor.shared.newSession(keepLabels: keep).protect(text)                // 0.4 default
+        let strict = await RampartRedactor.shared.newSession(keepLabels: keep, minScore: 0.75).protect(text)
+        print("[Rampart] loose(0.4):   \(loose.text)")
+        print("[Rampart] strict(0.75): \(strict.text)")
+
+        // "In" must survive (short-name guard) at the stricter threshold.
+        XCTAssertTrue(strict.text.contains("Sign In"), "the word 'In' must not be redacted: \(strict.text)")
+        // Deterministic email is redacted no matter the threshold.
+        XCTAssertFalse(strict.text.contains("john@example.com"), "email must still be redacted")
+        XCTAssertTrue(strict.text.contains("[EMAIL_1]"))
+        // A real full name is still caught at the higher threshold (we did not over-correct).
+        XCTAssertFalse(strict.text.contains("John Smith"), "a real full name is still redacted: \(strict.text)")
+        // The stricter pass never redacts MORE than the loose one.
+        XCTAssertLessThanOrEqual(strict.count, loose.count)
+    }
+
+    /// Regression: non-BMP characters (emoji, astral CJK) are two UTF-16 units each, which used to
+    /// misalign the folded-offset arrays and trap ("Index out of range") mid-redaction — crashing the
+    /// whole app on ordinary web content. The tokenizer must map offsets without trapping.
+    func testTokenizerHandlesNonBMPWithoutCrash() throws {
+        guard let loaded = RampartModelLoader.loadBundled() else {
+            throw XCTSkip("Rampart ONNX model not bundled — heuristic-only build")
+        }
+        let raw = "Hi 👋 world 🌍 John Smith 😀 lives near 𠀀 test 🇺🇸 end."
+        let encoding = loaded.tokenizer.encode(raw)
+        let offsets = loaded.tokenizer.tokenIndexOffsets(encoding)   // must not trap
+        XCTAssertEqual(offsets.count, encoding.pieces.count + 2)     // [CLS] + pieces + [SEP]
+        let n = (raw as NSString).length
+        for (s, e) in offsets {
+            XCTAssertTrue(s >= 0 && s <= e && e <= n, "offset (\(s),\(e)) outside [0,\(n)]")
+        }
+    }
+
+    /// Regression at the full-redaction level: emoji-bearing content that would previously crash the
+    /// app now scrubs cleanly (name + email redacted, no trap).
+    func testRedactionSurvivesEmojiContent() async throws {
+        guard await RampartRedactor.shared.modelAvailable() else {
+            throw XCTSkip("Rampart ONNX model not bundled — heuristic-only build")
+        }
+        let text = "Update from John Smith 😀🌍 — email john@example.com 👋 thanks"
+        let (scrubbed, count, _) = await RampartRedactor.shared.newSession().protect(text)   // must not crash
+        XCTAssertFalse(scrubbed.contains("john@example.com"), "email redacted; got: \(scrubbed)")
+        XCTAssertGreaterThanOrEqual(count, 1)
+    }
 }

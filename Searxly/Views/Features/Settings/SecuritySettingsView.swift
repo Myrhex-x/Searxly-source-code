@@ -16,7 +16,9 @@ struct SecuritySettingsView: View {
         SettingsPane {
             SettingsPaneHeader(
                 title: "App Security",
-                subtitle: "Require Touch ID or your Mac password to open Searxly, and back up your data."
+                subtitle: Edition.isMaximum
+                    ? "Access control for the application itself — biometric App Lock, idle auto-lock, and encrypted backup."
+                    : "Require Touch ID or your Mac password to open Searxly, and back up your data."
             )
 
             SettingsSection(

@@ -60,11 +60,12 @@ nonisolated enum RampartNER {
         func flush() {
             guard let base = curBase, curCount > 0, curEnd > curStart else { curBase = nil; return }
             let score = curScoreSum / Float(curCount)
-            if base != "O", score >= minScore,
-               curStart >= 0, curEnd <= ns.length {
-                spans.append(RampartDetection(start: curStart, end: curEnd, label: base,
-                                              score: score, source: .ner,
-                                              text: ns.substring(with: NSRange(location: curStart, length: curEnd - curStart))))
+            if base != "O", score >= minScore, curStart >= 0, curEnd <= ns.length {
+                let text = ns.substring(with: NSRange(location: curStart, length: curEnd - curStart))
+                if !Self.isLowValueNameSpan(base: base, text: text) {
+                    spans.append(RampartDetection(start: curStart, end: curEnd, label: base,
+                                                  score: score, source: .ner, text: text))
+                }
             }
             curBase = nil
         }
@@ -97,6 +98,16 @@ nonisolated enum RampartNER {
         }
         flush()
         return spans
+    }
+
+    private static let nameLabels: Set<String> = [RampartEntity.givenName.rawValue, RampartEntity.surname.rawValue]
+
+    /// Drop obvious NER false positives among NAME entities: a "name" of one or two characters
+    /// ("In", "It", "Up", "Of") is almost never a real given name or surname — it's the classifier
+    /// mislabelling a short common word (e.g. the "In" in "Sign In"). Non-name entities are unaffected.
+    static func isLowValueNameSpan(base: String, text: String) -> Bool {
+        guard nameLabels.contains(base) else { return false }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).count <= 2
     }
 
     /// Strip a BIO prefix: `B-GIVEN_NAME`/`I-GIVEN_NAME` → `GIVEN_NAME`; bare labels pass through.

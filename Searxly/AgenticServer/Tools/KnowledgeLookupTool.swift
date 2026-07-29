@@ -12,6 +12,8 @@ import Foundation
 @MainActor
 struct KnowledgeLookupTool: AgenticTool {
     let id = "knowledge_lookup"
+    let title = "Knowledge lookup"
+    let isReadOnly = true
     let summary = """
     Get a structured fact card for a well-known person, company, place, or thing — a short description, \
     the official site, and key facts. Sourced from the user's private search and knowledge providers.
@@ -23,6 +25,17 @@ struct KnowledgeLookupTool: AgenticTool {
         ],
         "required": ["query"]
     ]
+
+    var outputSchema: [String: Any]? {
+        ["type": "object", "properties": [
+            "name": ["type": "string"],
+            "description": ["type": "string"],
+            "official_site": ["type": "string"],
+            "facts": ["type": "array", "items": ["type": "object", "properties": [
+                "label": ["type": "string"], "value": ["type": "string"]
+            ]]]
+        ]]
+    }
 
     func run(_ arguments: [String: Any]) async -> AgenticToolOutcome {
         guard let query = (arguments["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -51,6 +64,14 @@ struct KnowledgeLookupTool: AgenticTool {
                 lines.append("- \(fact.label): \(fact.value)")
             }
         }
-        return .ok(lines.joined(separator: "\n"))
+
+        let structured: [String: Any] = [
+            "name": entity.title,
+            "description": entity.aboutParagraphs.prefix(3).joined(separator: "\n\n"),
+            "official_site": entity.officialSiteURL.map { "\($0)" } ?? "",
+            "facts": entity.facts.prefix(10).map { ["label": $0.label, "value": $0.value] }
+        ]
+        return .okStructured(text: lines.joined(separator: "\n"),
+                             structuredJSON: (try? JSONSerialization.data(withJSONObject: structured)) ?? Data("{}".utf8))
     }
 }

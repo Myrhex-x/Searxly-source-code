@@ -35,15 +35,18 @@ struct ImportDataView: View {
                         action: importBookmarks
                     )
 
-                    importCard(
-                        icon: "key.fill",
-                        title: "Passwords",
-                        subtitle: "From a CSV exported by your browser or password manager (Chrome, Safari, Firefox, Bitwarden, 1Password…). Saved encrypted in your vault.",
-                        actionTitle: "Choose CSV File…",
-                        status: passwordStatus,
-                        footnote: "The CSV contains plain-text passwords. Delete it securely once the import finishes.",
-                        action: importPasswords
-                    )
+                    // Password CSV import lands in the vault, which is Maximum-exclusive.
+                    if PasswordVaultManager.isAvailable {
+                        importCard(
+                            icon: "key.fill",
+                            title: "Passwords",
+                            subtitle: "From a CSV exported by your browser or password manager (Chrome, Safari, Firefox, Bitwarden, 1Password…). Saved encrypted in your vault.",
+                            actionTitle: "Choose CSV File…",
+                            status: passwordStatus,
+                            footnote: "The CSV contains plain-text passwords. Delete it securely once the import finishes.",
+                            action: importPasswords
+                        )
+                    }
                 }
                 .padding(20)
             }
@@ -67,7 +70,9 @@ struct ImportDataView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Import Data")
                     .font(.system(size: 17, weight: .semibold))
-                Text("Bring your bookmarks and passwords over from another browser.")
+                Text(PasswordVaultManager.isAvailable
+                     ? "Bring your bookmarks and passwords over from another browser."
+                     : "Bring your bookmarks over from another browser.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -192,6 +197,7 @@ struct ImportDataView: View {
         case .imported(let s):
             if s.imported == 0 && s.skipped == 0 && s.failed == 0 { return "No logins found in that file." }
             var parts = ["Imported \(s.imported) login\(s.imported == 1 ? "" : "s")."]
+            if s.withTOTP > 0 { parts.append("\(s.withTOTP) brought two-factor keys across.") }
             if s.skipped > 0 { parts.append("\(s.skipped) already in your vault.") }
             if s.failed > 0 { parts.append("\(s.failed) skipped (missing fields).") }
             return parts.joined(separator: " ")

@@ -28,21 +28,35 @@ enum AdaptiveChrome {
         #endif
     }
 
-    /// Deep premium canvas — home hero, sidebar, header, and main chrome in dark + glass mode.
-    static let canvasDark = Color(red: 0.043, green: 0.043, blue: 0.051)
+    /// True only in the Searxly Maximum build. `#if MAXIMUM_EDITION` rather than the app's usual
+    /// `Edition.isMaximum` because SearxlyShared compiles into the iOS target too, and Edition.swift is
+    /// macOS-only — it's the same compile-time constant either way. Private: `Edition.isMaximum` stays
+    /// the one edition check the app itself uses.
+    #if MAXIMUM_EDITION
+    private static let isMaximumEdition = true
+    #else
+    private static let isMaximumEdition = false
+    #endif
+
+    /// Pure pitch black — same as searxly.app (`--bg: #000` / `--bg-raised: #000`). Sidebar, header,
+    /// home, SERP, and main chrome all sit on this canvas; depth comes from hairlines, rim light,
+    /// shadows, and white-alpha veils on cards — never a lifted grey fill.
+    static let canvasDark = Color.black
 
     /// Paper-white counterpart for light + glass mode — a hair brighter and cooler than the stock
     /// window gray so light mode reads as designed, not defaulted.
     static let canvasLight = Color(red: 0.973, green: 0.973, blue: 0.98)
 
-    /// The exact solid panel canvas the floating sidebar + VPN popovers use (near-black in dark, white
+    /// The exact solid panel canvas the floating sidebar + VPN popovers use (pure black in dark, white
     /// in light). Shared so SERP chrome (category tabs, news control bar) can sit at the SAME darkness
     /// as the sidebar instead of a light frosted material. One definition → the surfaces can't drift.
     static var panelCanvas: Color { dynamic(light: .white, dark: canvasDark) }
 
-    /// Shared app background. Glass mode uses the designed canvas (near-black / paper-white);
-    /// otherwise system window bg.
+    /// Shared app background. Dark is always pure `#000` (searxly.app); light uses the paper canvas
+    /// when glass is on, otherwise the system window bg.
     static func appCanvas(_ scheme: ColorScheme, glassEnabled: Bool) -> Color {
+        // Pure black is the product canvas — not a glass effect — so it never softens to system grey.
+        if scheme == .dark { return canvasDark }
         guard glassEnabled else {
             #if os(macOS)
             return Color(nsColor: .windowBackgroundColor)
@@ -50,7 +64,7 @@ enum AdaptiveChrome {
             return Color(uiColor: .systemBackground)
             #endif
         }
-        return scheme == .dark ? canvasDark : canvasLight
+        return canvasLight
     }
 
     static func fill(_ scheme: ColorScheme, dark: Double, light: Double? = nil) -> Color {

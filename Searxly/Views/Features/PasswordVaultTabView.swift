@@ -12,6 +12,7 @@ struct PasswordVaultTabView: View {
     let toolbarMaterial: Material
 
     var onFillLogin: (String, String, String) -> Void = { _, _, _ in }
+    var onFillTOTP: (String) -> Void = { _ in }
     var onOpenSite: (String) -> Void = { _ in }
 
     @Environment(\.colorScheme) private var colorScheme
@@ -28,11 +29,49 @@ struct PasswordVaultTabView: View {
     @State private var revealedPassword: String = ""
     @State private var revealHideTask: Task<Void, Never>?
 
-    private var vault = PasswordVaultManager.shared
+    // Parsed TOTP configurations, keyed by entry id. Cached rather than read per render: the code
+    // view ticks once a second, and hitting the Keychain on every tick for every 2FA login would
+    // be both wasteful and needlessly chatty with the security daemon.
+    @State private var totpConfigurations: [UUID: TOTPConfiguration] = [:]
+
+    // Domains where macOS holds a passkey. Used only to note that a stored password may no longer
+    // be needed — deliberately advisory, never a prompt to delete anything (see passkeyNote).
+    @State private var domainsWithPasskeys: Set<String> = []
+
+    private var vault: PasswordVaultManager { PasswordVaultManager.shared }
 
     /// Recomputes password health locally (reuse / weak / known-common). Only meaningful while the
     /// vault is unlocked, which is the only time this content is on screen.
     private func refreshHealth() { health = vault.healthReports() }
+
+    /// Looks up which of the vault's domains already have a system passkey. One lookup per unique
+    /// domain, and the directory caches, so re-entering the tab costs nothing.
+    private func refreshPasskeyDomains() async {
+        let directory = WebPasskeyDirectory.shared
+        guard directory.isActive else {
+            domainsWithPasskeys = []
+            return
+        }
+        var found: Set<String> = []
+        for domain in Set(vault.entries.map(\.domain)) where !domain.isEmpty {
+            if !(await directory.passkeys(forDomain: domain)).isEmpty {
+                found.insert(domain)
+            }
+        }
+        domainsWithPasskeys = found
+    }
+
+    /// Reloads the TOTP seeds for entries flagged as having one. Unlock-gated inside the manager,
+    /// so a locked vault simply yields an empty map and no code rows render.
+    private func refreshTOTP() {
+        var loaded: [UUID: TOTPConfiguration] = [:]
+        for entry in vault.entries where entry.hasTOTP {
+            if let configuration = vault.totpConfiguration(for: entry.id) {
+                loaded[entry.id] = configuration
+            }
+        }
+        totpConfigurations = loaded
+    }
 
     private var filteredEntries: [PasswordVaultEntry] {
         vault.entries(matching: searchText)
@@ -159,8 +198,9 @@ struct PasswordVaultTabView: View {
             .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
         }
-        .onAppear { refreshHealth() }
-        .onChange(of: vault.entries) { _, _ in refreshHealth() }
+        .onAppear { refreshHealth(); refreshTOTP() }
+        .onChange(of: vault.entries) { _, _ in refreshHealth(); refreshTOTP() }
+        .task(id: vault.entries.count) { await refreshPasskeyDomains() }
         // Locking the vault must not leave a revealed password sitting in @State memory / on screen.
         .onChange(of: vault.isVaultUnlocked) { _, unlocked in if !unlocked { hideRevealedPassword() } }
     }
@@ -594,6 +634,14 @@ struct PasswordVaultTabView: View {
                         toggleReveal(entry)
                     }
 
+                    if totpConfigurations[entry.id] != nil {
+                        actionButton("Copy two-factor code", systemImage: "lock.rotation") {
+                            if vault.copyTOTPToClipboard(for: entry.id) {
+                                flashStatus("Two-factor code copied — clears in 45s")
+                            }
+                        }
+                    }
+
                     actionButton("Edit", systemImage: "pencil") {
                         editingEntry = entry
                     }
@@ -602,6 +650,26 @@ struct PasswordVaultTabView: View {
                         entryToDelete = entry
                     }
                 }
+            }
+
+            if domainsWithPasskeys.contains(entry.domain) {
+                passkeyNote
+            }
+
+            if let configuration = totpConfigurations[entry.id] {
+                TOTPCodeView(
+                    configuration: configuration,
+                    onCopy: { code in
+                        VaultClipboardManager.shared.copySensitive(code)
+                        vault.recordVaultActivity()
+                        flashStatus("Two-factor code copied — clears in 45s")
+                    },
+                    onFill: vault.autofillEnabled ? { code in
+                        onFillTOTP(code)
+                        vault.recordVaultActivity()
+                        flashStatus("Two-factor code filled")
+                    } : nil
+                )
             }
 
             if revealedEntryID == entry.id {
@@ -626,6 +694,26 @@ struct PasswordVaultTabView: View {
         }
         .padding(12)
         .background(AdaptiveChrome.fill(colorScheme, dark: 0.03, light: 0.02), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// Advisory only, and worded carefully on purpose. We know the site has *a* passkey; we do NOT
+    /// know it belongs to this account. Telling someone to delete a working password on that basis
+    /// could lock them out, so this states the fact and stops short of recommending anything.
+    private var passkeyNote: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "person.badge.key")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+            Text("You also have a passkey saved for this site in macOS.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AdaptiveChrome.fill(colorScheme, dark: 0.04, light: 0.03),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func actionButton(_ help: String, systemImage: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {

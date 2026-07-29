@@ -11,14 +11,32 @@ import SwiftUI
 import UIKit
 
 struct SummarySheet: View {
-    let model: BrowserModel
+    /// What to summarize: the live page (text extracted from its webview) or an already-extracted
+    /// reader article (Reader's Summarize button — no webview needed).
+    private enum Source {
+        case page(BrowserModel)
+        case article(ReaderArticle)
+    }
+    private let source: Source
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
 
     private var appearance = AppearanceSettings.shared
 
     init(model: BrowserModel) {
-        self.model = model
+        source = .page(model)
+    }
+
+    init(article: ReaderArticle) {
+        source = .article(article)
+    }
+
+    private var displayTitle: String {
+        switch source {
+        case .page(let model):
+            return model.pageTitle.isEmpty ? (model.webView.url?.host ?? "") : model.pageTitle
+        case .article(let article):
+            return article.title.isEmpty ? article.host : article.title
+        }
     }
 
     private enum Phase: Equatable {
@@ -41,7 +59,7 @@ struct SummarySheet: View {
                         loadingRow(L("Reading the page…"))
                     case .streaming, .done:
                         Text(summary.isEmpty ? "…" : summary)
-                            .font(.system(size: 15.5 * appearance.textScale))
+                            .font(.system(size: 15 * appearance.textScale))
                             .lineSpacing(3.5)
                             .foregroundStyle(Brand.textSecondary)
                             .textSelection(.enabled)
@@ -75,23 +93,19 @@ struct SummarySheet: View {
         .onDisappear { task?.cancel() }
     }
 
-    /// Page identity on a Liquid Glass card: sparkles badge, title, host, privacy line.
+    /// Page identity on a Liquid Glass card: official Apple Intelligence mark, title, privacy line.
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "sparkles")
-                .scaledFont(size: 15, weight: .semibold)
-                .foregroundStyle(Brand.bg)
-                .frame(width: 32, height: 32)
-                .background(Brand.text, in: Circle())
+            AppleIntelligenceBadge(iconSize: 15, diameter: 32)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(model.pageTitle.isEmpty ? (model.webView.url?.host ?? "") : model.pageTitle)
+                Text(displayTitle)
                     .font(.system(size: 15 * appearance.textScale, weight: .semibold))
                     .foregroundStyle(Brand.text)
                     .lineLimit(2)
                 HStack(spacing: 4) {
                     Image(systemName: "lock.fill")
-                        .scaledFont(size: 8.5, weight: .semibold)
+                        .scaledFont(size: 9, weight: .semibold)
                     Text(L("Generated on this iPhone — the page never leaves your device."))
                         .scaledFont(size: 11)
                 }
@@ -100,11 +114,7 @@ struct SummarySheet: View {
             Spacer(minLength: 0)
         }
         .padding(13)
-        .glassEffect(.regular.tint(glassTint), in: .rect(cornerRadius: 18))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Brand.hairline, lineWidth: 0.5)
-        )
+        .searxlyGlassCard(cornerRadius: 18)
     }
 
     /// Docked glass capsules: Copy + Regenerate.
@@ -123,7 +133,7 @@ struct SummarySheet: View {
             }
             .buttonStyle(.plain)
             .disabled(summary.isEmpty)
-            .glassEffect(.regular.tint(glassTint), in: .capsule)
+            .searxlyGlassCapsule()
 
             Button {
                 copied = false
@@ -137,14 +147,10 @@ struct SummarySheet: View {
             }
             .buttonStyle(.plain)
             .disabled(phase == .streaming || phase == .extracting)
-            .glassEffect(.regular.tint(glassTint), in: .capsule)
+            .searxlyGlassCapsule()
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 6)
-    }
-
-    private var glassTint: Color {
-        colorScheme == .dark ? Color.white.opacity(0.05) : Color.black.opacity(0.035)
     }
 
     private func loadingRow(_ label: String) -> some View {
@@ -160,9 +166,18 @@ struct SummarySheet: View {
         task?.cancel()
         summary = ""
         phase = .extracting
-        let title = model.pageTitle
+        let title = displayTitle
+        let source = self.source
         task = Task {
-            guard let text = await PageIntelligence.pageText(from: model.webView) else {
+            let extracted: String?
+            switch source {
+            case .page(let model):
+                extracted = await PageIntelligence.pageText(from: model.webView)
+            case .article(let article):
+                let text = article.blocks.map(\.text).joined(separator: "\n\n")
+                extracted = text.count > 200 ? String(text.prefix(PageIntelligence.maxChars)) : nil
+            }
+            guard let text = extracted else {
                 phase = .failed(L("There isn't enough readable text on this page to summarize."))
                 return
             }

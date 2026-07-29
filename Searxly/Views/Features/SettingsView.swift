@@ -25,11 +25,14 @@ enum SettingsSidebarGroup: String, CaseIterable, Identifiable {
         case .general:
             return [.appearance]
         case .privacy:
-            // Searxly Maximum has no managed VPN — Tor is the only protection network.
-            // Privacy Report leads the group: a glanceable posture score before the controls.
-            return Edition.isMaximum
-                ? [.privacyReport, .privacy, .security, .passwords, .tor]
-                : [.privacyReport, .privacy, .security, .passwords, .vpn, .tor]
+            // VPN is offered in both editions now: base app = a paid managed pass; Maximum = the faster
+            // protection network (included free for 45 days, then falls back to Tor). Privacy Report leads
+            // the group: a glanceable posture score before the controls.
+            // Password vault is Maximum-exclusive (same product rule as PasswordVaultManager.isAvailable).
+            if PasswordVaultManager.isAvailable {
+                return [.privacyReport, .privacy, .security, .passwords, .vpn, .tor]
+            }
+            return [.privacyReport, .privacy, .security, .vpn, .tor]
         case .search:
             return [.search, .instances]
         case .features:
@@ -40,8 +43,10 @@ enum SettingsSidebarGroup: String, CaseIterable, Identifiable {
             }
             return categories
         case .support:
-            // Searxly Maximum has no feedback webhook (nothing posts outward).
-            return Edition.isMaximum ? [.about] : [.feedback, .about]
+            // Support leads the group: the hand-off to the hosted support center (tickets) sits above
+            // the in-app Feedback form. Searxly Maximum has no feedback webhook (nothing posts outward),
+            // but still surfaces the support center.
+            return Edition.isMaximum ? [.support, .about, .legal] : [.support, .feedback, .about, .legal]
         }
     }
 }
@@ -61,8 +66,10 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case instances = "SearXNG Instances"
     case wallet = "Wallet"
     case agenticTools = "Agentic Tools"
+    case support = "Support"
     case feedback = "Feedback"
     case about = "About"
+    case legal = "Legal"
 
     var id: String { rawValue }
 
@@ -81,8 +88,10 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .extensions: return "puzzlepiece.extension.fill"
         case .search: return "text.magnifyingglass"
         case .instances: return "network"
+        case .support: return "lifepreserver.fill"
         case .feedback: return "exclamationmark.bubble.fill"
         case .about: return "info.circle"
+        case .legal: return "doc.text"
         }
     }
 
@@ -101,8 +110,10 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .instances:   return Localization.string("instances_title", defaultValue: "SearXNG Instances")
         case .wallet:      return "Wallet"
         case .agenticTools: return Localization.string("agentic_tools_title", defaultValue: "Agentic Tools")
+        case .support:     return Localization.string("support_title", defaultValue: "Support")
         case .feedback:    return Localization.string("feedback_title", defaultValue: "Feedback")
         case .about:       return Localization.string("about_title", defaultValue: "About")
+        case .legal:       return Localization.string("legal_title", defaultValue: "Legal")
         }
     }
 }
@@ -112,7 +123,6 @@ struct SettingsView: View {
     @Binding var searxInstances: [SearXNGInstance]
     @Binding var currentInstanceID: UUID
     @Binding var knowledgePanelEnabled: Bool
-    @Binding var localPackEnabled: Bool
 
     /// Binding to let Settings trigger the advanced Clear Browsing Data sheet (owned by ContentView).
     @Binding var showingClearData: Bool
@@ -149,15 +159,46 @@ struct SettingsView: View {
     // Currently selected category in the left sidebar (seeded from initialCategory on appear)
     @State private var selectedCategory: SettingsCategory = .appearance
 
+    // Settings search (Searxly Maximum): the query drives the floating results panel below the header.
+    @State private var searchQuery = ""
+    @FocusState private var searchFocused: Bool
+
     var body: some View {
         VStack(spacing: 0) {
             headerBar
 
-            Rectangle().fill(SettingsTheme.hairline).frame(height: 1)
+            // Base app keeps the hard hairline; Searxly Maximum relies on the raised-header/darker-
+            // content tonal step alone, so there's no flat line cutting across behind the search.
+            if !Edition.isMaximum {
+                Rectangle().fill(SettingsTheme.hairline).frame(height: 1)
+            }
 
             HStack(spacing: 0) {
                 sidebarView
                 contentColumn
+            }
+        }
+        // Results popup, anchored directly under the search field (not centered in the content area).
+        // It springs OUT of the bar: the scale transition is anchored to the panel's top edge — which
+        // sits just under the field — so the dark-glass panel grows downward from the search bar.
+        .overlayPreferenceValue(SearchFieldBoundsKey.self) { anchor in
+            if Edition.isMaximum, let anchor {
+                GeometryReader { proxy in
+                    let rect = proxy[anchor]
+                    if !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                        SettingsSearchResults(query: searchQuery) { entry in
+                            selectedCategory = entry.category
+                            searchQuery = ""
+                            searchFocused = false
+                        }
+                        // Transition first (so scale anchors to the panel's own top), then position:
+                        // centre the 420-wide panel on the field's midX, dropped just below it.
+                        .transition(.scale(scale: 0.86, anchor: .top).combined(with: .opacity))
+                        .offset(x: rect.midX - 210, y: rect.maxY + 7)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
+                }
+                .animation(.spring(response: 0.34, dampingFraction: 0.8), value: searchQuery.isEmpty)
             }
         }
         // minHeight kept low so the sheet can shrink to fit short parent windows / laptop screens
@@ -198,7 +239,36 @@ struct SettingsView: View {
             Text(Localization.string("settings_title", defaultValue: "Settings"))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(SettingsTheme.textPrimary)
+            // Edition insignia — quiet small-caps wordmark in a hairline capsule, monochrome like
+            // everything else. The one place Settings states which product this is.
+            if Edition.isMaximum {
+                Text("MAXIMUM")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(1.6)
+                    .foregroundStyle(SettingsTheme.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .overlay(Capsule().strokeBorder(SettingsTheme.hairlineStrong, lineWidth: 1))
+            }
             Spacer()
+            if Edition.isMaximum {
+                SettingsSearchField(query: $searchQuery, onSubmit: {
+                    // Return opens the top-ranked result.
+                    if let first = SettingsSearchIndex.search(searchQuery).first {
+                        selectedCategory = first.category
+                        searchQuery = ""
+                        searchFocused = false
+                    }
+                }, focused: $searchFocused)
+                // ⌘F focuses the search field (the hint the field shows). Zero-size, invisible.
+                .background(
+                    Button("") { searchFocused = true }
+                        .keyboardShortcut("f", modifiers: .command)
+                        .opacity(0)
+                        .frame(width: 0, height: 0)
+                )
+                Spacer()
+            }
             Button {
                 dismiss()
             } label: {
@@ -261,7 +331,8 @@ struct SettingsView: View {
                         clearedMessage = Localization.string("no_encryption_key", defaultValue: "No encryption key found to export.")
                         showClearConfirmation = true
                     }
-                }
+                },
+                onNavigate: { selectedCategory = $0 }
             )
         case .security:
             SecuritySettingsView(
@@ -271,7 +342,14 @@ struct SettingsView: View {
         case .passwords:
             PasswordsSettingsView(onOpenVault: openPasswordVaultFromSettings)
         case .vpn:
-            VPNManagedView()
+            // Both editions buy/renew a Searxly VPN pass here; Maximum's pane drops the crypto rail (no
+            // wallet in that edition) and leads with the included welcome comp. Which network Maximum
+            // Privacy actually rides — Tor or this VPN — is a Privacy & Data setting, not a VPN one.
+            if Edition.isMaximum {
+                VPNMaximumView(onNavigate: { selectedCategory = $0 })
+            } else {
+                VPNManagedView()
+            }
         case .tor:
             TorSettingsView()
         case .performance:
@@ -279,7 +357,7 @@ struct SettingsView: View {
         case .extensions:
             ExtensionsSettingsView()
         case .search:
-            SearchSettingsView(knowledgePanelEnabled: $knowledgePanelEnabled, localPackEnabled: $localPackEnabled)
+            SearchSettingsView(knowledgePanelEnabled: $knowledgePanelEnabled)
         case .instances:
             InstancesSettingsView(
                 searxInstances: $searxInstances,
@@ -289,6 +367,8 @@ struct SettingsView: View {
             AgenticToolsSettingsView()
         case .wallet:
             WalletSettingsSection()
+        case .support:
+            SupportSettingsView()
         case .feedback:
             FeedbackSettingsView(
                 searxInstances: $searxInstances,
@@ -296,6 +376,8 @@ struct SettingsView: View {
             )
         case .about:
             AboutSettingsView()
+        case .legal:
+            LegalSettingsView()
         }
     }
 

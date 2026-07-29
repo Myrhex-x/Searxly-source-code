@@ -10,6 +10,14 @@ import SwiftUI
 import WebKit
 import os
 
+/// Shared UserDefaults keys for tab/navigation preferences (kept here so the Settings toggle and the
+/// new-tab open paths reference one source of truth rather than duplicating string literals).
+enum NavigationCoordinatorKeys {
+    /// "Open new tabs in the background" — when true, links/results that open a new tab don't steal focus
+    /// from the current page (Settings ▸ Appearance ▸ Tabs). Default false = switch to the new tab.
+    static let openNewTabsInBackground = "openNewTabsInBackground"
+}
+
 extension BrowserState {
     func loadInWebView(_ url: URL) {
         loadInWebView(url, recordInHistory: true)
@@ -42,10 +50,13 @@ extension BrowserState {
 
         // Local files can't be loaded through load(URLRequest:) — WKWebView refuses file:// URLs sent
         // that way and requires loadFileURL(_:allowingReadAccessTo:). Route them there, granting read
-        // access to the containing folder so relative assets (CSS/JS/images) resolve. This covers file
-        // URLs from any source: the address bar, bookmarks, a restored session, or "Open With Searxly".
+        // access to the exact file (not its parent folder): under the App Sandbox we only ever hold a
+        // scope for the specific file, so vending the parent to the WebContent process fails and blanks
+        // the page. A folder-scoped project opened via "Open File…" grants its whole folder through that
+        // path instead. This covers file URLs from any source: the address bar, bookmarks, a restored
+        // session, or "Open With Searxly".
         if url.isFileURL {
-            loadLocalFileInWebView(url, readAccessURL: url.deletingLastPathComponent(), recordInHistory: recordInHistory)
+            loadLocalFileInWebView(url, readAccessURL: url, recordInHistory: recordInHistory)
             return
         }
 
@@ -107,10 +118,14 @@ extension BrowserState {
     }
 
     /// Loads a local `file://` page into the active tab via WKWebView's `loadFileURL(_:allowingReadAccessTo:)`
-    /// (the only API that works for local files). `readAccessURL` is the folder WebKit may read from — the
-    /// file's directory — so same-folder assets load. Sandbox access to that path must already be held
-    /// (via "Open File…", ~/Downloads, or an "Open With Searxly" launch) or the read fails. File URLs are
-    /// deliberately kept out of history/suggestions: the sandbox grant is transient, so a recorded path
+    /// (the only API that works for local files). `readAccessURL` is what WebKit is allowed to read, and it
+    /// MUST be a path we hold a live sandbox grant for — WebKit vends a read sandbox-extension for it to the
+    /// WebContent process, and minting one for a path we can't access fails the load with "…outside the
+    /// sandbox" (a blank page). So it's the FILE itself for a single-file open (the grant covers just that
+    /// file — sibling assets therefore won't load) and the whole FOLDER for a "Open File…" folder open
+    /// (that grant covers the folder, so its CSS/JS/images resolve). The grant must already be held (via
+    /// "Open File…", a drag-in, ~/Downloads, or an "Open With Searxly" launch) or the read fails. File URLs
+    /// are deliberately kept out of history/suggestions: the sandbox grant is transient, so a recorded path
     /// usually can't be reopened later and would only pollute address-bar suggestions.
     func loadLocalFileInWebView(_ url: URL, readAccessURL: URL, recordInHistory: Bool) {
         if recordInHistory {
@@ -153,9 +168,15 @@ extension BrowserState {
         newTab.title = targetURL.host ?? "Loading..."
 
         tabs.append(newTab)
-        selectedTabID = newTab.id
-        showingWebContent = true
-        searchText = targetURL.absoluteString
+
+        // "Open new tabs in the background" (Settings ▸ Appearance): keep the user on the SERP instead of
+        // switching to the freshly opened result. Off by default (switches to it, as before).
+        let openInBackground = UserDefaults.standard.bool(forKey: NavigationCoordinatorKeys.openNewTabsInBackground)
+        if !openInBackground {
+            selectedTabID = newTab.id
+            showingWebContent = true
+            searchText = targetURL.absoluteString
+        }
 
         // History (dedup + cap) — only when recording is enabled, mirrors loadInWebView behavior.
         // FIX: ignore the search-result title we put on the tab (it can be the SERP hit title, not the
@@ -173,11 +194,12 @@ extension BrowserState {
 
         saveCurrentSession()
 
-        // Same delayed + stabilization pattern as loadInWebView so first paint is reliable.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
-            guard let self else { return }
-            self.activeWebView.load(URLRequest(url: targetURL))
-            self.activeWebView.evaluateJavaScript("""
+        // Load the new tab's own webView (not activeWebView — that's still the current tab when we opened
+        // this one in the background). Same delayed + stabilization pattern as loadInWebView.
+        let targetWebView = newTab.webView
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            targetWebView?.load(URLRequest(url: targetURL))
+            targetWebView?.evaluateJavaScript("""
             (function(){ try { window.dispatchEvent(new Event('resize')); void document.documentElement.offsetWidth; } catch(e){} })();
             """, completionHandler: nil)
         }
@@ -348,9 +370,6 @@ extension BrowserState {
         knowledgePanelState = snapshot.knowledgePanelState
         // The local pack isn't snapshotted (it re-resolves on a fresh search); clear it on restore so a
         // back/forward navigation never shows a pack from a different query.
-        cancelLocalPackTask()
-        localPackDetected = nil
-        localPackState = .hidden
         isLoadingSearch = false
         isLoadingMoreResults = false
         consecutiveEmptyLoadMorePages = 0

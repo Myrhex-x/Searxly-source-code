@@ -14,13 +14,43 @@ import FoundationModels
 #endif
 
 struct PageChatSheet: View {
-    let model: BrowserModel
+    /// What grounds the chat: the live page's text, or the SERP's top-result snippets
+    /// (the AI Overview's "Ask more" — same grounding, zero new egress).
+    enum Context {
+        case page(BrowserModel)
+        case searchResults(query: String, results: [SearXNGResult])
+    }
+    let context: Context
+    /// Auto-sent as the first message once the engine is ready (the edit menu's "Explain This").
+    private let initialQuestion: String?
     @Environment(\.dismiss) private var dismiss
 
     private var appearance = AppearanceSettings.shared
 
-    init(model: BrowserModel) {
-        self.model = model
+    init(model: BrowserModel, initialQuestion: String? = nil) {
+        context = .page(model)
+        self.initialQuestion = initialQuestion
+    }
+
+    init(searchQuery: String, results: [SearXNGResult]) {
+        context = .searchResults(query: searchQuery, results: results)
+        initialQuestion = nil
+    }
+
+    private var navigationTitle: String {
+        switch context {
+        case .page: L("Ask About This Page")
+        case .searchResults: L("Ask About These Results")
+        }
+    }
+
+    private var contextTitle: String {
+        switch context {
+        case .page(let model):
+            model.pageTitle.isEmpty ? (model.webView.url?.host ?? "") : model.pageTitle
+        case .searchResults(let query, _):
+            "\u{201C}\(query)\u{201D}"
+        }
     }
 
     private struct Message: Identifiable, Equatable {
@@ -66,7 +96,7 @@ struct PageChatSheet: View {
                 inputBar
             }
             .background(Brand.bg.ignoresSafeArea())
-            .navigationTitle(L("Ask About This Page"))
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -76,25 +106,30 @@ struct PageChatSheet: View {
             .tint(Brand.text)
         }
         .presentationDetents([.large])
-        .task { await prepare() }
+        .task {
+            await prepare()
+            if let question = initialQuestion, messages.isEmpty, chat != nil {
+                send(String(format: L("Explain this passage from the page: “%@”"), question))
+            }
+        }
     }
 
     // MARK: - Pieces
 
     private var starters: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(model.pageTitle.isEmpty ? (model.webView.url?.host ?? "") : model.pageTitle)
+            Text(contextTitle)
                 .scaledFont(size: 14, weight: .semibold)
                 .foregroundStyle(Brand.text)
                 .lineLimit(2)
             ForEach([L("What are the key points?"), L("Explain this simply"), L("Any caveats or criticism mentioned?")], id: \.self) { starter in
                 Button { send(starter) } label: {
                     HStack(spacing: 7) {
-                        Image(systemName: "sparkles")
-                            .scaledFont(size: 11)
-                            .foregroundStyle(Brand.textTertiary)
+                        Image(systemName: "apple.intelligence")
+                            .font(.system(size: 11, weight: .semibold))
+                            .symbolRenderingMode(.multicolor)
                         Text(starter)
-                            .font(.system(size: 13.5 * appearance.textScale))
+                            .font(.system(size: 13 * appearance.textScale))
                             .foregroundStyle(Brand.text)
                         Spacer()
                     }
@@ -112,7 +147,7 @@ struct PageChatSheet: View {
         HStack {
             if message.isUser { Spacer(minLength: 40) }
             Text(message.text.isEmpty ? "…" : message.text)
-                .font(.system(size: 14.5 * appearance.textScale))
+                .font(.system(size: 14 * appearance.textScale))
                 .foregroundStyle(message.isUser ? Brand.bg : Brand.text)
                 .textSelection(.enabled)
                 .padding(.horizontal, 13)
@@ -121,6 +156,14 @@ struct PageChatSheet: View {
                     message.isUser ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.surface),
                     in: RoundedRectangle(cornerRadius: 15, style: .continuous)
                 )
+                .overlay {
+                    // Hairline rim on assistant bubbles so they hold their shape on the flat bg.
+                    if !message.isUser {
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .strokeBorder(Brand.hairline, lineWidth: 0.5)
+                    }
+                }
+                .accessibilityLabel("\(message.isUser ? L("You") : L("Answer")): \(message.text)")
             if !message.isUser { Spacer(minLength: 40) }
         }
     }
@@ -160,11 +203,21 @@ struct PageChatSheet: View {
 
     private func prepare() async {
         guard chat == nil else { return }
-        guard let text = await PageIntelligence.pageText(from: model.webView) else {
-            pageUnavailable = true
-            return
+        switch context {
+        case .page(let model):
+            guard let text = await PageIntelligence.pageText(from: model.webView) else {
+                pageUnavailable = true
+                return
+            }
+            chat = PageChatEngine(pageTitle: model.pageTitle, pageText: text)
+        case .searchResults(let query, let results):
+            let grounding = SearchIntelligence.groundingBlock(for: results)
+            guard !grounding.isEmpty else {
+                pageUnavailable = true
+                return
+            }
+            chat = PageChatEngine(searchQuery: query, grounding: grounding)
         }
-        chat = PageChatEngine(pageTitle: model.pageTitle, pageText: text)
     }
 
     private func send(_ raw: String) {
@@ -203,11 +256,20 @@ final class PageChatEngine {
     #endif
     private let pageTitle: String
     private let pageText: String
+    /// SERP mode: the grounding is numbered result snippets, and the instructions say so.
+    private let isSearchGrounded: Bool
 
     init(pageTitle: String, pageText: String) {
         self.pageTitle = pageTitle
         // Leave headroom in the ~4k-token window for the conversation itself.
         self.pageText = String(pageText.prefix(7_000))
+        self.isSearchGrounded = false
+    }
+
+    init(searchQuery: String, grounding: String) {
+        self.pageTitle = searchQuery
+        self.pageText = String(grounding.prefix(7_000))
+        self.isSearchGrounded = true
     }
 
     func reply(to question: String) -> AsyncThrowingStream<String, Error> {
@@ -221,14 +283,33 @@ final class PageChatEngine {
 
         #if canImport(FoundationModels)
         if session == nil {
-            session = LanguageModelSession(instructions: """
-            You answer questions about ONE web page using ONLY its text below. If the page \
-            doesn't contain the answer, say so plainly. Be concise. Match the user's language.
+            let uiName = AppLocale.shared.languageNameForModel
+            let uiCode = AppLocale.shared.languageCode
+            let instructions: String
+            if isSearchGrounded {
+                instructions = """
+                You answer questions about a web search using ONLY the numbered result snippets \
+                below — never outside knowledge. Cite the snippets you used inline, like [1] or \
+                [2][4]. If the snippets don't contain the answer, say so plainly. Be concise. \
+                Match the user's language when clear; if ambiguous, answer in \(uiName) \
+                (language code: \(uiCode)).
 
-            Page title: \(pageTitle)
-            Page text:
-            \(pageText)
-            """)
+                Search query: "\(pageTitle)"
+                Results:
+                \(pageText)
+                """
+            } else {
+                instructions = """
+                You answer questions about ONE web page using ONLY its text below. If the page \
+                doesn't contain the answer, say so plainly. Be concise. Match the user's language \
+                when clear; if ambiguous, answer in \(uiName) (language code: \(uiCode)).
+
+                Page title: \(pageTitle)
+                Page text:
+                \(pageText)
+                """
+            }
+            session = LanguageModelSession(instructions: instructions)
         }
         guard let session else {
             return AsyncThrowingStream { $0.finish() }

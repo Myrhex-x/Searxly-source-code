@@ -32,10 +32,12 @@ private struct ScreenCaptureProtector: NSViewRepresentable {
             window?.sharingType = .none
         }
 
-        // Restore normal sharing when this protector is removed from its window (the secret view was dismissed).
+        // Restore the RESTING sharing type when this protector is removed from its window (the secret
+        // view was dismissed) — .readOnly normally, but still .none while Searxly Maximum's
+        // whole-window capture exclusion is on (dismissing a password must not re-expose the window).
         override func viewWillMove(toWindow newWindow: NSWindow?) {
             super.viewWillMove(toWindow: newWindow)
-            if newWindow == nil { window?.sharingType = .readOnly }
+            if newWindow == nil { window?.sharingType = CaptureExclusion.restingSharingType }
         }
     }
 }

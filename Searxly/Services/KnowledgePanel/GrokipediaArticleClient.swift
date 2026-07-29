@@ -11,8 +11,28 @@ struct GrokipediaArticleSnippet: Sendable, Equatable {
     let title: String
     let firstParagraph: String
     let pageURL: String
+    /// Best single image (first of `imageURLs`) — kept for call sites that only need one.
     let imageURL: URL?
+    /// Ordered Grokipedia image candidates (sharp body images preferred over soft og:image leads).
+    let imageURLs: [URL]
     let facts: [KnowledgeFact]
+
+    init(
+        title: String,
+        firstParagraph: String,
+        pageURL: String,
+        imageURL: URL?,
+        imageURLs: [URL] = [],
+        facts: [KnowledgeFact]
+    ) {
+        self.title = title
+        self.firstParagraph = firstParagraph
+        self.pageURL = pageURL
+        let urls = imageURLs.isEmpty ? (imageURL.map { [$0] } ?? []) : imageURLs
+        self.imageURLs = urls
+        self.imageURL = imageURL ?? urls.first
+        self.facts = facts
+    }
 }
 
 enum GrokipediaArticleClient {
@@ -79,28 +99,33 @@ enum GrokipediaArticleClient {
                 return .notFound
             }
 
-            // Deterministic content checks: a 200 that isn't the expected article, or one whose lead
-            // can't be extracted, won't change on retry.
-            guard isValidArticlePage(html, expectedSlug: normalizedSlug) else { return .notFound }
+            // Rate-limit shells often return 200 with an "Article Not Found" title (or empty body).
+            // Treat those like HTTP 404: count + retry, don't hard-fail on the first blip (which used
+            // to negative-cache the miss and hide the card for 5 minutes).
+            guard isValidArticlePage(html, expectedSlug: normalizedSlug) else {
+                notFoundCount += 1
+                continue
+            }
             guard let paragraph = extractFirstParagraph(from: html), paragraph.count >= 48 else {
-                return .notFound
+                notFoundCount += 1
+                continue
             }
 
             let title = extractTitle(from: html, fallbackSlug: normalizedSlug)
-            let imageURL = extractArticleImage(from: html)
+            let imageURLs = extractArticleImages(from: html)
             let snippet = GrokipediaArticleSnippet(
                 title: title,
                 firstParagraph: paragraph,
                 pageURL: pageURL,
-                imageURL: imageURL,
+                imageURL: imageURLs.first,
+                imageURLs: imageURLs,
                 facts: extractInfoboxFacts(from: html)
             )
             store(snippet, for: normalizedSlug)
             return .article(snippet)
         }
-        // Both attempts failed. Only a 404 on BOTH attempts is treated as a real miss (twice-confirmed,
-        // strictly rarer than the old single-shot behavior); anything else was network-shaped or a
-        // one-off blip → transient, so the next search simply tries again.
+        // Both attempts failed. Only a miss-shaped response on BOTH attempts is a real not-found
+        // (twice-confirmed); anything else was network-shaped or a one-off blip → transient.
         return notFoundCount >= 2 ? .notFound : .transient
     }
 
@@ -180,11 +205,14 @@ enum GrokipediaArticleClient {
     }
 
     private static func extractFirstParagraph(from html: String) -> String? {
+        // Lead lives near the top of the article body. Scanning the whole multi-MB page for every
+        // tts-block is wasted work and used to stall resolution on long articles (Musk, etc.).
         let articleHTML: String
         if let markerRange = html.range(of: "<!-- Article body") {
-            articleHTML = String(html[markerRange.lowerBound...])
+            let tail = html[markerRange.lowerBound...]
+            articleHTML = String(tail.prefix(120_000))
         } else {
-            articleHTML = html
+            articleHTML = String(html.prefix(120_000))
         }
 
         // Grokipedia serves (at least) two article layouts:
@@ -199,12 +227,19 @@ enum GrokipediaArticleClient {
         if let regex = try? NSRegularExpression(pattern: ttsPattern, options: [.dotMatchesLineSeparators, .caseInsensitive]) {
             let range = NSRange(articleHTML.startIndex..., in: articleHTML)
             // A fat infobox can contribute a dozen-plus short spans before the first real paragraph.
-            for match in regex.matches(in: articleHTML, range: range).prefix(24) {
-                guard let r = Range(match.range(at: 1), in: articleHTML) else { continue }
+            // Walk matches incrementally instead of materializing hundreds across the whole page.
+            var matchCount = 0
+            regex.enumerateMatches(in: articleHTML, options: [], range: range) { result, _, stop in
+                guard let result, matchCount < 24 else {
+                    stop.pointee = true
+                    return
+                }
+                matchCount += 1
+                guard let r = Range(result.range(at: 1), in: articleHTML) else { return }
                 let text = stripHTML(String(articleHTML[r]))
                 if isBodyParagraph(text) {
-                    candidates.append((match.range.location, text))
-                    break
+                    candidates.append((result.range.location, text))
+                    stop.pointee = true
                 }
             }
         }
@@ -214,12 +249,18 @@ enum GrokipediaArticleClient {
         let barePattern = #"</div>\s*([A-Z][^<>]{99,})"#
         if let regex = try? NSRegularExpression(pattern: barePattern, options: []) {
             let range = NSRange(articleHTML.startIndex..., in: articleHTML)
-            for match in regex.matches(in: articleHTML, range: range).prefix(8) {
-                guard let r = Range(match.range(at: 1), in: articleHTML) else { continue }
+            var matchCount = 0
+            regex.enumerateMatches(in: articleHTML, options: [], range: range) { result, _, stop in
+                guard let result, matchCount < 8 else {
+                    stop.pointee = true
+                    return
+                }
+                matchCount += 1
+                guard let r = Range(result.range(at: 1), in: articleHTML) else { return }
                 let text = stripHTML(String(articleHTML[r]))
                 if isBodyParagraph(text) {
-                    candidates.append((match.range.location, text))
-                    break
+                    candidates.append((result.range.location, text))
+                    stop.pointee = true
                 }
             }
         }
@@ -299,22 +340,81 @@ enum GrokipediaArticleClient {
     }
 
     private static func extractArticleImage(from html: String) -> URL? {
-        if let og = extractMetaProperty(name: "og:image", from: html),
-           let url = normalizeImageURL(og) {
-            return url
+        extractArticleImages(from: html).first
+    }
+
+    /// Ordered image candidates for the knowledge-panel banner. Grokipedia's `og:image` is often a
+    /// soft/dark 16:9 lead (looks blurry at card size); body `<img>` tags with real dimensions are
+    /// usually sharper. Prefer those first, then og/schema/infobox fallbacks.
+    static func extractArticleImages(from html: String) -> [URL] {
+        var ordered: [URL] = []
+        var seen = Set<String>()
+
+        func append(_ raw: String?) {
+            guard let raw, let url = normalizeImageURL(raw) else { return }
+            if seen.insert(url.absoluteString).inserted {
+                ordered.append(url)
+            }
         }
 
-        if let schemaImage = extractSchemaOrgImage(from: html),
-           let url = normalizeImageURL(schemaImage) {
-            return url
+        // Body images with width/height (first ~100KB after the article marker).
+        let bodyScan: String
+        if let marker = html.range(of: "<!-- Article body") {
+            bodyScan = String(html[marker.lowerBound...].prefix(100_000))
+        } else {
+            bodyScan = String(html.prefix(100_000))
         }
 
-        if let infobox = extractInfoboxImage(from: html),
-           let url = normalizeImageURL(infobox) {
-            return url
+        struct ScoredImage {
+            let url: URL
+            let score: Int
+        }
+        var scored: [ScoredImage] = []
+        let imgTag = #"<img\b[^>]*>"#
+        if let regex = try? NSRegularExpression(pattern: imgTag, options: [.caseInsensitive]) {
+            let range = NSRange(bodyScan.startIndex..., in: bodyScan)
+            for match in regex.matches(in: bodyScan, range: range).prefix(20) {
+                guard let r = Range(match.range, in: bodyScan) else { continue }
+                let tag = String(bodyScan[r])
+                guard let src = attributeValue("src", in: tag),
+                      let url = normalizeImageURL(src) else { continue }
+                let w = Int(attributeValue("width", in: tag) ?? "") ?? 0
+                let h = Int(attributeValue("height", in: tag) ?? "") ?? 0
+                // Prefer larger + more portrait-ish photos (entity cards read better with faces).
+                var score = 0
+                if w > 0, h > 0 {
+                    score += min(w, 1200) + min(h, 1200)
+                    if h >= w { score += 800 }           // portrait / square
+                    if Double(w) / Double(max(h, 1)) > 1.6 { score -= 400 } // wide soft banners
+                } else {
+                    score += 100
+                }
+                scored.append(ScoredImage(url: url, score: score))
+            }
+        }
+        for item in scored.sorted(by: { $0.score > $1.score }) {
+            if seen.insert(item.url.absoluteString).inserted {
+                ordered.append(item.url)
+            }
         }
 
-        return nil
+        // Meta / schema / pre-body infobox — kept as fallbacks after sharper body photos.
+        append(extractMetaProperty(name: "og:image", from: html))
+        append(extractSchemaOrgImage(from: html))
+        append(extractInfoboxImage(from: html))
+
+        return ordered
+    }
+
+    private static func attributeValue(_ name: String, in tag: String) -> String? {
+        // Match name="…" or name='…' (case-insensitive attribute name).
+        let pattern = name + #"\s*=\s*["']([^"']*)["']"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)),
+              let range = Range(match.range(at: 1), in: tag) else {
+            return nil
+        }
+        return String(tag[range])
     }
 
     /// Resolves a Grokipedia image reference to a loadable absolute URL, or nil when the article has no

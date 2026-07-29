@@ -67,6 +67,8 @@ Searxly/VPN/
 SearxlyWireGuardTunnel/
 Searxly/Views/Features/VPNOwnServersView.swift
 Searxly/Views/Features/VPNManagedView.swift
+Searxly/Views/Features/VPNMaximumView.swift
+Searxly/Views/Features/CardCheckoutSheet.swift
 Searxly/Views/Components/VPNBrowserControl.swift
 Searxly/Views/Components/SearxlyVPNPill.swift
 # Operator-side VPN control plane (BitLaunch exit node + USDC payment verification) — kept private
@@ -95,6 +97,10 @@ gateway/
 *.pem
 *.mobileprovision
 *.provisionprofile
+
+# Maintainer-only working docs. Trademark filing puts the applicant's name and address on a public
+# register, so the prep notes discuss the owner's identity directly — kept out of the public tree.
+Trademark-Prep.md
 
 # Local editor tooling + Xcode caches (not part of the source)
 .claude/

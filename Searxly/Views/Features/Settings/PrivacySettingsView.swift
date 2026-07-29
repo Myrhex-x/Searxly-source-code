@@ -25,24 +25,45 @@ struct PrivacySettingsView: View {
 
     var requestReauth: ((@escaping () -> Void, (() -> Void)?) -> Void)?
     var onExportRecovery: (() -> Void)?
+    /// Jump to another Settings pane (used to send the user to VPN for a pass). A notification would be
+    /// wrong here: Settings is already open, so the seeding `.onAppear` never refires.
+    var onNavigate: ((SettingsCategory) -> Void)?
+
+    /// @Observable — the VPN pass state decides whether the Searxly VPN lane can be picked at all.
+    private let vpnService = ManagedVPNService.shared
 
     @State private var appPrivacyMode: AppPrivacyMode = .normal
     @State private var maxProtection: MaxProtection = .tor
     @State private var amnesiaPreference: Bool = AmnesiaMode.preference
     @State private var securityLevel: MaximumSecurityLevel = .standard
 
+    // Operational security (Searxly Maximum) — seeded from the live values; persisted synchronously
+    // in onChange (a deferred write can be lost on a quick quit).
+    @State private var uniformLocale: Bool = false
+    @State private var captureExclusion: Bool = false
+    @State private var secureKeyboardEntry: Bool = false
+
     var body: some View {
         SettingsPane {
             SettingsPaneHeader(
                 title: Localization.string("privacy_header"),
-                subtitle: "One privacy ladder, from fast to bulletproof — plus what Searxly remembers and how it's stored on this Mac."
+                subtitle: Edition.isMaximum
+                    ? "Live security status, engine hardening, and how data is stored on this Mac. If protection drops, traffic stops — it never falls back to an unprotected connection."
+                    : "One privacy ladder, from fast to bulletproof — plus what Searxly remembers and how it's stored on this Mac."
             )
+
+            // Searxly Maximum leads with the instrument panel: live posture before any control.
+            if Edition.isMaximum {
+                MaximumStatusBoard()
+            }
 
             privacyModeSection
             // Searxly Maximum edition features only: the live Privacy Self-Test, Network Ledger, Tor
-            // bridges, and Amnesic mode are premium hardening and are absent from the base (free) app.
+            // bridges, Amnesic mode, and the operational-security controls are premium hardening and
+            // are absent from the base (free) app.
             if Edition.isMaximum {
                 securityLevelSection
+                operationalSecuritySection
                 PrivacySelfTestSection()
                 NetworkLedgerSection()
                 TorBridgesSection()
@@ -50,6 +71,7 @@ struct PrivacySettingsView: View {
             }
             browsingSection
             filteringSection
+            requestShieldsSection
             dataSection
             setupSection
         }
@@ -67,12 +89,15 @@ struct PrivacySettingsView: View {
         }
     }
 
-    /// Searxly Maximum: the ladder is not user-selectable — the app is permanently in Maximum
-    /// Privacy over Tor. Show a read-only, locked panel instead of the picker.
+    /// Searxly Maximum: the ladder itself is locked — the app is permanently in Maximum Privacy, with no
+    /// lower rung. What the user DOES choose is the lane that carries the traffic, and this is the one
+    /// place that choice is made. Settings → VPN deliberately doesn't duplicate it: which network hides
+    /// your IP is a privacy posture, not a VPN setting, and two controls over one state is how the VPN
+    /// pane ended up being mostly about Tor.
     private var lockedMaximumModeSection: some View {
         SettingsSection(
             title: "Privacy Mode",
-            footer: "Searxly Maximum runs permanently in Maximum Privacy — this can't be turned down, it's the point of this edition. Your fingerprint is scrambled and your data on this Mac is encrypted. You choose how your IP is hidden: Tor is the default and the most private; the Searxly VPN is faster, but you trust our exit node. Either way, if the lane isn't up, all traffic is blocked."
+            footer: "Searxly Maximum runs permanently in Maximum Privacy — there is no lower setting. Fingerprint defenses and at-rest encryption are always on. Whichever lane you pick, if it drops all traffic is blocked rather than exposed."
         ) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Image(systemName: "shield.lefthalf.filled")
@@ -92,39 +117,101 @@ struct PrivacySettingsView: View {
 
             SettingsDivider()
 
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Hide my IP with")
-                        .font(.callout)
-                    Text(maxProtection == .tor
-                         ? "Tor — most private, slower. The default."
-                         : "Searxly VPN — faster, but you trust our exit node.")
-                        .font(.caption)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Hide my IP with")
+                    .font(.callout)
+                protectionRow(.tor)
+                protectionRow(.vpn)
+            }
+        }
+    }
+
+    /// The live lane, read straight off @Observable PrivacyManager rather than mirrored into @State.
+    /// The lane can change without the user touching these rows — ManagedVPNService.enforceAccess()
+    /// drops Maximum back to Tor the minute the pass lapses, on a 60s timer — and a mirror that only
+    /// re-seeds in `.onAppear` would keep showing the dead lane as selected.
+    private var liveProtection: MaxProtection { PrivacyManager.shared.maxProtection }
+
+    /// One lane option. The Searxly VPN needs an active pass — the included 45-day welcome comp on a
+    /// fresh install, or one bought in Settings → VPN once that ends — so without one the row says so
+    /// and offers the way to get it. Picking it anyway would just snap back to Tor (setMaxProtection
+    /// holds the lane closed rather than hand the kill switch a network that can't come up), and a
+    /// control that silently undoes your tap is worse than one that explains itself.
+    @ViewBuilder
+    private func protectionRow(_ p: MaxProtection) -> some View {
+        if p == .vpn && !PrivacyManager.shared.canSelectVPNProtection {
+            protectionRowSurface(p, selected: false) {
+                Button("Get a pass") { onNavigate?(.vpn) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        } else {
+            Button {
+                PrivacyManager.shared.setMaxProtection(p)
+            } label: {
+                protectionRowSurface(p, selected: liveProtection == p) {
+                    Image(systemName: liveProtection == p ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 16))
+                        .foregroundStyle(liveProtection == p ? SettingsTheme.inkFill : SettingsTheme.hairline)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func protectionRowSurface<Trailing: View>(
+        _ p: MaxProtection, selected: Bool, @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        let locked = (p == .vpn && !PrivacyManager.shared.canSelectVPNProtection)
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: p.systemImage)
+                .font(.system(size: 14))
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(p.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                    if p == .vpn, let days = vpnPassDaysRemaining {
+                        Text("\(days)d left")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(SettingsTheme.fillSubtle, in: Capsule())
+                    }
+                }
+                Text(p.summary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if locked {
+                    Text(vpnLockedReason)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 8)
-                Picker("", selection: $maxProtection) {
-                    ForEach(MaxProtection.allCases, id: \.self) { option in
-                        Text(option.displayName).tag(option)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .fixedSize()
-                .onChange(of: maxProtection) { _, newValue in
-                    PrivacyManager.shared.setMaxProtection(newValue)
-                    // setMaxProtection may coerce VPN → Tor if the (future) premium entitlement is locked;
-                    // reflect the value that actually took effect.
-                    maxProtection = PrivacyManager.shared.maxProtection
-                }
             }
+            Spacer(minLength: 0)
+            trailing()
         }
-        .onAppear {
-            DispatchQueue.main.async {
-                maxProtection = PrivacyManager.shared.maxProtection
-            }
-        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(selected ? SettingsTheme.fillFaint : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(selected ? SettingsTheme.inkFill.opacity(0.4) : SettingsTheme.hairline, lineWidth: 1))
+        .opacity(locked ? 0.7 : 1)
+    }
+
+    /// Days left on the VPN pass, when there is one — drives the "45d left" chip on the VPN lane.
+    private var vpnPassDaysRemaining: Int? {
+        guard let pass = vpnService.currentPass, pass.isActive, !pass.isOwner else { return nil }
+        return pass.daysRemaining
+    }
+
+    private var vpnLockedReason: String {
+        vpnService.currentPass == nil
+            ? "Needs an active pass — buy one in Settings → VPN."
+            : "Your Searxly VPN has ended. Buy a pass to use this lane again."
     }
 
     private var editablePrivacyModeSection: some View {
@@ -217,7 +304,7 @@ struct PrivacySettingsView: View {
     private var amnesicSection: some View {
         SettingsSection(
             title: "Amnesic mode",
-            footer: "When on, Searxly runs entirely in memory — browsing history, open tabs, cookies, and cache are never written to disk and are gone the moment you quit. Your bookmarks, saved passwords, and settings are kept. Takes full effect at the next launch."
+            footer: "When on, Searxly runs entirely in memory — browsing history, open tabs, cookies, and cache are never written to disk and are gone the moment you quit. Downloads land in a session folder that vanishes too, unless you keep them from the Downloads sheet. Your bookmarks, saved passwords, and settings are kept. Takes full effect at the next launch."
         ) {
             SettingsToggleRow(
                 title: "Leave no trace on disk",
@@ -237,6 +324,56 @@ struct PrivacySettingsView: View {
                 Text("Amnesic mode stays active until you relaunch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - 1c. Operational security (Searxly Maximum)
+
+    private var operationalSecuritySection: some View {
+        SettingsSection(
+            title: "Operational Security",
+            footer: "Controls for leaks that live outside the web engine — the HTTP locale header, screen capture, and keyboard event taps. Each one states its cost; nothing here is free."
+        ) {
+            SettingsToggleRow(
+                title: "Uniform locale",
+                description: UniformLocale.overriddenByLanguageChoice
+                    ? "Suspended: your explicit app-language choice (Settings → Search → Language) takes precedence, so the Accept-Language header follows that instead."
+                    : "Sends en-US as the Accept-Language header so requests can't be narrowed by your real locale — and can't be fingerprinted by the header contradicting the pinned en-US that pages read from JavaScript. The app interface runs in English. Applies fully at the next launch.",
+                isOn: $uniformLocale
+            )
+            .disabled(UniformLocale.overriddenByLanguageChoice)
+            .onChange(of: uniformLocale) { _, newValue in
+                UniformLocale.enabled = newValue
+            }
+
+            SettingsDivider()
+
+            SettingsToggleRow(
+                title: "Exclude windows from screen capture",
+                description: "Every Searxly window renders black in screenshots, screen recordings, and shared screens (Zoom, Teams, …). Cost: your own screenshots of Searxly stop working too.",
+                isOn: $captureExclusion
+            )
+            .onChange(of: captureExclusion) { _, newValue in
+                CaptureExclusion.enabled = newValue
+            }
+
+            SettingsDivider()
+
+            SettingsToggleRow(
+                title: "Secure keyboard entry",
+                description: "While the address bar is focused, other processes' event taps can't read your keystrokes — the same protection Terminal offers. Cost: text expanders and keystroke utilities pause while the field is focused.",
+                isOn: $secureKeyboardEntry
+            )
+            .onChange(of: secureKeyboardEntry) { _, newValue in
+                SecureInputGuard.enabled = newValue
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                uniformLocale = UniformLocale.enabled
+                captureExclusion = CaptureExclusion.enabled
+                secureKeyboardEntry = SecureInputGuard.enabled
             }
         }
     }
@@ -332,6 +469,64 @@ struct PrivacySettingsView: View {
                 badge: SearchContentSafety.shared.isEnabled ? "On" : nil
             )
         }
+    }
+
+    // MARK: - 3b. Request shields (link cleaning, GPC, HTTPS-only)
+
+    private var requestShieldsSection: some View {
+        SettingsSection(
+            title: "Link & Request Privacy",
+            footer: Edition.isMaximum
+                ? "Always on in Searxly Maximum. These clean the request itself — the parts Tor and fingerprint defenses can't reach, because they travel inside the URL and headers."
+                : "These clean the request itself: the tracking IDs in links, the opt-out header, and the connection's security."
+        ) {
+            shieldRow(
+                title: "Strip tracking parameters from links",
+                description: "Removes cross-site tags like fbclid and utm_* from addresses before they load — a tracking ID in a URL survives everything else.",
+                keyPath: \.stripTrackingParams,
+                set: { PrivacyShieldSettings.shared.stripTrackingParams = $0 }
+            )
+            SettingsDivider()
+            shieldRow(
+                title: "Send Global Privacy Control",
+                description: "Adds the Sec-GPC signal to every page — a legally recognized opt-out from sale and sharing of your data under laws like California's CPRA.",
+                keyPath: \.gpcSignal,
+                set: { PrivacyShieldSettings.shared.gpcSignal = $0 }
+            )
+            SettingsDivider()
+            shieldRow(
+                title: "HTTPS-only connections",
+                description: "Upgrades insecure http:// pages to https:// so traffic can't load in the clear.",
+                keyPath: \.httpsOnly,
+                set: { PrivacyShieldSettings.shared.httpsOnly = $0 }
+            )
+            SettingsDivider()
+            SettingsToggleRow(
+                title: "Warn about dangerous sites",
+                description: "Checks pages against a bundled, offline list of known malicious and phishing sites and warns before they load. The check runs entirely on this Mac — no URL is ever sent anywhere (unlike Google Safe Browsing).",
+                isOn: Binding(
+                    get: { PhishingGuard.isEnabled },
+                    set: { PhishingGuard.isEnabled = $0 }
+                ),
+                badge: PhishingGuard.isEnabled ? "On" : nil
+            )
+        }
+    }
+
+    /// One shield toggle. Locked ON (disabled, "On" badge) in Searxly Maximum; editable in base.
+    private func shieldRow(title: String, description: String,
+                           keyPath: KeyPath<PrivacyShieldSettings, Bool>,
+                           set: @escaping (Bool) -> Void) -> some View {
+        SettingsToggleRow(
+            title: title,
+            description: description,
+            isOn: Binding(
+                get: { PrivacyShieldSettings.shared[keyPath: keyPath] },
+                set: { set($0) }
+            ),
+            badge: PrivacyShieldSettings.shared.isLocked ? "On" : nil
+        )
+        .disabled(PrivacyShieldSettings.shared.isLocked)
     }
 
     // MARK: - 4. Your data on this Mac
@@ -449,7 +644,9 @@ struct PrivacySettingsView: View {
                     NotificationCenter.default.post(name: .importDataRequested, object: nil)
                 }
             )
-            .help("Brings bookmarks (exported HTML) and passwords (CSV) over from Safari, Chrome, Firefox, and others.")
+            .help(PasswordVaultManager.isAvailable
+                  ? "Brings bookmarks (exported HTML) and passwords (CSV) over from Safari, Chrome, Firefox, and others."
+                  : "Brings bookmarks (exported HTML) over from Safari, Chrome, Firefox, and others.")
         }
         .onAppear { DefaultBrowserManager.shared.refresh() }
     }

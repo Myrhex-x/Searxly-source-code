@@ -2,17 +2,18 @@
 //  PrivacyReportView.swift
 //  SearxlyiOS
 //
-//  The full privacy dashboard: lifetime blocked-tracker count plus the top tracker companies
-//  the shields caught, ranked with monochrome bars. Counts only ever name TRACKER domains
-//  (doubleclick.net, …) — never the sites the user visited.
+//  Lifetime blocked-tracker count plus top tracker domains the shields caught. Counts only ever
+//  name TRACKER domains — never the sites the user visited.
 //
 
 import SwiftUI
 
 struct PrivacyReportView: View {
     private var shields = ShieldSettings.shared
+    private var locale = AppLocale.shared
 
     var body: some View {
+        let _ = locale.languageCode
         List {
             Section {
                 VStack(spacing: 6) {
@@ -22,7 +23,8 @@ struct PrivacyReportView: View {
                     Text(shields.lifetimeTrackersBlocked.formatted())
                         .scaledFont(size: 40, weight: .bold).monospacedDigit()
                         .foregroundStyle(Brand.text)
-                    Text("tracking requests blocked")
+                        .contentTransition(.numericText())
+                    Text(L("tracking requests blocked"))
                         .scaledFont(size: 13)
                         .foregroundStyle(Brand.textTertiary)
                 }
@@ -32,7 +34,7 @@ struct PrivacyReportView: View {
             }
 
             if !shields.topTrackers.isEmpty {
-                Section("Top Trackers Blocked") {
+                Section(L("Top Trackers Blocked")) {
                     let top = Array(shields.topTrackers.prefix(12))
                     let maxCount = max(top.first?.count ?? 1, 1)
                     ForEach(top, id: \.domain) { entry in
@@ -60,14 +62,17 @@ struct PrivacyReportView: View {
             }
 
             Section {
-                Button("Reset Statistics", role: .destructive) { shields.resetStats() }
+                Button(L("Reset Statistics"), role: .destructive) { shields.resetStats() }
                     .disabled(shields.lifetimeTrackersBlocked == 0)
             } footer: {
-                Text("Counted on-device from tracker requests attempted against pages you visited while shields were up — an undercount of what the filter lists actually block. Nothing here ever leaves this device.")
+                Text(L("Counted on-device from tracker requests attempted against pages you visited while shields were up — an undercount of what the filter lists actually block. Nothing here ever leaves this device."))
             }
         }
-        .navigationTitle("Privacy Report")
+        .scrollContentBackground(.hidden)
+        .background(Brand.bg.ignoresSafeArea())
+        .navigationTitle(L("Privacy Report"))
         .navigationBarTitleDisplayMode(.inline)
         .tint(Brand.text)
+        .preferredColorScheme(.dark)
     }
 }

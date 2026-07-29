@@ -113,6 +113,9 @@ final class WebNavigationDelegate: NSObject, WKNavigationDelegate {
     /// URLs we already re-issued with the Sec-GPC header (loop guard).
     private var gpcHandled: Set<String> = []
 
+    /// Hosts the user consented past the phishing interstitial for (session-only, this tab).
+    private var phishingAllowedHosts: Set<String> = []
+
     func allowHTTP(forHost host: String) {
         httpAllowedHosts.insert(host.lowercased())
     }
@@ -144,6 +147,24 @@ final class WebNavigationDelegate: NSObject, WKNavigationDelegate {
 
         // Subframes: allow (rule lists police their resources; rewriting subframe URLs breaks embeds).
         guard action.targetFrame?.isMainFrame ?? true else { return .allow }
+
+        // 1.5 Phishing/malware safety net (offline blocklist, mirrors macOS): warn before a
+        // known-malicious page loads. "Continue anyway" re-navigates with a proceed marker we
+        // honor once per host per tab. Nothing about the URL leaves the device.
+        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            let host = url.host?.lowercased() ?? ""
+            if url.fragment?.hasSuffix(PhishingGuard.proceedFragment) ?? false {
+                phishingAllowedHosts.insert(host)
+                var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                comps?.fragment = nil
+                if let clean = comps?.url { webView.load(URLRequest(url: clean)) }
+                return .cancel
+            }
+            if PhishingGuard.isBlocked(url), !phishingAllowedHosts.contains(host) {
+                webView.loadHTMLString(PhishingGuard.interstitialHTML(for: url, host: host), baseURL: url)
+                return .cancel
+            }
+        }
 
         var newURL: URL?
 

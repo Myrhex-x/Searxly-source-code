@@ -50,19 +50,35 @@ enum SearchIntelligence {
     /// generation: on the ~3B on-device model a nested @Generable with an array-count constraint
     /// often yields empty output (the "completely blank" bug). Plain text streaming is reliable.
     /// Follow-ups come separately from SearXNG's own related searches (see AIOverviewCard).
+    /// How many top results ground the overview. The card's source chips and the [n] citation
+    /// indexes both assume this exact prefix of `results`, so it lives here as the one truth.
+    static let groundingCount = 8
+
+    /// The numbered source block the overview (and the "Ask more" chat) is grounded on.
+    /// Results with a real snippet carry the facts; title-only rows would just repeat their
+    /// title and dilute the grounding, but their index must still exist (the card numbers its
+    /// source chips by result position), so they contribute a title-only line.
+    static func groundingBlock(for results: [SearXNGResult]) -> String {
+        var grounding = ""
+        for (i, r) in results.prefix(groundingCount).enumerated() {
+            let title = r.title.prefix(90)
+            if let content = r.content, !content.isEmpty {
+                grounding += "[\(i + 1)] \(r.displayHost) — \(title): \(content.prefix(260))\n"
+            } else {
+                grounding += "[\(i + 1)] \(r.displayHost) — \(title)\n"
+            }
+        }
+        return grounding
+    }
+
     static func overview(query: String, results: [SearXNGResult]) -> AsyncThrowingStream<String, Error> {
         // Build the whole prompt HERE (main actor, pure string work) so the off-main model task
         // captures only Sendable strings — never the results array.
-        let sources = results.prefix(5)
-        var grounding = ""
-        for (i, r) in sources.enumerated() {
-            let snippet = (r.content ?? r.title).prefix(200)
-            grounding += "[\(i + 1)] \(r.title): \(snippet)\n"
-        }
+        let grounding = groundingBlock(for: results)
         let prompt = """
-        Answer this search using ONLY the snippets below. Query: "\(query)"
+        Search query: "\(query)"
 
-        Snippets:
+        Sources:
         \(grounding)
         """
 
@@ -72,6 +88,7 @@ enum SearchIntelligence {
         }
         #endif
 
+        let instructions = Self.overviewInstructions
         return AsyncThrowingStream { continuation in
             #if canImport(FoundationModels)
             // Use the SINGLE proven call from the working macOS provider: `respond(to:)` (non-streaming),
@@ -81,7 +98,7 @@ enum SearchIntelligence {
             // task cancellation (documented crash risk); a short generation just runs to completion.
             Task {
                 do {
-                    let session = LanguageModelSession(instructions: Self.overviewInstructions)
+                    let session = LanguageModelSession(instructions: instructions)
                     let response = try await session.respond(to: prompt)
                     continuation.yield(response.content)
                     continuation.finish()
@@ -98,12 +115,21 @@ enum SearchIntelligence {
         }
     }
 
-    private static let overviewInstructions = """
-    You write brief search overviews grounded ONLY in the provided snippets — never outside \
-    knowledge. Answer in at most 90 words of plain prose (no headings, no lists), citing snippets \
-    inline like [1] or [2][4]. If the snippets don't answer the query, say so in one sentence. \
-    Match the query's language.
-    """
+    /// Prefer the query language; if ambiguous, use the active system/app language (any locale).
+    private static var overviewInstructions: String {
+        let langName = AppLocale.shared.languageNameForModel
+        let langCode = AppLocale.shared.languageCode
+        return """
+        You write the short answer box above search results, grounded ONLY in the numbered sources \
+        provided — never outside knowledge. Open with the direct answer to the query in the first \
+        sentence, then add the most useful specifics from the sources (numbers, dates, names) — skip \
+        generic filler. If sources disagree, say so briefly rather than picking one. At most 90 words \
+        of plain prose: no headings, no lists, no repeating the query. Cite each claim inline right \
+        after it, like [1] or [2][4]. If the sources don't answer the query, say exactly that in one \
+        sentence. Always answer in the language of the query when it is clear; if the query language \
+        is ambiguous or mixed, answer in \(langName) (language code: \(langCode)).
+        """
+    }
 
     /// Related searches for the follow-up chips, from the instance's `/autocompleter` (the same
     /// endpoint the address bar uses — reliable, unlike the `suggestions` engine which many

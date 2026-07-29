@@ -13,9 +13,13 @@ enum ExtensionFeatures {
 
     /// RELEASE KILL SWITCH for the whole Extensions program — Lane A (WebExtensions), Lane B
     /// (userscripts), and every UI entry point (Settings pane, ☰ menu row, app-menu command,
-    /// marketplace tab, restored Extensions tabs). The program is still in development and must not
-    /// ship. While `false` the managers no-op, nothing is ever injected or attached, and the feature
-    /// is invisible in the UI. Flip to `true` when extensions are ready to release.
+    /// marketplace tab, restored Extensions tabs). While `false` the managers no-op, nothing is ever
+    /// injected or attached, and the feature is invisible in the UI.
+    /// OFF again 2026-07-19: dropping the Chrome Web Store third-party path. WebKit can't run a large
+    /// slice of real extensions (offscreen/sidePanel/devtools unimplemented; popup config UIs hang on
+    /// their service worker), so shipping CWS installs would be a broken promise. Plan: build our own
+    /// first-party extensions/features instead until Apple's WKWebExtension matures. The engine + install
+    /// code stays compiled (behind this flag) for when we bring our own set online.
     static let programEnabled = false
 
     /// Master flag for Lane A (the real `WKWebExtension` engine). **Default OFF.**

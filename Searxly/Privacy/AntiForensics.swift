@@ -19,9 +19,31 @@
 //
 
 import AppKit
+import DiskArbitration
 import Foundation
 
 enum AntiForensics {
+
+    // MARK: - Disk encryption at rest
+
+    /// Whether the user-data volume is encrypted at rest (FileVault). This is what makes the honest
+    /// OS-side residuals (DiagnosticReports, the LSQuarantine DB — written outside our container where
+    /// we can't scrub them) unreadable to anyone who takes the disk. Queried via DiskArbitration on
+    /// `/System/Volumes/Data` — the volume FileVault actually encrypts; `/` is the sealed system
+    /// snapshot and reports unencrypted even with FileVault on. Returns nil when it can't be
+    /// determined — callers must surface that as "couldn't verify", never as a verdict.
+    nonisolated static func dataVolumeEncrypted() -> Bool? {
+        for path in ["/System/Volumes/Data", "/"] {
+            guard let session = DASessionCreate(kCFAllocatorDefault),
+                  let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session,
+                                                        URL(fileURLWithPath: path) as CFURL),
+                  let description = DADiskCopyDescription(disk) as? [String: Any],
+                  let encrypted = description["DAMediaEncrypted"] as? Bool
+            else { continue }
+            return encrypted
+        }
+        return nil
+    }
 
     // MARK: - Download provenance
 
@@ -69,6 +91,40 @@ enum AntiForensics {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
                                                object: nil, queue: .main) { _ in
             NSPasteboard.general.clearContents()
+        }
+    }
+
+    // MARK: - Executable-download safety
+
+    /// File extensions that can run code on the Mac — the ones worth a heads-up when they finish
+    /// downloading, so the user reconsiders at the moment they still can. Gatekeeper still vets these
+    /// on launch (we keep the quarantine flag); this is an earlier, softer nudge.
+    nonisolated private static let executableExtensions: Set<String> = [
+        "dmg", "pkg", "app", "command", "tool", "scpt", "scptd", "workflow", "action",
+        "mobileconfig", "prefpane", "kext", "osax", "bundle", "jar", "shortcut",
+        "sh", "bash", "zsh", "command", "run", "bin", "csh",
+    ]
+
+    /// Whether `url` is a downloaded file type that can execute code — used to decide if the download
+    /// completion should warn.
+    nonisolated static func isExecutableDownload(_ url: URL) -> Bool {
+        executableExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// Warn when an executable file finishes downloading. Non-blocking (the file is already saved);
+    /// the alert lets the user reveal it in Finder to inspect before running, or dismiss. Shown on
+    /// both editions — code execution is a safety concern regardless of privacy posture.
+    @MainActor
+    static func warnIfExecutableDownload(_ url: URL) {
+        guard isExecutableDownload(url) else { return }
+        let alert = NSAlert()
+        alert.messageText = "This download can run code on your Mac"
+        alert.informativeText = "“\(url.lastPathComponent)” is an application or script. Only open it if you trust where it came from. macOS will still check it with Gatekeeper when you open it."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Reveal in Finder")
+        alert.addButton(withTitle: "OK")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
         }
     }
 

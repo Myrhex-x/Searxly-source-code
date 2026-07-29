@@ -4,10 +4,12 @@
 //
 //  Security gate for the local MCP server. This server can drive private search and page reads, so it
 //  is defended even though it only ever listens on loopback:
-//    1. Bearer token — every request must carry `Authorization: Bearer <token>`. The token is generated
-//       once, stored in the Keychain, and shown to the user in Settings to paste into their MCP client.
-//    2. Origin rejection — any request carrying an `Origin` header is refused. Legit MCP clients never
-//       send one; a browser page (the DNS-rebinding vector) always does.
+//    1. Token — every request must present the token, either as `Authorization: Bearer <token>` or as a
+//       `?key=<token>` query parameter (for clients that can't set headers; loopback-only, so the URL
+//       never crosses the network). Generated once, stored in the Keychain, surfaced in Settings.
+//    2. Origin check — a request carrying a non-loopback `Origin` header is refused. A browser page (the
+//       DNS-rebinding vector) always sends its own origin; local Electron/webview clients send a
+//       loopback one, which is safe (rebinding can't fake a loopback origin).
 //    3. Host allow-list — `Host` must be a loopback name. Together with (2) this blocks DNS-rebinding,
 //       the main way a malicious web page could reach a localhost server.
 //
@@ -56,24 +58,31 @@ enum AgenticServerSecurity {
 
     // MARK: - Request validation
 
+    private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1", "[::1]"]
+
     /// Returns a rejection response if the request must be refused, or nil if it may proceed.
     static func rejection(for request: MCPHTTPRequest) -> MCPHTTPResponse? {
-        // (2) No browser-style Origin allowed.
-        if request.header("origin") != nil {
+        // (2) An Origin, if present, must itself be loopback (browser pages elsewhere are the
+        // DNS-rebinding vector; local webview-based MCP clients legitimately send a loopback one).
+        if let origin = request.header("origin"), !isLoopbackOrigin(origin) {
             return .plain("Origin not allowed", status: 403)
         }
         // (3) Host must be loopback.
         let host = (request.header("host") ?? "").split(separator: ":").first.map(String.init)?.lowercased() ?? ""
-        let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1", "[::1]"]
         guard loopbackHosts.contains(host) else {
             return .plain("Host not allowed", status: 403)
         }
-        // (1) Bearer token.
-        let provided = bearer(from: request.header("authorization"))
+        // (1) Token — bearer header preferred; `?key=` accepted for clients that can't set headers.
+        let provided = bearer(from: request.header("authorization")) ?? request.queryValue("key")
         guard let provided, constantTimeEquals(provided, token()) else {
             return .plain("Unauthorized", status: 401)
         }
         return nil
+    }
+
+    private static func isLoopbackOrigin(_ origin: String) -> Bool {
+        guard let url = URL(string: origin.lowercased()), let host = url.host else { return false }
+        return loopbackHosts.contains(host)
     }
 
     private static func bearer(from authorization: String?) -> String? {

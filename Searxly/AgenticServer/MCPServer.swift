@@ -50,15 +50,36 @@ final class MCPServer {
         connections.removeAll()
     }
 
+    /// Push `notifications/tools/list_changed` to every open SSE stream so clients re-fetch tools/list
+    /// after the user changes what's exposed (browser-control / personal-data toggles, per-tool switches).
+    func broadcastToolListChanged() {
+        let notification = #"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#
+        for (_, conn) in connections where conn.isSSEStream {
+            conn.sendSSEEvent(notification)
+        }
+    }
+
+    /// Recompute whether any client holds an open SSE stream (a connected MCP client) and publish it for
+    /// the in-app AI-presence pill.
+    func publishPresence() {
+        AgenticServerManager.shared.setHasConnectedClient(connections.values.contains { $0.isSSEStream })
+    }
+
     private func accept(_ connection: NWConnection) {
         // Defense-in-depth: even though we bound loopback, refuse any non-loopback peer.
         guard Self.isLoopback(connection.endpoint) else {
             connection.cancel()
             return
         }
-        let handler = MCPConnection(connection: connection, queue: queue) { [weak self] id in
-            self?.connections[id] = nil
-        }
+        let handler = MCPConnection(
+            connection: connection,
+            queue: queue,
+            onSSEOpened: { [weak self] in self?.publishPresence() },
+            onDone: { [weak self] id in
+                self?.connections[id] = nil
+                self?.publishPresence()
+            }
+        )
         connections[ObjectIdentifier(handler)] = handler
         handler.start()
     }
@@ -83,6 +104,7 @@ final class MCPConnection {
     private let connection: NWConnection
     private let queue: DispatchQueue
     private let onDone: (ObjectIdentifier) -> Void
+    private let onSSEOpened: () -> Void
     private var buffer = Data()
     private var finished = false
 
@@ -90,9 +112,12 @@ final class MCPConnection {
     private static let maxHeaderBytes = 64 * 1024
     private static let maxBodyBytes = 4 * 1024 * 1024
 
-    init(connection: NWConnection, queue: DispatchQueue, onDone: @escaping (ObjectIdentifier) -> Void) {
+    init(connection: NWConnection, queue: DispatchQueue,
+         onSSEOpened: @escaping () -> Void = {},
+         onDone: @escaping (ObjectIdentifier) -> Void) {
         self.connection = connection
         self.queue = queue
+        self.onSSEOpened = onSSEOpened
         self.onDone = onDone
     }
 
@@ -207,19 +232,32 @@ final class MCPConnection {
         })
     }
 
+    /// True once this connection is a held-open SSE stream we can push server→client events to.
+    private(set) var isSSEStream = false
+
     private func sendSSEOpening() {
         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n: searxly mcp\n\n"
         connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in })
+        isSSEStream = true
+        onSSEOpened()   // a client is now holding a stream open → update presence
         // Intentionally left open; the client closes it when done.
     }
 
+    /// Push one SSE event carrying a JSON-RPC message (e.g. a `notifications/*`). No-op unless this
+    /// is an open SSE stream.
+    func sendSSEEvent(_ json: String) {
+        guard isSSEStream else { return }
+        connection.send(content: Data("data: \(json)\n\n".utf8), completion: .contentProcessed { _ in })
+    }
+
     func close() {
+        isSSEStream = false
         connection.cancel()
         finish()
     }
 
     private func finish() {
-        guard !buffer.isEmpty || true else { return }
+        isSSEStream = false
         onDone(ObjectIdentifier(self))
     }
 

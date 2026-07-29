@@ -1,13 +1,17 @@
-# Self-hosting the Searxly SearXNG instance (iOS Phase 2)
+# Self-hosting a SearXNG instance for Searxly iOS
 
-iOS **cannot** run the bundled native SearXNG the macOS app uses (no fork/exec, no Python interpreter,
-App Review 2.5.2). The iOS app therefore searches a **remote** SearXNG instance. Until our own is live
-it points at a public placeholder (`https://searx.be`); set `instanceURL` in **Settings ▸ Search
-instance** (or change `SearchSettings.placeholderInstance`) to our endpoint once it's up.
+iOS **cannot** run the bundled native SearXNG the macOS app uses (no fork/exec, no Python
+interpreter, App Review 2.5.6). The iOS app therefore searches a **remote** SearXNG instance.
 
-This is the recipe to stand one up on our own server (e.g. the gateway VPS). It mirrors the macOS
-runtime: upstream SearXNG run via `searx.webapp`, with **both** `html` and `json` output formats
-enabled (the `json` format is what a future native SwiftUI SERP on iOS will consume, exactly like macOS).
+- **Shipped default:** `https://search.searxly.app` (`SearchSettings.defaultInstance`) — our hosted
+  instance, which the native SwiftUI SERP consumes via the JSON API.
+- **Custom instance:** Settings ▸ Search ▸ **Advanced — search instance** accepts any SearXNG
+  instance with the `json` output format enabled (gated by `SearchSettings.allowsCustomInstance`).
+- **Fallbacks:** when on the default instance, the client rotates to public JSON-enabled backups if
+  the primary is down (`SearchSettings.fallbackInstances`). A user-supplied custom instance is
+  respected as-is and never rotated.
+
+The recipe below stands up an instance of your own (the same shape as our hosted one).
 
 ## 1. docker-compose (simplest on a VPS)
 
@@ -23,7 +27,7 @@ services:
     volumes:
       - ./searxng:/etc/searxng:rw
     environment:
-      - SEARXNG_BASE_URL=https://search.searxly.app/   # our public URL
+      - SEARXNG_BASE_URL=https://search.example.com/   # your public URL
 ```
 
 ## 2. settings.yml essentials
@@ -36,44 +40,41 @@ server:
   limiter: true                    # basic bot/abuse protection
   image_proxy: true                # proxy result thumbnails (privacy)
 search:
-  formats:                         # MUST include json for the native SERP path
+  formats:                         # MUST include json — the native SERP consumes it
     - html
     - json
-# Engines: keep parity with the macOS instance (broad coverage).
-# Re-broadened set per project history: google, duckduckgo, brave, startpage, qwant, wikipedia.
+# Engines: our hosted instance currently runs google (CSE), bing, brave, mojeek, wikipedia.
+# Any engine set works; broader coverage → better blended results.
 ```
-
-> Keep the engine set in sync with the macOS runtime so iOS and macOS return comparable results.
 
 ## 3. TLS reverse proxy
 
-Front the container with Caddy or nginx terminating TLS for `search.searxly.app` → `127.0.0.1:8080`.
+Front the container with Caddy or nginx terminating TLS for your domain → `127.0.0.1:8080`.
 Caddy one-liner:
 
 ```
-search.searxly.app {
+search.example.com {
     reverse_proxy 127.0.0.1:8080
 }
 ```
 
 ## 4. Point the app at it
 
-- **In-app:** Settings ▸ Search instance → `https://search.searxly.app`
-- **Default in code:** change `SearchSettings.placeholderInstance` to the same URL and ship.
+Settings ▸ Search ▸ **Advanced — search instance** → `https://search.example.com`
 
 ## 5. Verify
 
 ```bash
-curl -fs "https://search.searxly.app/search?q=test&format=json" | head -c 200
+curl -fs "https://search.example.com/search?q=test&format=json" | head -c 200
 ```
 
-A JSON body confirms the instance is live and the JSON API (future native SERP) works.
+A JSON body confirms the JSON API is on. If you get HTML or a 403, enable the `json` format in
+`settings.yml` — the app rejects HTML responses (`SearxngClient.notJSON`).
 
 ## Notes
 
-- **Privacy:** a single shared instance sees all users' queries server-side. That's the unavoidable
-  trade vs. the macOS per-device local instance. Mitigations: `limiter`, `image_proxy`, no query
-  logging (`SEARXNG_DISABLE_*` / don't enable access logs), and consider per-region instances later.
-- **Abuse/cost:** the public endpoint will attract bots — keep `limiter: true`, rate-limit at the
-  proxy, and watch upstream-engine rate limits (the macOS "few results" fix was a runtime/engine
-  refresh, not IP/CAPTCHA — keep the image up to date).
+- **Privacy:** a shared remote instance sees its users' queries server-side — that's the unavoidable
+  trade vs. the macOS per-device local instance. Self-hosting puts that trust in your own server.
+  Mitigations either way: `limiter`, `image_proxy`, no query/access logging.
+- **Abuse/cost:** a public endpoint attracts bots — keep `limiter: true`, rate-limit at the proxy,
+  and keep the image current (upstream-engine breakage is usually fixed by a runtime refresh).

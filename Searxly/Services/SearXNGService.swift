@@ -56,34 +56,36 @@ final class SearXNGService {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return SearXNGResponse(query: query, results: [], suggestions: nil) }
 
-        guard let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-            throw URLError(.badURL)
-        }
-
         let base = Self.ipv4PreferredLocalURL(
             instanceURL.hasSuffix("/") ? String(instanceURL.dropLast()) : instanceURL
         )
-        var urlString = "\(base)/search?q=\(encoded)&format=json&pageno=\(max(1, options.pageNo))"
+        // Build the query with URLComponents/URLQueryItem so every value is fully percent-encoded.
+        // `.urlQueryAllowed` leaves `&`, `=`, and `+` intact, so a query like `x&safesearch=0` would
+        // otherwise inject extra SearXNG parameters into the request; queryItems encodes those
+        // delimiters inside each value, closing that parameter-injection vector.
+        guard var components = URLComponents(string: "\(base)/search") else {
+            throw URLError(.badURL)
+        }
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "q", value: trimmed),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "pageno", value: String(max(1, options.pageNo)))
+        ]
         if let categories, !categories.isEmpty {
-            if let encodedCat = categories.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-                urlString += "&categories=\(encodedCat)"
-            }
+            queryItems.append(URLQueryItem(name: "categories", value: categories))
         }
         if let language, !language.isEmpty {
-            if let encodedLang = language.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-                urlString += "&language=\(encodedLang)"
-            }
+            queryItems.append(URLQueryItem(name: "language", value: language))
         }
         if let safe = options.safeSearch {
-            urlString += "&safesearch=\(safe)"
+            queryItems.append(URLQueryItem(name: "safesearch", value: String(safe)))
         }
         if let range = options.timeRange, !range.isEmpty {
-            if let encodedRange = range.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-                urlString += "&time_range=\(encodedRange)"
-            }
+            queryItems.append(URLQueryItem(name: "time_range", value: range))
         }
+        components.queryItems = queryItems
 
-        guard let url = URL(string: urlString) else {
+        guard let url = components.url else {
             throw URLError(.badURL)
         }
 

@@ -16,14 +16,17 @@ actor RampartEngine {
     private var didAttemptLoad = false
 
     /// All detections (heuristic + NER) over `raw`, unmerged — the session's policy layer
-    /// merges, applies the keep-set, and sorts before scrubbing.
-    func detect(in raw: String) -> [RampartDetection] {
+    /// merges, applies the keep-set, and sorts before scrubbing. `minScore` is the NER confidence
+    /// floor: raise it for a precision-biased pass (e.g. Agentic Tools reading web content, where
+    /// mangling public names in results hurts more than a rare miss).
+    func detect(in raw: String, minScore: Float = RampartNER.defaultMinScore) -> [RampartDetection] {
         let heuristics = DeterministicDetectors.detect(in: raw)
         guard let loaded = ensureLoaded() else { return heuristics }
         let ner = RampartNER.detect(in: raw,
                                     model: loaded.model,
                                     tokenizer: loaded.tokenizer,
-                                    labels: loaded.labels)
+                                    labels: loaded.labels,
+                                    minScore: minScore)
         return heuristics + ner
     }
 

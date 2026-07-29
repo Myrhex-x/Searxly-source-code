@@ -175,6 +175,18 @@ final class BrowserTab: Identifiable {
     /// When true all <video>/<audio> elements on the page are muted. Applied immediately and re-applied on each navigation.
     var isMuted: Bool = false
 
+    /// True while this tab holds media (a <video>/<audio>) mid-playback — either currently playing or
+    /// paused partway through. Maintained by the media-state bridge (see WebViewFactory.mediaStateReporterSource)
+    /// for whichever tab is active. Tabs with resumable media are exempt from automatic hibernation so that
+    /// switching away and back never tears the page down and restarts the video from the beginning (the
+    /// reported "leave a YouTube tab, come back, it starts over" bug).
+    var hasResumableMedia: Bool = false
+
+    /// Last observed playback position (seconds) of the tab's primary media element. Remembered as a
+    /// fallback so a reload that does happen (e.g. waking a tab the user had paused, or a renderer crash)
+    /// can resume near where they left off rather than at 0. Updated by the media-state bridge.
+    var lastMediaPositionSeconds: Double = 0
+
     /// Applies or removes the mute state on all media elements in the current page.
     func applyMute() {
         guard kind == .web, let wv = webView else { return }
@@ -295,6 +307,10 @@ final class BrowserTab: Identifiable {
         // the security-scoped access grant can't be re-obtained without another user pick, so a woken
         // file tab would fail to read its own file. Keep them resident, like onion tabs.
         guard currentURL?.isFileURL != true else { return }
+        // Tabs mid-playback (video/audio playing or paused partway) are kept resident: hibernating would
+        // drop the WKWebView and a later wake would reload the page, restarting the video from the start.
+        // Keeping the tab alive means switching away and back resumes exactly where the user left off.
+        guard !hasResumableMedia else { return }
         guard !isHibernated, let wv = webView else { return }
         isHibernated = true
 
@@ -379,11 +395,15 @@ final class BrowserTab: Identifiable {
         isHibernated = false
 
         if let url = currentURL {
+            // If this is a YouTube video the user had partway through, resume near that spot on reload
+            // instead of at 0 (a paused video's tab can still be hibernated, and process crashes reload
+            // too). Non-YouTube URLs are loaded unchanged.
+            let loadURL = Self.youTubeResumeURL(url, at: lastMediaPositionSeconds)
             // Tiny delay so the new webview (created for wake) has a chance to be hosted
             // with real bounds before the page's first paint/JS measurements. The attach
             // stabilization passes will also fire when the representable appears.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak newWebView] in
-                newWebView?.load(URLRequest(url: url))
+                newWebView?.load(URLRequest(url: loadURL))
             }
         }
 
@@ -392,6 +412,26 @@ final class BrowserTab: Identifiable {
         // - WebViewRepresentable (didCommit / didFinish + requestStabilization)
         // - WebViewContainer (layout() + viewDidMoveToWindow + explicit stabilizeLayout())
         // No extra work needed here; the representable will be re-attached via .id(tab) in ContentView.
+    }
+
+    /// If `url` is a YouTube watch/short/live link and `seconds` is a meaningful position, returns the URL
+    /// with a `t=<seconds>` parameter so a reload resumes near where the user left off. Any pre-existing
+    /// `t`/`start` param is replaced. Returns `url` unchanged for non-YouTube URLs or trivial positions.
+    static func youTubeResumeURL(_ url: URL, at seconds: Double) -> URL {
+        guard seconds > 5, seconds.isFinite else { return url }
+        let host = url.host?.lowercased() ?? ""
+        let isYouTube = host.contains("youtube.com") || host.contains("youtu.be")
+        guard isYouTube else { return url }
+        let path = url.path.lowercased()
+        let isVideoPage = host.contains("youtu.be")
+            || path.hasPrefix("/watch") || path.hasPrefix("/shorts") || path.hasPrefix("/live")
+        guard isVideoPage else { return url }
+        guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        var items = comps.queryItems ?? []
+        items.removeAll { $0.name == "t" || $0.name == "start" }
+        items.append(URLQueryItem(name: "t", value: String(Int(seconds))))
+        comps.queryItems = items
+        return comps.url ?? url
     }
 }
 
@@ -439,15 +479,23 @@ struct TabSnapshot: Codable, Equatable {
 struct DownloadItem: Identifiable, Equatable {
     let id = UUID()
     let suggestedFilename: String
-    let destinationURL: URL?
+    // var, not let: "Keep" (amnesic sessions) moves the file to ~/Downloads and repoints this.
+    var destinationURL: URL?
     var progress: Double = 0.0
     var isComplete: Bool = false
     var error: String?
     let startDate = Date()
 
+    /// Amnesic sessions: true while the file sits in the wiped-on-quit session folder. "Keep"
+    /// moves it to ~/Downloads and flips this off.
+    var isSessionOnly: Bool {
+        guard AmnesiaMode.isActive, let url = destinationURL else { return false }
+        return url.path.hasPrefix(AmnesiaMode.sessionDownloadsDirectory.path)
+    }
+
     var statusText: String {
         if let error { return "Failed: \(error)" }
-        if isComplete { return "Complete" }
+        if isComplete { return isSessionOnly ? "Complete — gone on quit unless kept" : "Complete" }
         return String(format: "%.0f%%", progress * 100)
     }
 }
@@ -516,13 +564,41 @@ struct PasswordVaultEntry: Codable, Identifiable, Equatable, Hashable {
     var dateAdded: Date
     var lastUsed: Date?
 
-    init(id: UUID = UUID(), domain: String, username: String, notes: String? = nil, dateAdded: Date = Date(), lastUsed: Date? = nil) {
+    /// Whether this login also carries a TOTP (2FA) seed. The seed itself lives in the Keychain —
+    /// only this presence flag is persisted here, so the vault list can render a 2FA badge without
+    /// a Keychain round-trip per row.
+    var hasTOTP: Bool
+
+    init(id: UUID = UUID(), domain: String, username: String, notes: String? = nil, dateAdded: Date = Date(), lastUsed: Date? = nil, hasTOTP: Bool = false) {
         self.id = id
         self.domain = domain
         self.username = username
         self.notes = notes
         self.dateAdded = dateAdded
         self.lastUsed = lastUsed
+        self.hasTOTP = hasTOTP
+    }
+
+    /// Hand-written decode. Swift's synthesized `init(from:)` IGNORES property default values and
+    /// throws `keyNotFound` for any missing key — and `PasswordVaultStore` decodes entries
+    /// element-by-element, silently DROPPING any that throw. So a synthesized decoder plus a new
+    /// non-optional field would erase every pre-existing login the first time the file is read.
+    /// Decoding each field defensively means new fields can be added without that risk.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Identity fields stay strict: an entry without an id/domain/username is not repairable,
+        // and dropping it is better than surfacing a blank row that maps to a real Keychain secret.
+        id = try c.decode(UUID.self, forKey: .id)
+        domain = try c.decode(String.self, forKey: .domain)
+        username = try c.decode(String.self, forKey: .username)
+        notes = (try? c.decodeIfPresent(String.self, forKey: .notes)) ?? nil
+        dateAdded = (try? c.decodeIfPresent(Date.self, forKey: .dateAdded)) ?? nil ?? Date()
+        lastUsed = (try? c.decodeIfPresent(Date.self, forKey: .lastUsed)) ?? nil
+        hasTOTP = (try? c.decodeIfPresent(Bool.self, forKey: .hasTOTP)) ?? false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, domain, username, notes, dateAdded, lastUsed, hasTOTP
     }
 }
 
@@ -559,6 +635,22 @@ final class DownloadsManager {
 
     func removeDownload(_ item: DownloadItem) {
         downloads.removeAll { $0.id == item.id }
+    }
+
+    /// Amnesic sessions: move a session-only download into ~/Downloads so it survives quitting.
+    /// Returns false when the move failed (file already gone, disk full) — the item stays session-only.
+    func keepPermanently(id: UUID) -> Bool {
+        guard let index = downloads.firstIndex(where: { $0.id == id }),
+              downloads[index].isSessionOnly,
+              let source = downloads[index].destinationURL else { return false }
+        let destination = DownloadBridge.uniquePermanentURL(for: source.lastPathComponent)
+        do {
+            try FileManager.default.moveItem(at: source, to: destination)
+            downloads[index].destinationURL = destination
+            return true
+        } catch {
+            return false
+        }
     }
 
     func clearCompleted() {

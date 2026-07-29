@@ -35,7 +35,9 @@ struct SidebarTabList: View {
     var isFloating: Bool = false
     let sidebarWidth: CGFloat
     let isCollapsed: Bool
-    let toggleCollapse: () -> Void
+    /// True when this is the auto-hide resting peeker (icon rail that expands on hover / ⌘S).
+    /// Classic collapsed rail leaves this false.
+    var isPeeker: Bool = false
 
     let newTabAction: () -> Void
     let newPrivateTabAction: () -> Void
@@ -660,11 +662,11 @@ struct SidebarTabList: View {
         .contextMenu { tabContextMenu(for: tab) }
     }
 
-    // MARK: - Collapsed rail
+    // MARK: - Collapsed rail / auto-hide peeker
 
     private var collapsedTabRail: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 5) {
+            VStack(spacing: isPeeker ? 4 : 5) {
                 ForEach(pinnedTabs) { tab in
                     collapsedTabRow(for: tab)
                 }
@@ -672,17 +674,28 @@ struct SidebarTabList: View {
                 if !pinnedTabs.isEmpty && !regularTabs.isEmpty {
                     RoundedRectangle(cornerRadius: 1, style: .continuous)
                         .fill(AdaptiveChrome.divider(colorScheme))
-                        .frame(width: 22, height: 1)
-                        .padding(.vertical, 2)
+                        .frame(width: isPeeker ? 18 : 22, height: 1)
+                        .padding(.vertical, isPeeker ? 3 : 2)
                 }
 
                 ForEach(regularTabs) { tab in
                     collapsedTabRow(for: tab)
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, isPeeker ? 4 : 6)
+            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, isPeeker ? 4 : 6)
+        // Soft top/bottom fade so a long tab stack doesn't look clipped against the chrome.
+        .mask(
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 8)
+                Color.black
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 8)
+            }
+        )
     }
 
     /// One collapsed-rail entry: the tab tile centered in the rail with a leading accent bar that marks
@@ -694,8 +707,9 @@ struct SidebarTabList: View {
             .frame(maxWidth: .infinity)   // center the tile in the rail; the bar hugs the leading edge
             .overlay(alignment: .leading) {
                 Capsule(style: .continuous)
-                    .fill(Color.primary)
-                    .frame(width: 3, height: 20)
+                    .fill(Color.primary.opacity(isPeeker ? 0.92 : 1))
+                    .frame(width: isPeeker ? 2.5 : 3, height: isPeeker ? 16 : 20)
+                    .padding(.leading, isPeeker ? 1 : 0)
                     .opacity(isSelected ? 1 : 0)
                     .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)
             }
@@ -703,9 +717,9 @@ struct SidebarTabList: View {
 
     /// Fill for a collapsed tab tile across its three states (selected / hovered / idle).
     private func collapsedTileFill(isSelected: Bool, isHovered: Bool) -> Color {
-        if isSelected { return AdaptiveChrome.fill(colorScheme, dark: 0.14) }
-        if isHovered { return AdaptiveChrome.fill(colorScheme, dark: 0.08) }
-        return AdaptiveChrome.fill(colorScheme, dark: 0.035)
+        if isSelected { return AdaptiveChrome.fill(colorScheme, dark: isPeeker ? 0.18 : 0.14) }
+        if isHovered { return AdaptiveChrome.fill(colorScheme, dark: isPeeker ? 0.11 : 0.08) }
+        return AdaptiveChrome.fill(colorScheme, dark: isPeeker ? 0.05 : 0.035)
     }
 
     /// A small circular status badge (pin / mute / onion / hibernate) drawn in a tile corner.
@@ -725,29 +739,40 @@ struct SidebarTabList: View {
         // On hover the close (✕) claims the top-right corner, so the top-right status badges step aside.
         let showsClose = isHovered
 
+        let tileSize: CGFloat = isPeeker ? 36 : 38
+        let tileRadius: CGFloat = isPeeker ? 9 : 10
+
         ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: tileRadius, style: .continuous)
                 .fill(collapsedTileFill(isSelected: isSelected, isHovered: isHovered))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: tileRadius, style: .continuous)
                         .strokeBorder(
-                            isSelected ? AdaptiveChrome.border(colorScheme, dark: 0.20) : Color.clear,
-                            lineWidth: 1
+                            isSelected
+                                ? AdaptiveChrome.border(colorScheme, dark: isPeeker ? 0.28 : 0.20)
+                                : (isHovered ? AdaptiveChrome.border(colorScheme, dark: 0.10) : Color.clear),
+                            lineWidth: isSelected && isPeeker ? 1.25 : 1
                         )
                 )
-                .frame(width: 38, height: 38)
+                .frame(width: tileSize, height: tileSize)
+                .shadow(
+                    color: isSelected && isPeeker
+                        ? Color.black.opacity(colorScheme == .dark ? 0.35 : 0.10)
+                        : .clear,
+                    radius: 4, y: 1
+                )
                 .opacity(isHib ? 0.6 : 1.0)
 
             if tab.kind.isUtility {
                 Image(systemName: tab.kind.utilityIcon)
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: isPeeker ? 15 : 16, weight: .medium))
                     .foregroundStyle(isSelected ? .primary : .secondary)
                     .opacity(isHib ? 0.5 : 1.0)
             } else {
                 FaviconView(
                     pageURL: tab.pageURLString,
-                    size: 19,
-                    cornerRadius: 5,
+                    size: isPeeker ? 18 : 19,
+                    cornerRadius: isPeeker ? 4.5 : 5,
                     loadRemote: !tab.isPrivate
                 )
                 .opacity(isHib ? 0.5 : 1.0)
@@ -803,9 +828,9 @@ struct SidebarTabList: View {
                 .transition(.scale.combined(with: .opacity))
             }
         }
-        .frame(width: 38, height: 38)
-        .scaleEffect(isSelected || isHovered ? 1.0 : 0.965)
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(width: tileSize, height: tileSize)
+        .scaleEffect(isSelected ? 1.0 : (isHovered ? 1.03 : 0.97))
+        .contentShape(RoundedRectangle(cornerRadius: tileRadius, style: .continuous))
         // Simultaneous (not exclusive) tap so it coexists with the hover ✕ Button on top — same reason
         // TabButton uses a simultaneous gesture for its rows.
         .simultaneousGesture(TapGesture().onEnded { selectedTabID = tab.id })
@@ -918,7 +943,7 @@ struct SidebarTabList: View {
     private var topNavigationZone: some View {
         Group {
             if isCollapsed {
-                VStack(spacing: 6) {
+                VStack(spacing: isPeeker ? 5 : 6) {
                     // Primary action: New Tab gets a filled, prominent tile.
                     collapsedRailButton(
                         systemName: "plus",
@@ -948,23 +973,25 @@ struct SidebarTabList: View {
                         .transition(.scale(scale: 0.7).combined(with: .opacity))
                     }
 
-                    // Expand back to the full sidebar (also ⌘S).
-                    collapsedRailButton(
-                        systemName: "chevron.right",
-                        help: "Expand Sidebar (⌘S)",
-                        prominent: false,
-                        action: toggleCollapse
-                    )
+                    // Expand/collapse is automatic (hover peeker / ⌘S) — no manual chevron button.
+
+                    if isPeeker && tabs.count > 1 {
+                        Text("\(tabs.count)")
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 1)
+                            .accessibilityLabel("\(tabs.count) tabs")
+                    }
 
                     Rectangle()
                         .fill(AdaptiveChrome.divider(colorScheme))
-                        .frame(width: 26, height: 1)
-                        .padding(.top, 2)
+                        .frame(width: isPeeker ? 20 : 26, height: 1)
+                        .padding(.top, isPeeker ? 1 : 2)
                 }
                 .frame(maxWidth: .infinity)
                 .animation(.spring(response: 0.25, dampingFraction: 0.85), value: hasClosedTabs)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
+                .padding(.top, isPeeker ? 6 : 8)
+                .padding(.bottom, isPeeker ? 2 : 4)
             } else {
                 HStack(spacing: 8) {
                     Button(action: newTabAction) {
@@ -1000,14 +1027,7 @@ struct SidebarTabList: View {
                         .transition(.scale(scale: 0.7).combined(with: .opacity))
                     }
 
-                    Button(action: toggleCollapse) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .glassIcon(size: 30, glassEnabled: glassEnabled)
-                    .help("Collapse sidebar")
+                    // Collapse is automatic (leave peeker / ⌘S) — no manual chevron button.
                 }
                 .animation(.spring(response: 0.25, dampingFraction: 0.85), value: hasClosedTabs)
                 .padding(.horizontal, 10)
@@ -1017,7 +1037,8 @@ struct SidebarTabList: View {
     }
 
     /// A control in the collapsed rail's top zone. `prominent` gives the primary New Tab action a larger,
-    /// bordered tile; the rest are quieter. All light up on hover.
+    /// bordered tile; the rest are quieter. All light up on hover. Peeker mode uses slightly smaller
+    /// tiles so the strip stays dense without looking cramped.
     private func collapsedRailButton(
         systemName: String,
         help: String,
@@ -1025,25 +1046,33 @@ struct SidebarTabList: View {
         action: @escaping () -> Void
     ) -> some View {
         let isHovered = hoveredRailControl == systemName
+        let width: CGFloat = isPeeker ? 36 : 38
+        let height: CGFloat = prominent ? (isPeeker ? 36 : 38) : (isPeeker ? 30 : 32)
+        let radius: CGFloat = isPeeker ? 9 : 10
         return Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: prominent ? 14 : 12, weight: .semibold))
+                .font(.system(size: prominent ? (isPeeker ? 13 : 14) : 12, weight: .semibold))
                 .foregroundStyle(prominent ? .primary : .secondary)
-                .frame(width: 38, height: prominent ? 38 : 32)
+                .frame(width: width, height: height)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
                         .fill(AdaptiveChrome.fill(
                             colorScheme,
-                            dark: prominent ? (isHovered ? 0.16 : 0.12) : (isHovered ? 0.09 : 0.045)
+                            dark: prominent
+                                ? (isHovered ? 0.18 : (isPeeker ? 0.13 : 0.12))
+                                : (isHovered ? 0.10 : (isPeeker ? 0.055 : 0.045))
                         ))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
                                 .strokeBorder(
-                                    prominent ? AdaptiveChrome.border(colorScheme, dark: 0.16) : Color.clear,
-                                    lineWidth: prominent ? 1 : 0
+                                    prominent
+                                        ? AdaptiveChrome.border(colorScheme, dark: isHovered ? 0.22 : 0.16)
+                                        : (isHovered ? AdaptiveChrome.border(colorScheme, dark: 0.10) : Color.clear),
+                                    lineWidth: 1
                                 )
                         )
                 )
+                .scaleEffect(isHovered ? 1.04 : 1.0)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -1052,6 +1081,7 @@ struct SidebarTabList: View {
                 else if hoveredRailControl == systemName { hoveredRailControl = nil }
             }
         }
+        .animation(.spring(response: 0.22, dampingFraction: 0.82), value: isHovered)
         .help(help)
     }
 
@@ -1066,11 +1096,11 @@ struct SidebarTabList: View {
                 .padding(.top, 4)
 
             if isCollapsed {
-                VStack(spacing: 4) {
+                VStack(spacing: isPeeker ? 3 : 4) {
                     BookmarksHistoryToolbarControl(
                         showingBookmarks: $showingBookmarks,
-                        iconSize: 12,
-                        frameSize: 32,
+                        iconSize: isPeeker ? 11 : 12,
+                        frameSize: isPeeker ? 30 : 32,
                         padding: 0
                     )
 
@@ -1078,7 +1108,7 @@ struct SidebarTabList: View {
                         showingDownloads = true
                     } onHover: { isDownloadsHovered = $0 }
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, isPeeker ? 4 : 6)
             } else {
                 utilityIconRow
                 privacyStatusLine
@@ -1097,13 +1127,16 @@ struct SidebarTabList: View {
         action: @escaping () -> Void,
         onHover: @escaping (Bool) -> Void
     ) -> some View {
-        Button(action: action) {
+        let size: CGFloat = isPeeker ? 30 : 32
+        return Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: isPeeker ? 11 : 12, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
-                .background(isHovered ? AdaptiveChrome.fill(colorScheme, dark: 0.07) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .frame(width: size, height: size)
+                .background(
+                    RoundedRectangle(cornerRadius: isPeeker ? 8 : 6, style: .continuous)
+                        .fill(isHovered ? AdaptiveChrome.fill(colorScheme, dark: isPeeker ? 0.10 : 0.07) : Color.clear)
+                )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -1152,10 +1185,12 @@ struct SidebarTabList: View {
         Button { showingWallet = true } label: {
             if isCollapsed {
                 WalletBillfoldMark(color: .secondary)
-                    .frame(width: 15, height: 15)
-                    .frame(width: 32, height: 32)
-                    .background(isWalletHovered ? AdaptiveChrome.fill(colorScheme, dark: 0.07) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(width: isPeeker ? 14 : 15, height: isPeeker ? 14 : 15)
+                    .frame(width: isPeeker ? 30 : 32, height: isPeeker ? 30 : 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isWalletHovered ? AdaptiveChrome.fill(colorScheme, dark: isPeeker ? 0.10 : 0.07) : Color.clear)
+                    )
             } else {
                 HStack(spacing: 8) {
                     WalletBillfoldMark(color: .secondary)
@@ -1183,11 +1218,13 @@ struct SidebarTabList: View {
         Button { showingSettings = true } label: {
             if isCollapsed {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: isPeeker ? 11 : 12, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
-                    .background(isSettingsHovered ? AdaptiveChrome.fill(colorScheme, dark: 0.07) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(width: isPeeker ? 30 : 32, height: isPeeker ? 30 : 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isSettingsHovered ? AdaptiveChrome.fill(colorScheme, dark: isPeeker ? 0.10 : 0.07) : Color.clear)
+                    )
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "gearshape")

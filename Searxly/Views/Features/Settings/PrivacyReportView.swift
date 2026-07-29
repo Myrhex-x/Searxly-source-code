@@ -21,7 +21,9 @@ struct PrivacyReportView: View {
         SettingsPane {
             SettingsPaneHeader(
                 title: "Privacy Report",
-                subtitle: "How protected you are on this Mac — scored from the protections Searxly can actually verify."
+                subtitle: Edition.isMaximum
+                    ? "Scored from protections verified on this Mac — never from claims. Cross-check the live posture with the Self-Test in Privacy & Data."
+                    : "How protected you are on this Mac — scored from the protections Searxly can actually verify."
             )
 
             scoreHero(report)

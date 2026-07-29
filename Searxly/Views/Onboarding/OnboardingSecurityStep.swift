@@ -552,6 +552,13 @@ struct MaximumPrivacyConfirmView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         protectionCard(.vpn)
                         protectionCard(.tor)
+                        if Edition.isMaximum && ManagedVPNService.shared.hasActivePass {
+                            Text("Searxly VPN is included free for \(MaximumVPNComp.days) days with Maximum — start on Tor and switch to the faster VPN whenever you like.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 2)
+                        }
                     }
                     .frame(maxWidth: 520)
 
@@ -592,14 +599,17 @@ struct MaximumPrivacyConfirmView: View {
             .padding(16)
         }
         .frame(width: 560, height: 620)
-        // Default to the option that actually works for this user: VPN if they hold a pass (covers
-        // search too), otherwise Tor (free, works without paying — search stays off).
-        .onAppear { protection = ManagedVPNService.shared.hasActivePass ? .vpn : .tor }
+        // Maximum defaults to Tor — the trustless default — even while the 45-day VPN comp is active; the
+        // user opts into the VPN deliberately (it's surfaced as "included" below). Base app defaults to
+        // whatever works for this user: VPN if they hold a pass (covers search too), otherwise Tor.
+        .onAppear { protection = (!Edition.isMaximum && ManagedVPNService.shared.hasActivePass) ? .vpn : .tor }
     }
 
     private func protectionCard(_ option: MaxProtection) -> some View {
         let isSel = protection == option
         let needsPass = (option == .vpn) && !ManagedVPNService.shared.hasActivePass
+        // Maximum includes the VPN free for a while — badge it "included" rather than "needs pass".
+        let includedFree = (option == .vpn) && Edition.isMaximum && ManagedVPNService.shared.hasActivePass
         return Button {
             protection = option
         } label: {
@@ -617,7 +627,15 @@ struct MaximumPrivacyConfirmView: View {
                         Text(option.displayName)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.primary)
-                        if needsPass {
+                        if includedFree {
+                            Text("\(MaximumVPNComp.days) DAYS FREE")
+                                .font(.system(size: 8, weight: .bold))
+                                .tracking(0.5)
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(AdaptiveChrome.fill(colorScheme, dark: 0.16)))
+                        } else if needsPass {
                             Text("NEEDS PASS")
                                 .font(.system(size: 8, weight: .bold))
                                 .tracking(0.5)

@@ -18,6 +18,8 @@
 //    • Every off-device surface removed — Managed VPN, Cloud AI, Crypto Wallet, Feedback webhook.
 //      (In v1 these stay compiled but are unreachable: no entry points, and PrivacyGate already
 //      hard-blocks their egress in Maximum. Dropping them from the binary is a later hardening.)
+//    • Password vault is now in BOTH editions (brought back to base 2026-07-19). It is no longer a
+//      Maximum differentiator; see PasswordVaultManager.isAvailable (returns true for both).
 //    • Integrated AI chat (on-device + cloud) has been removed from both editions in favour of
 //      native agentic tools that a user's own local AI can call. No chat model ships anywhere.
 //    • Paid, purchased on the website (Brave-style). Licensing is intentionally NOT wired yet.

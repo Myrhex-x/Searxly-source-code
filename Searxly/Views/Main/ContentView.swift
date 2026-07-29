@@ -42,7 +42,8 @@ struct ContentView: View {
     @AppStorage("appearanceMode") var appearanceModeRaw: String = "system"
     @State var systemColorScheme = AppearanceResolver.systemColorScheme
 
-    // Home background stars (grok.com style). Default on for the premium feel.
+    // Home background stars (grok.com style). Default on for the premium feel. Base app only —
+    // Maximum's home is a pitch-black canvas with nothing on it (see HomeAmbientBackground).
     @AppStorage("homeStarsEnabled") var homeStarsEnabled = true
 
     /// The left TAB sidebar always renders as the inset, super-rounded floating panel on the
@@ -55,8 +56,21 @@ struct ContentView: View {
     // the default chrome minimal; the same key is toggled from the menu in SearxlyApp.
     @AppStorage("bookmarksBarVisible") var bookmarksBarVisible = false
 
+    /// Arc-style auto-hide for the vertical tab sidebar (base + Maximum). When on, resting state is a
+    /// compact peeker rail (tab icons + new tab); hover (or sidebar control / ⌘S) expands the full list,
+    /// then it collapses back after the pointer leaves. Off restores classic always-visible rail / expanded.
+    @AppStorage("sidebarAutoHide") var sidebarAutoHide = true
+    /// Transient expanded state while auto-hide is on (cleared after a short leave delay).
+    @State var isSidebarHoverRevealed = false
+    /// Sticky expanded pin from ⌘S / peeker expand control (stays until toggled off).
+    @State var isSidebarKeyboardPinned = false
+    @State var sidebarAutoHideTask: Task<Void, Never>? = nil
+    /// Pending peeker-hover open (short dwell so a quick favicon click doesn't expand).
+    @State var sidebarHoverRevealTask: Task<Void, Never>? = nil
+
     // Sidebar is no longer freely resizable by dragging (removed due to persistent lag/glitch/size issues).
-    // Width is now only changed via the chevron toggle in the sidebar (binary rail vs expanded).
+    // Width is binary rail vs expanded (⌘S / auto-hide hover). No free drag-to-resize.
+    // Auto-hide: peeker is in-flow and expand reserves full width so content shifts.
     // We keep a simple width value in BrowserState for the frame + density switch.
 
     var resolvedColorScheme: ColorScheme {
@@ -96,6 +110,10 @@ struct ContentView: View {
     @State var browserState = BrowserState()
     @State var appLockManager = AppLockManager.shared
     @State var encryptionRecoveryManager = EncryptionRecoveryManager.shared
+    /// Do NOT wrap the shared LicenseManager in `@State` — that pattern breaks Observation for
+    /// singleton @Observable objects, which is what made Maximum skip the activation gate.
+    /// Reading `LicenseManager.shared.requiresActivation` from body/overlay is the tracked path.
+    private var licenseManager: LicenseManager { LicenseManager.shared }
     @State var hasCompletedInitialLaunchLoad = false
     var passwordVault = PasswordVaultManager.shared
 
@@ -131,7 +149,7 @@ struct ContentView: View {
         if wasFocused {
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(80))
-                isAddressBarFocused = true
+                focusAddressBar()
             }
         }
     }
@@ -155,7 +173,7 @@ struct ContentView: View {
         // so the user can type the next query without extra clicks (matches Safari "search again" flow).
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(60))
-            isAddressBarFocused = true
+            focusAddressBar()
         }
     }
 
@@ -165,8 +183,30 @@ struct ContentView: View {
         browserState.openSearchResultInNewTab(result)
     }
 
-    func newTab() { browserState.newTab() }
-    func newPrivateTab() { browserState.newPrivateTab() }
+    func newTab() { newTabFocusingAddressBar(isPrivate: false) }
+    func newPrivateTab() { newTabFocusingAddressBar(isPrivate: true) }
+
+    /// Opens a fresh tab and lands the caret in the address bar, so ⌘T (or the sidebar "+") leaves you
+    /// ready to type a URL without a second keystroke — the Safari / Arc / Dia contract.
+    ///
+    /// Order matters. The outgoing web view is resigned as first responder BEFORE the tab swap: once the
+    /// new tab is selected the old view is detached, `activeWebView.window` is nil, and nothing would let
+    /// go of key focus — the bar would look focused but swallow every keystroke. Focus is then asserted
+    /// twice because leaving a page rebuilds the bar (slim header → home hero); the second pass, after the
+    /// swap has settled, is the one that lands on the new AddressBar instance.
+    func newTabFocusingAddressBar(isPrivate: Bool) {
+        resignWebViewFirstResponder()
+        if isPrivate {
+            browserState.newPrivateTab()
+        } else {
+            browserState.newTab()
+        }
+        isAddressBarFocused = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(90))
+            isAddressBarFocused = true
+        }
+    }
     func closeTab(_ tab: BrowserTab) { browserState.closeTab(tab) }
     func closeAllTabs() { browserState.closeAllTabs() }
 
@@ -264,7 +304,15 @@ struct ContentView: View {
                 }
                 .animation(.easeInOut(duration: 0.2), value: browserState.activeOnionLocationOffer)
                 .onChange(of: browserState.webCurrentURL) { _, _ in
-                    syncAddressBarWithWebURL()
+                    // Don't overwrite the address bar while the user is editing it (focused). SPA pages
+                    // like YouTube fire url changes constantly (history.pushState as the video plays), and
+                    // clobbering searchText mid-edit makes the bar feel "stuck" on the page URL — you can't
+                    // select, copy, or type over it. Still keep the sidebar tab metadata fresh either way.
+                    if isAddressBarFocused {
+                        browserState.syncSelectedTabMetadataFromWeb()
+                    } else {
+                        syncAddressBarWithWebURL()
+                    }
                     if browserState.showingWebContent {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             browserState.checkForLoginFormAndOfferSave()
@@ -344,16 +392,6 @@ struct ContentView: View {
                             clearNativeSearch()
                         }
                     },
-                    localPackState: browserState.localPackState,
-                    onOpenLocalPackURL: { urlString in
-                        if let url = URL(string: urlString) {
-                            browserState.searchText = urlString
-                            loadInWebView(url)
-                            clearNativeSearch()
-                        }
-                    },
-                    onEnableLocalPack: { browserState.enableLocalPackFromPrompt() },
-                    onDismissLocalPackPrompt: { browserState.dismissLocalPackPrompt() },
                     newsTimeRange: browserState.newsTimeRange,
                     newsSortByRecency: browserState.newsSortByRecency,
                     newsLastRefreshed: browserState.newsLastRefreshed,
@@ -473,6 +511,7 @@ struct ContentView: View {
             .overlay { onboardingOverlay }
             .overlay { appLockOverlay }
             .overlay { encryptionRecoveryOverlay }
+            .overlay { maximumActivationOverlay }
             .overlay(alignment: .topTrailing) {
                 if !NotificationManager.shared.inAppNotifications.isEmpty {
                     InAppNotificationHost(
@@ -495,6 +534,29 @@ struct ContentView: View {
             .overlay {
                 CommandPaletteView(browserState: browserState, glassEnabled: glassEnabled)
             }
+            // Agentic Tools: in-chrome "your AI is connected / working" pill (only while Agentic Tools is on).
+            .overlay(alignment: .bottomTrailing) {
+                AIPresenceView(onOpen: {
+                    browserState.settingsInitialCategory = .agenticTools
+                    browserState.showingSettings = true
+                })
+                .padding(.trailing, 16)
+                .padding(.bottom, 16)
+            }
+            // Agentic Tools: human-in-the-loop approval for an irreversible action (e.g. a form submit).
+            .alert(
+                AgenticApproval.shared.pending?.title ?? "Confirm action",
+                isPresented: Binding(
+                    get: { AgenticApproval.shared.pending != nil },
+                    set: { presented in if !presented { AgenticApproval.shared.resolve(false) } }
+                ),
+                presenting: AgenticApproval.shared.pending
+            ) { _ in
+                Button("Cancel", role: .cancel) { AgenticApproval.shared.resolve(false) }
+                Button("Allow") { AgenticApproval.shared.resolve(true) }
+            } message: { pending in
+                Text(pending.detail)
+            }
     }
 }
 
@@ -506,9 +568,6 @@ struct ContentView: View {
 // SearXNGService, and WebViewRepresentable have been extracted to separate files
 // for maintainability starting with Phases 8-11.
 // New .swift files in this folder are auto-included thanks to FileSystemSynchronizedRootGroup.
-
-// HomeStarfield has been moved to Views/Components/HomeStarfield.swift.
-// The private inlined version was removed during ContentView extraction.
 
 // PasswordVaultTabView has been extracted to Views/Features/PasswordVaultTabView.swift
 // during the ContentView modularization effort. The call site in mainContentArea remains unchanged.

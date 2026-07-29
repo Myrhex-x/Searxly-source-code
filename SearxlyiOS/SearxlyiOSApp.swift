@@ -23,6 +23,11 @@ struct SearxlyiOSApp: App {
         // rules, so this is expensive exactly once per filter-list version.
         ContentBlockManager.shared.prepare()
 
+        // Pick the audio-session category before any web view can start playing. Only actually
+        // changes anything when Background Media is on; we never activate the session ourselves
+        // (WebKit does that when media starts). See MediaPlayback.
+        MediaPlayback.configureAudioSession()
+
         // "Clear on Exit": wipe whatever website data the previous session left behind, before
         // any web view touches the store. (Tabs never persist across launches, so launch-time
         // wiping IS the exit semantics — without fighting iOS's unreliable termination hooks.)

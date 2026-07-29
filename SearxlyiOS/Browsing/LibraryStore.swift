@@ -80,6 +80,11 @@ final class LibraryStore {
     private(set) var recentSearches: [String] = []
     private static let recentSearchesCap = 20
 
+    /// Coalesces rapid history/title writes (SPA navigations fire many URL/title KVO events).
+    /// Flushed immediately on background / resign-active so durability is preserved.
+    @ObservationIgnored private var persistTask: Task<Void, Never>?
+    @ObservationIgnored private var persistDirty = false
+
     private init() {
         if let data = SecureLibraryStorage.load(LibraryData.self) {
             bookmarks = data.bookmarks
@@ -87,6 +92,17 @@ final class LibraryStore {
             recentSearches = data.recentSearches ?? []
         } else {
             migrateFromLegacyDefaults()
+        }
+        // Flush any coalesced write before the process is suspended / jetsammed.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushPersist() }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushPersist() }
         }
     }
 
@@ -326,15 +342,37 @@ final class LibraryStore {
         return score > 0 ? score : nil
     }
 
-    // MARK: - Persistence (encrypted, synchronous — durability is never deferred)
+    // MARK: - Persistence (encrypted)
 
+    /// Bookmarks change rarely and must land immediately (Spotlight + user trust).
     private func persistBookmarks() {
-        persist()
-        SpotlightIndexer.reindexBookmarks()   // keep system search in sync with the bookmark set
+        persistDirty = true
+        flushPersist()
+        SpotlightIndexer.reindexBookmarks()
     }
-    private func persistHistory() { persist() }
 
-    private func persist() {
+    /// History can thrash during a single page load (URL + title churn). Coalesce to one AES-GCM
+    /// write, still forced to disk on resign-active / background.
+    private func persistHistory() { schedulePersist() }
+
+    private func persist() { schedulePersist() }
+
+    private func schedulePersist() {
+        persistDirty = true
+        if persistTask != nil { return }
+        persistTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, !Task.isCancelled else { return }
+            self.flushPersist()
+        }
+    }
+
+    /// Synchronous encrypted write when something is dirty. Safe from background hooks.
+    func flushPersist() {
+        persistTask?.cancel()
+        persistTask = nil
+        guard persistDirty else { return }
+        persistDirty = false
         SecureLibraryStorage.save(LibraryData(
             bookmarks: bookmarks, history: history, recentSearches: recentSearches
         ))

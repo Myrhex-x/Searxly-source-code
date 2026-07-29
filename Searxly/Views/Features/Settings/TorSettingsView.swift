@@ -17,7 +17,9 @@ struct TorSettingsView: View {
         SettingsPane {
             SettingsPaneHeader(
                 title: "Tor / Onion Sites",
-                subtitle: "Reach .onion hidden services over the bundled Tor client. Off by default — onion tabs route through Tor without touching normal browsing. Separate from Maximum Privacy, which can also route search and app traffic over Tor (Settings → Privacy & Data)."
+                subtitle: Edition.isMaximum
+                    ? "The bundled Tor client and .onion reachability. In Searxly Maximum, Tor is the always-on protection lane — every tab and native request already rides it. This pane governs onion-service specifics: hidden-service tabs, circuits, and onion auto-upgrade."
+                    : "Reach .onion hidden services over the bundled Tor client. Off by default — onion tabs route through Tor without touching normal browsing. Separate from Maximum Privacy, which can also route search and app traffic over Tor (Settings → Privacy & Data)."
             )
 
             if !tor.isAvailable {

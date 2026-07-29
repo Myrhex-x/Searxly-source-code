@@ -60,6 +60,16 @@ final class BrowserModel: Identifiable {
     let isPrivate: Bool
     private static let privateDataStore = WKWebsiteDataStore.nonPersistent()
 
+    /// Erases everything the shared private store holds. Called when the user leaves Private Mode
+    /// (and on Burn) so the private session is gone "as if it never happened" — the store itself is
+    /// non-persistent (memory-only), this just empties it while the app keeps running.
+    static func wipePrivateData() {
+        privateDataStore.removeData(
+            ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+            modifiedSince: .distantPast
+        ) {}
+    }
+
     var content: TabContent = .home
 
     // Native SERP state
@@ -86,22 +96,88 @@ final class BrowserModel: Identifiable {
     var progress: Double = 0
     var pageTitle: String = ""
 
+    /// Whether this tab has audio or video playing right now, and whether a video is in Picture in
+    /// Picture. Fed live by the MediaPlayback watcher script — see the note there on why this is
+    /// tracked continuously instead of being probed when the app backgrounds.
+    var isPlayingMedia = false
+    var isInPictureInPicture = false
+
     /// Safari-style minimized chrome: set while scrolling down a web page, cleared on scroll-up /
     /// top / navigation. The bar reads this and shrinks to a slim pill (parameter changes only).
-    /// The web view runs UNDER the floating bar (no opaque band), so the scroll inset tracks
-    /// the bar's current height.
-    private(set) var chromeCollapsed = false {
-        didSet { applyBottomInset() }
-    }
+    ///
+    /// Deliberately has NO side effect on the page. It used to retune the scroll inset and re-inject
+    /// the bottom-lift stylesheet on every flip, but the flip happens mid-drag: rewriting
+    /// `body{padding-bottom}` there forces a full document reflow while the scroll view is moving,
+    /// which makes `position: fixed`/`sticky` players (YouTube et al) visibly lag the page. The page
+    /// now sees one stable geometry for the whole scroll; only the chrome's own appearance changes.
+    private(set) var chromeCollapsed = false
 
-    /// Extra bottom inset beyond the automatic home-indicator adjustment: full bar vs mini pill.
-    private static let expandedBarInset: CGFloat = 68
-    private static let collapsedBarInset: CGFloat = 16
+    /// End-of-scroll pad, sized for the EXPANDED bar and held constant in both states. The web
+    /// view now extends UNDER the floating chrome (full-bleed, Safari-style) with inset
+    /// adjustment off, so this must clear the whole bar stack by itself — same 110 as
+    /// `chromeLiftPoints`, which is the measured worst case.
+    private static let barInset: CGFloat = 110
+
+    /// Clearance handed to the page for bottom-pinned consent UI. Constant for the same reason as
+    /// `barInset`: the expanded bar is the worst case, so 110 clears the chrome in both states.
+    private static let chromeLiftPoints: CGFloat = 110
+
+    /// Last lift height we pushed into the page — skip re-eval when it hasn't actually changed
+    /// (reset to -1 on a fresh document so the new page gets the stylesheet).
+    @ObservationIgnored private var lastChromeLiftPoints: Int = -1
 
     private func applyBottomInset() {
-        let extra = chromeCollapsed ? Self.collapsedBarInset : Self.expandedBarInset
-        webView.scrollView.contentInset.bottom = extra
-        webView.scrollView.verticalScrollIndicatorInsets.bottom = extra
+        webView.scrollView.contentInset.bottom = Self.barInset
+        webView.scrollView.verticalScrollIndicatorInsets.bottom = Self.barInset
+        // Belt-and-suspenders: lift fixed/sticky bottom banners (consent walls) if a site still
+        // pins to the visual viewport edge after layout.
+        injectBottomChromeLift(points: Self.chromeLiftPoints)
+    }
+
+    /// Injects a small stylesheet so `position: fixed; bottom: 0` consent UI clears the address bar.
+    private func injectBottomChromeLift(points: CGFloat) {
+        let h = Int(ceil(points))
+        // JS evaluation on every scroll-driven chrome flip was measurable main-thread work; only re-run
+        // when the lift distance actually changes (or after a fresh page finish — force via reset).
+        guard h != lastChromeLiftPoints else { return }
+        lastChromeLiftPoints = h
+        let js = """
+        (function(){
+          var h = \(h);
+          var id = '__searxly_bottom_chrome';
+          var el = document.getElementById(id);
+          if (!el) {
+            el = document.createElement('style');
+            el.id = id;
+            (document.documentElement || document).appendChild(el);
+          }
+          el.textContent =
+            'html{scroll-padding-bottom:' + h + 'px!important;}' +
+            'body{padding-bottom:max(' + h + 'px, env(safe-area-inset-bottom, 0px))!important;' +
+            'box-sizing:border-box!important;}' +
+            /* Common consent / cookie footers pinned to the bottom edge */
+            '[class*="cookie" i][style*="fixed" i],' +
+            '[id*="cookie" i][style*="fixed" i],' +
+            '[class*="consent" i][style*="fixed" i],' +
+            '[id*="consent" i][style*="fixed" i],' +
+            '[class*="gdpr" i],' +
+            '[id*="gdpr" i],' +
+            '[class*="onetrust" i],' +
+            '[id*="onetrust" i],' +
+            '#onetrust-banner-sdk,' +
+            '.ot-sdk-container,' +
+            '[class*="CookieBanner" i],' +
+            '[class*="cookie-banner" i],' +
+            '[class*="cc-window" i],' +
+            '.cc-banner,' +
+            '[aria-label*="cookie" i][style*="fixed" i],' +
+            '[role="dialog"][style*="fixed" i][style*="bottom" i]{' +
+            '  bottom: ' + h + 'px !important;' +
+            '  margin-bottom: 0 !important;' +
+            '}';
+        })();
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
     }
     /// Scroll bookkeeping is @ObservationIgnored: it mutates on EVERY scroll frame, and tracked
     /// mutations would invalidate every observing view 60–120×/s — the main scroll-lag source.
@@ -154,13 +230,20 @@ final class BrowserModel: Identifiable {
     private let uiDelegate = WebUIDelegate()
     private let navigationDelegate = WebNavigationDelegate()
     private let tallyHandler = TallyMessageHandler()
+    private let mediaHandler = MediaMessageHandler()
     private let refreshControl = UIRefreshControl()
 
     init(isPrivate: Bool = false) {
         self.isPrivate = isPrivate
         let configuration = BrowserModel.makeConfiguration(isPrivate: isPrivate)
         TrackerTally.apply(to: configuration, handler: tallyHandler)
-        self.webView = WKWebView(frame: .zero, configuration: configuration)
+        MediaPlayback.apply(to: configuration, handler: mediaHandler)
+        let webView = SelectionActionsWebView(frame: .zero, configuration: configuration)
+        self.webView = webView
+        // ON = Safari's real interactive back/forward peek for page↔page history (and forward).
+        // WKWebViewRepresentable layers a gated left-edge recognizer on top that ONLY fires at the
+        // history boundary — to drop back to the native search results — and otherwise stands down so
+        // WebKit's peek is untouched.
         webView.allowsBackForwardNavigationGestures = true
         webView.isFindInteractionEnabled = true  // system Find on Page (⌘F / ⋯ menu)
         webView.allowsLinkPreview = true         // long-press link peek + our context actions
@@ -170,6 +253,11 @@ final class BrowserModel: Identifiable {
         navigationDelegate.model = self
         webView.navigationDelegate = navigationDelegate
         tallyHandler.model = self
+        mediaHandler.model = self
+        // Text-selection edit-menu actions (Explain This / Translate This) land here; the
+        // browser shell observes these fields and presents the matching sheet/popover.
+        webView.onExplainSelection = { [weak self] text in self?.pendingSelectionExplain = text }
+        webView.onTranslateSelection = { [weak self] text in self?.pendingSelectionTranslation = text }
 
         // Pull-to-refresh on web pages.
         refreshControl.addAction(UIAction { [weak self] _ in self?.webView.reload() }, for: .valueChanged)
@@ -213,7 +301,9 @@ final class BrowserModel: Identifiable {
     func submit(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        if let url = Self.directURL(trimmed) { load(url) } else { runSearch(trimmed) }
+        if let bang = SearchBangs.resolve(trimmed) { load(bang) }
+        else if let url = Self.directURL(trimmed) { load(url) }
+        else { runSearch(trimmed) }
     }
 
     /// A URL only when the input clearly is one (explicit scheme or a bare dotted domain); else nil → search.
@@ -227,6 +317,11 @@ final class BrowserModel: Identifiable {
         content = .web
         chromeCollapsed = false
         loadError = nil
+        // An explicit navigation supersedes anything parked by hibernation: without this, a tab that
+        // was parked and then typed into would be yanked back to the old page (and, since we now
+        // keep the whole session, the old back stack) the next time it was activated.
+        hibernatedURL = nil
+        hibernatedState = nil
         webView.load(URLRequest(url: url))
     }
 
@@ -277,10 +372,16 @@ final class BrowserModel: Identifiable {
 
     // MARK: - Page tools (Safari parity)
 
-    /// Presents the system Find on Page UI over the web view.
+    /// Presents the system Find on Page UI over the web view (Safari-grade navigator).
     func findOnPage() {
         guard content == .web else { return }
-        webView.findInteraction?.presentFindNavigator(showingReplace: false)
+        // Ensure Find is enabled and the web view can become first responder before presenting.
+        webView.isFindInteractionEnabled = true
+        webView.becomeFirstResponder()
+        // Present on the next run loop so first-responder settlement doesn't race the navigator.
+        DispatchQueue.main.async {
+            self.webView.findInteraction?.presentFindNavigator(showingReplace: false)
+        }
     }
 
     /// Safari's "Request Desktop/Mobile Website" — persists per host, applied by the
@@ -324,6 +425,13 @@ final class BrowserModel: Identifiable {
         content = .results
         chromeCollapsed = false
         searchPhase = .loading
+        // Resolve the query's official entity once per search (offline DB lookup) so rows can
+        // badge the entity's own site — e.g. openai.com for "openai".
+        officialHost = Self.officialHost(for: q)
+        // Pages you've already saved or visited that match the query — a purely local lookup,
+        // shown as a compact module on the All tab. Skipped in private tabs so a private SERP
+        // never surfaces your normal-mode library.
+        libraryMatches = isPrivate ? [] : LibraryStore.shared.suggestions(for: q, limit: 2)
         if !isPrivate, SearchSettings.shared.saveHistory {
             LibraryStore.shared.recordSearch(q)
         }
@@ -358,6 +466,63 @@ final class BrowserModel: Identifiable {
         guard newScope != scope else { return }
         if searchQuery.isEmpty { scope = newScope; return }
         runSearch(searchQuery, scope: newScope)
+    }
+
+    // MARK: - News controls (time filter + sort)
+
+    /// SearXNG `time_range` for the News scope: nil = any time; "day" / "week" / "month" / "year".
+    private(set) var newsTimeRange: String?
+    /// Latest (true) presents the news SERP purely by publish time; Top (false) keeps ranked order.
+    var newsSortByRecency = false
+
+    func setNewsTimeRange(_ range: String?) {
+        guard range != newsTimeRange else { return }
+        newsTimeRange = range
+        if scope == .news, !searchQuery.isEmpty { runSearch(searchQuery, scope: .news) }
+    }
+
+    /// The current query's official-site host from the offline entity DB (nil for non-entity
+    /// queries). Rows on this host (or its subdomains) carry an "Official site" seal.
+    private(set) var officialHost: String?
+
+    /// Bookmark/history hits for the current query ("From your library" on the All tab).
+    private(set) var libraryMatches: [Suggestion] = []
+
+    /// Selection handed off from the edit menu's "Explain This" — the shell opens the page chat
+    /// seeded with it, then clears the field.
+    var pendingSelectionExplain: String?
+    /// Selection for "Translate This" — the shell shows the system translation popover.
+    var pendingSelectionTranslation: String?
+
+    /// Whether `host` is the query entity's own site.
+    func isOfficialHost(_ host: String) -> Bool {
+        guard let official = officialHost, !official.isEmpty else { return false }
+        let h = host.lowercased()
+        return h == official || h.hasSuffix(".\(official)")
+    }
+
+    /// The entity's site host, normalized (lowercased, no `www.`): its declared authority host,
+    /// else the host of its primary URL.
+    private static func officialHost(for query: String) -> String? {
+        guard let entity = EntityQueryMatcher.bestEntity(for: query) else { return nil }
+        let raw = entity.authorityHost ?? URL(string: entity.primaryURL)?.host
+        guard var host = raw?.lowercased(), !host.isEmpty else { return nil }
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        return host
+    }
+
+    /// The news rows in display order. Sorting reads the primed `newsPublishedDate`, so Latest is
+    /// a pure re-order — no re-fetch; dateless results sink to the end in their ranked order.
+    var newsDisplayResults: [SearXNGResult] {
+        guard scope == .news, newsSortByRecency else { return results }
+        return results.enumerated().sorted { a, b in
+            switch (a.element.newsPublishedDate, b.element.newsPublishedDate) {
+            case let (da?, db?): return da > db
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return a.offset < b.offset
+            }
+        }.map(\.element)
     }
 
     /// Swipe-driven scope paging (Web ↔ Images ↔ Videos ↔ News), clamped at the ends.
@@ -402,6 +567,11 @@ final class BrowserModel: Identifiable {
         searchTask = Task { await performSearch(reset: false) }
     }
 
+    /// How many consecutive empty/duplicate pages we tolerate before stopping pagination.
+    private static let maxEmptyPages = 3
+    /// Hard ceiling so a broken instance can't loop forever.
+    private static let maxPage = 40
+
     /// Session SERP cache: raw hits + suggestions keyed by query/scope/page/settings. Makes scope
     /// flips, re-searches, and back-to-results instant, and lets a background prefetch of page 2
     /// turn infinite scroll into a cache hit.
@@ -409,9 +579,9 @@ final class BrowserModel: Identifiable {
     private static let serpCacheTTL: TimeInterval = 8 * 60
     private static let serpCacheCap = 30
 
-    private static func cacheKey(_ q: String, _ categories: String, _ page: Int) -> String {
+    private static func cacheKey(_ q: String, _ categories: String, _ page: Int, _ timeRange: String?) -> String {
         let s = SearchSettings.shared
-        return "\(q.lowercased())|\(categories)|\(page)|\(s.safeSearch.rawValue)|\(s.language)"
+        return "\(q.lowercased())|\(categories)|\(page)|\(s.safeSearch.rawValue)|\(s.resolvedContentLanguage)|\(timeRange ?? "any")"
     }
 
     private static func cached(_ key: String) -> (hits: [SearXNGResult], suggestions: [String])? {
@@ -434,10 +604,13 @@ final class BrowserModel: Identifiable {
     private static var preferredInstance: String?
 
     @discardableResult
-    private static func fetchHits(_ q: String, categories: String, page: Int) async throws -> (hits: [SearXNGResult], suggestions: [String]) {
-        let key = cacheKey(q, categories, page)
+    private static func fetchHits(_ q: String, categories: String, page: Int,
+                                  timeRange: String? = nil) async throws -> (hits: [SearXNGResult], suggestions: [String]) {
+        let key = cacheKey(q, categories, page, timeRange)
         if let cached = cached(key) { return cached }
         let s = SearchSettings.shared
+        // Always send a concrete language (auto → system/app — any locale, not a short list).
+        let language = s.resolvedContentLanguage
 
         // Try the session-preferred instance first, then the configured order — rotate past any
         // that are down/rate-limited/not serving JSON before surfacing an error.
@@ -451,7 +624,8 @@ final class BrowserModel: Identifiable {
             do {
                 let response = try await SearxngClient().searchDetailed(
                     q, base: instance, categories: categories,
-                    safeSearch: s.safeSearch.rawValue, language: s.language, pageNo: page
+                    safeSearch: s.safeSearch.rawValue, language: language, pageNo: page,
+                    timeRange: timeRange
                 )
                 guard !response.results.isEmpty || order.last == instance else {
                     lastError = SearxngClientError.notJSON
@@ -469,48 +643,106 @@ final class BrowserModel: Identifiable {
     }
 
     private func performSearch(reset: Bool) async {
-        let page = reset ? 1 : pageNo + 1
-        do {
-            let (hits, suggestions) = try await Self.fetchHits(searchQuery, categories: scope.categories, page: page)
-            if Task.isCancelled { return }
-            // Same post-fetch pipeline as macOS (SearxlyShared): canonical dedup, SafeSearch
-            // filtering, client-side re-ranking, domain diversity, Grokipedia-first policy.
-            let processed = SearchResultProcessor.process(
-                raw: hits,
-                existing: results,
-                query: searchQuery,
-                category: scope.categories,
-                append: !reset
-            )
-            if reset {
+        // Always clear the load-more spinner on every exit path (including cancel) so a cancelled
+        // task can never leave the SERP stuck with isLoadingMore == true (which blocks further pages).
+        defer {
+            if !reset { isLoadingMore = false }
+        }
+
+        if reset {
+            do {
+                let (hits, suggestions) = try await Self.fetchHits(
+                    searchQuery, categories: scope.categories, page: 1,
+                    timeRange: scope == .news ? newsTimeRange : nil
+                )
+                if Task.isCancelled { return }
+                let processed = SearchResultProcessor.process(
+                    raw: hits,
+                    existing: [],
+                    query: searchQuery,
+                    category: scope.categories,
+                    append: false
+                )
                 results = processed
                 searchSuggestions = suggestions
-                searchPhase = processed.isEmpty ? .failed("No results for “\(searchQuery)”.") : .loaded
-            } else {
-                results = processed
-                isLoadingMore = false
-            }
-            pageNo = page
-            canLoadMore = !hits.isEmpty
-
-            // Warm the next page in the background: by the time the user scrolls to the end,
-            // loadMore is a cache hit instead of a network round-trip.
-            if reset, canLoadMore {
-                let q = searchQuery, cats = scope.categories
-                Task.detached(priority: .utility) {
-                    _ = try? await BrowserModel.fetchHits(q, categories: cats, page: page + 1)
+                searchPhase = processed.isEmpty
+                    ? .failed(String(format: L("No results for “%@”."), searchQuery))
+                    : .loaded
+                pageNo = 1
+                canLoadMore = !hits.isEmpty && !processed.isEmpty
+                if canLoadMore {
+                    let q = searchQuery, cats = scope.categories
+                    let range = scope == .news ? newsTimeRange : nil
+                    Task.detached(priority: .utility) {
+                        _ = try? await BrowserModel.fetchHits(q, categories: cats, page: 2, timeRange: range)
+                    }
                 }
-            }
-        } catch {
-            if Task.isCancelled { return }
-            isLoadingMore = false
-            if reset {
+            } catch {
+                if Task.isCancelled { return }
                 let msg = (error as? LocalizedError)?.errorDescription
-                    ?? "Search failed. Check your connection, or the instance in Settings."
+                    ?? L("Search failed. Check your connection, or the instance in Settings.")
                 searchPhase = .failed(msg)
-            } else {
                 canLoadMore = false
             }
+            return
+        }
+
+        // Pagination: keep requesting the next page until we actually append new results or the
+        // instance is exhausted. Instances often re-return near-duplicates across pageno — the
+        // processor then dedupes them to zero new rows, which used to leave infinite scroll dead
+        // because List row onAppear had already fired and wouldn't re-fire.
+        var page = pageNo + 1
+        var emptyStreak = 0
+        do {
+            while page <= Self.maxPage {
+                let (hits, _) = try await Self.fetchHits(
+                    searchQuery, categories: scope.categories, page: page,
+                    timeRange: scope == .news ? newsTimeRange : nil
+                )
+                if Task.isCancelled { return }
+
+                if hits.isEmpty {
+                    pageNo = page
+                    canLoadMore = false
+                    return
+                }
+
+                let before = results.count
+                let processed = SearchResultProcessor.process(
+                    raw: hits,
+                    existing: results,
+                    query: searchQuery,
+                    category: scope.categories,
+                    append: true
+                )
+                results = processed
+                pageNo = page
+
+                let gained = processed.count - before
+                if gained > 0 {
+                    canLoadMore = true
+                    // Warm the next page so the next scroll is a cache hit.
+                    let q = searchQuery, cats = scope.categories, next = page + 1
+                    let range = scope == .news ? newsTimeRange : nil
+                    Task.detached(priority: .utility) {
+                        _ = try? await BrowserModel.fetchHits(q, categories: cats, page: next, timeRange: range)
+                    }
+                    return
+                }
+
+                // Raw hits came back but everything was a duplicate / filtered out — skip ahead.
+                emptyStreak += 1
+                if emptyStreak >= Self.maxEmptyPages {
+                    canLoadMore = false
+                    return
+                }
+                page += 1
+            }
+            canLoadMore = false
+        } catch {
+            if Task.isCancelled { return }
+            // Keep canLoadMore true so the user can try again by scrolling; only hard-stop on empty.
+            canLoadMore = true
         }
     }
 
@@ -520,7 +752,12 @@ final class BrowserModel: Identifiable {
     /// and when the user leaves the tab / opens the switcher.
     func captureSnapshot() {
         guard content == .web, webView.bounds.width > 0, !isLoading else { return }
-        webView.takeSnapshot(with: nil) { [weak self] image, _ in
+        // Capped width: the grid card is ~180 pt and the swipe preview is transient, so a full
+        // 3x-screen capture (~12 MB per tab) was pure memory tax — this is ~1/3 the bytes and
+        // still crisp everywhere the snapshot is shown.
+        let config = WKSnapshotConfiguration()
+        config.snapshotWidth = NSNumber(value: 700)
+        webView.takeSnapshot(with: config) { [weak self] image, _ in
             MainActor.assumeIsolated {
                 if let image { self?.snapshot = image }
             }
@@ -553,6 +790,19 @@ final class BrowserModel: Identifiable {
     func toggleBookmarkCurrent() {
         guard let s = currentURLString else { return }
         LibraryStore.shared.toggleBookmark(url: s, title: pageTitle)
+    }
+
+    // MARK: - Picture in Picture
+
+    /// Puts the page's main video into Picture in Picture (or brings it back inline).
+    /// Returns false when the page has no video or WebKit declined — the caller tells the user
+    /// rather than leaving a menu item that silently does nothing.
+    @discardableResult
+    func togglePictureInPicture() async -> Bool {
+        guard content == .web else { return false }
+        let result = try? await webView.evaluateJavaScript(MediaPlayback.pictureInPictureJS)
+        let mode = result as? String
+        return mode == "picture-in-picture" || mode == "inline"
     }
 
     #if DEBUG
@@ -596,6 +846,7 @@ final class BrowserModel: Identifiable {
         YouTubeAdBlocker.apply(to: config)
         FingerprintShield.apply(to: config)
         CookieBannerShield.apply(to: config)
+        WebsiteDarkMode.apply(to: config)
         return config
     }
 
@@ -652,8 +903,34 @@ final class BrowserModel: Identifiable {
         ShieldSettings.shared.shieldsEnabled(forHost: webView.url?.host)
     }
 
+    /// Batches tracker tallies so the page-info / chrome badge isn't rewritten every message.
+    @ObservationIgnored private var pendingBlockedDelta = 0
+    @ObservationIgnored private var pendingBlockedDomains: [String] = []
+    @ObservationIgnored private var blockedFlushTask: Task<Void, Never>?
+
     func recordBlockedTrackers(_ n: Int, domains: [String]) {
         guard n > 0, !shieldsLoweredForPage else { return }
+        pendingBlockedDelta += n
+        if pendingBlockedDomains.count < 40 {
+            pendingBlockedDomains.append(contentsOf: domains.prefix(20 - pendingBlockedDomains.count))
+        }
+        // Publish UI count at a gentle cadence; lifetime stats go through ShieldSettings (also coalesced).
+        if blockedFlushTask == nil {
+            blockedFlushTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(280))
+                guard let self, !Task.isCancelled else { return }
+                self.flushBlockedTrackers()
+            }
+        }
+    }
+
+    private func flushBlockedTrackers() {
+        blockedFlushTask = nil
+        let n = pendingBlockedDelta
+        let domains = pendingBlockedDomains
+        pendingBlockedDelta = 0
+        pendingBlockedDomains = []
+        guard n > 0 else { return }
         pageBlockedCount += n
         ShieldSettings.shared.addBlockedTrackers(n, domains: domains)
     }
@@ -669,20 +946,39 @@ final class BrowserModel: Identifiable {
 
     @ObservationIgnored private var hibernatedURL: URL?
 
+    /// The tab's full session (back/forward list + scroll position), captured before it parks on
+    /// about:blank. Restoring this instead of re-issuing a GET is what keeps hibernation invisible:
+    /// a bare `load(url)` starts a brand-new navigation, which loses the back stack and re-fetches
+    /// the page from scratch — and a URL the user reached through the site (a client-side route, a
+    /// POST result, a one-time link) is not always independently GET-able, so the reload can land on
+    /// the site's own 404. Session restore replays the history entry the tab already had.
+    @ObservationIgnored private var hibernatedState: Any?
+
     /// Under memory pressure, background tabs park on about:blank (snapshot already captured for
-    /// the grid) and reload their page when re-activated — losing scroll position, keeping the tab.
+    /// the grid) and restore their session when re-activated.
     func hibernate() {
         guard content == .web, !isLoading, hibernatedURL == nil,
               let url = webView.url, url.scheme?.hasPrefix("http") == true else { return }
         captureSnapshot()
         hibernatedURL = url
+        hibernatedState = webView.interactionState
         webView.load(URLRequest(url: URL(string: "about:blank")!))
     }
 
     func reviveIfNeeded() {
         guard let url = hibernatedURL else { return }
         hibernatedURL = nil
-        load(url)
+        // Restoring interactionState also REPLACES the back-forward list, which is what discards the
+        // about:blank placeholder the parking load pushed onto it. Without this the first Back after
+        // a hibernated tab wakes up lands the user on a blank page.
+        if let state = hibernatedState {
+            hibernatedState = nil
+            content = .web
+            loadError = nil
+            webView.interactionState = state
+            return
+        }
+        load(url)  // parkForRestore path: a session restored from disk has a URL but no live state
     }
 
     /// Restore a background tab WITHOUT loading it: the URL is parked (and revived on first activation),
@@ -740,17 +1036,29 @@ final class BrowserModel: Identifiable {
     private func observe() {
         observations = [
             webView.observe(\.estimatedProgress, options: [.new]) { [weak self] wv, _ in
-                MainActor.assumeIsolated { self?.progress = wv.estimatedProgress }
+                MainActor.assumeIsolated {
+                    // Throttle: estimatedProgress fires many times per load; sub-2% steps only
+                    // thrash the progress bar view without reading better. Always publish 0 and 1.
+                    guard let self else { return }
+                    let p = wv.estimatedProgress
+                    if p >= 1.0 || p <= 0.02 || abs(p - self.progress) >= 0.02 {
+                        self.progress = p
+                    }
+                }
             },
             webView.observe(\.isLoading, options: [.new]) { [weak self] wv, _ in
                 MainActor.assumeIsolated {
                     self?.isLoading = wv.isLoading
                     if !wv.isLoading {
+                        self?.progress = 1
                         self?.refreshControl.endRefreshing()
                         // Favicon capture is allowed ONLY here — for the page actually being
                         // visited (see FaviconStore's privacy rule). Private tabs leave no trace.
                         if self?.isPrivate == false { FaviconStore.shared.captureIfNeeded(from: wv) }
                         self?.captureSnapshot()
+                        // Force chrome lift re-apply after DOM settles (reset cache so late banners lift).
+                        self?.lastChromeLiftPoints = -1
+                        self?.applyBottomInset()
                     }
                 }
             },
@@ -765,9 +1073,12 @@ final class BrowserModel: Identifiable {
             webView.observe(\.title, options: [.new]) { [weak self] wv, _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.pageTitle = wv.title ?? ""
+                    let title = wv.title ?? ""
+                    // Skip no-op title churn (SPAs rewrite the title constantly).
+                    guard title != self.pageTitle else { return }
+                    self.pageTitle = title
                     if !self.isPrivate, SearchSettings.shared.saveHistory, let u = wv.url {
-                        LibraryStore.shared.updateTitle(url: u.absoluteString, title: wv.title ?? "")
+                        LibraryStore.shared.updateTitle(url: u.absoluteString, title: title)
                     }
                 }
             },
@@ -777,18 +1088,28 @@ final class BrowserModel: Identifiable {
                     self.webCanGoBack = wv.canGoBack
                     self.webCanGoForward = wv.canGoForward
                     if let u = wv.url {
-                        self.urlText = u.absoluteString
+                        let s = u.absoluteString
+                        guard s != self.urlText else { return }
+                        self.urlText = s
+                        // New document → allow chrome-lift CSS to re-inject for this page.
+                        self.lastChromeLiftPoints = -1
                         if !self.isPrivate, SearchSettings.shared.saveHistory {
-                            LibraryStore.shared.recordVisit(url: u.absoluteString, title: self.pageTitle)
+                            LibraryStore.shared.recordVisit(url: s, title: self.pageTitle)
                         }
                     }
                 }
             },
             webView.observe(\.canGoBack, options: [.new]) { [weak self] wv, _ in
-                MainActor.assumeIsolated { self?.webCanGoBack = wv.canGoBack }
+                MainActor.assumeIsolated {
+                    guard let self, self.webCanGoBack != wv.canGoBack else { return }
+                    self.webCanGoBack = wv.canGoBack
+                }
             },
             webView.observe(\.canGoForward, options: [.new]) { [weak self] wv, _ in
-                MainActor.assumeIsolated { self?.webCanGoForward = wv.canGoForward }
+                MainActor.assumeIsolated {
+                    guard let self, self.webCanGoForward != wv.canGoForward else { return }
+                    self.webCanGoForward = wv.canGoForward
+                }
             },
         ]
     }
@@ -880,22 +1201,25 @@ final class WebUIDelegate: NSObject, WKUIDelegate {
                  contextMenuConfigurationFor elementInfo: WKContextMenuElementInfo) async -> UIContextMenuConfiguration? {
         guard let url = elementInfo.linkURL else { return nil }
         let model = self.model
+        // Titles resolve here (main actor) so the action-provider closure only captures strings.
+        let titles = (newTab: L("Open in New Tab"), privateTab: L("Open in Private Tab"),
+                      copy: L("Copy Link"), share: L("Share…"))
         // webView is captured weakly ONCE at the provider level (the Share action below needs
         // it as a presentation anchor; a strong capture here would be redeclared-ownership noise).
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak webView] _ in
             var actions: [UIAction] = [
-                UIAction(title: "Open in New Tab", image: UIImage(systemName: "plus.square.on.square")) { _ in
+                UIAction(title: titles.newTab, image: UIImage(systemName: "plus.square.on.square")) { _ in
                     model?.onOpenInNewTab?(url)
                 },
-                UIAction(title: "Open in Private Tab", image: UIImage(systemName: "hand.raised")) { _ in
+                UIAction(title: titles.privateTab, image: UIImage(systemName: "hand.raised")) { _ in
                     model?.onOpenInNewPrivateTab?(url)
                 },
-                UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in
+                UIAction(title: titles.copy, image: UIImage(systemName: "doc.on.doc")) { _ in
                     UIPasteboard.general.string = url.absoluteString
                 },
             ]
             actions.append(
-                UIAction(title: "Share…", image: UIImage(systemName: "square.and.arrow.up")) { _ in
+                UIAction(title: titles.share, image: UIImage(systemName: "square.and.arrow.up")) { _ in
                     guard let webView else { return }
                     let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
                     activity.popoverPresentationController?.sourceView = webView  // iPad anchor

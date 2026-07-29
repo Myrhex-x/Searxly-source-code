@@ -10,8 +10,8 @@ import UniformTypeIdentifiers
 struct PasswordsSettingsView: View {
     var onOpenVault: () -> Void = {}
 
-    private var vault = PasswordVaultManager.shared
-    private var lockManager = VaultLockManager.shared
+    private var vault: PasswordVaultManager { PasswordVaultManager.shared }
+    private var lockManager: VaultLockManager { VaultLockManager.shared }
 
     @State private var passphraseSheetMode: VaultPassphraseSetupSheet.Mode?
     @State private var showingPassphraseSheet = false
@@ -19,12 +19,29 @@ struct PasswordsSettingsView: View {
     @State private var showingExportConfirm = false
     @State private var exportMessage: String?
     @State private var showingExportResult = false
+    @State private var passkeyAccess: WebPasskeyDirectory.Access = .unavailable
+
+    /// Deliberately spells out the limit. Users reasonably assume that "Searxly can see my
+    /// passkeys" also means it can see the passwords in Apple Passwords — it cannot, and there is
+    /// no API that would let it.
+    private var passkeyFooter: String {
+        switch passkeyAccess {
+        case .authorized:
+            return "Searxly can see which passkeys macOS holds for a site — the account name and which app stores it, never any secret. Sign-in itself is handled by macOS. Passwords in Apple Passwords stay private to Apple's own apps."
+        case .notDetermined:
+            return "Websites you sign into with a passkey already work in Searxly. Granting this lets the vault also show which passkeys exist for a site, so you can tell when a saved password is no longer needed. macOS will ask you to confirm."
+        case .denied, .unavailable:
+            return "Passkey sign-in still works on websites — this only controls whether the vault can list the passkeys macOS already holds."
+        }
+    }
 
     var body: some View {
         SettingsPane {
             SettingsPaneHeader(
                 title: Localization.string("passwords_title", defaultValue: "Passwords"),
-                subtitle: "Save logins on this Mac, fill them in the browser, and manage everything in the vault."
+                subtitle: Edition.isMaximum
+                    ? "The encrypted credential vault: on-device storage, in-browser autofill, health auditing, and unlock-gated export. Nothing syncs anywhere."
+                    : "Save logins on this Mac, fill them in the browser, and manage everything in the vault."
             )
 
             SettingsSection(title: "Vault") {
@@ -53,7 +70,7 @@ struct PasswordsSettingsView: View {
 
             SettingsSection(
                 title: "Import & export",
-                footer: "Import a CSV exported from Chrome, Safari, Firefox, Bitwarden, or 1Password. Export writes a plaintext CSV of every saved login — useful for backups or moving away, but store it carefully and delete it when done."
+                footer: "Import a CSV exported from Chrome, Safari, Firefox, Bitwarden, or 1Password — two-factor keys come across too when the file has them. Export writes a plaintext CSV of every saved login — useful for backups or moving away, but store it carefully and delete it when done."
             ) {
                 SettingsProminentAction(
                     title: "Import Passwords from CSV",
@@ -70,6 +87,44 @@ struct PasswordsSettingsView: View {
                     tint: .secondary,
                     action: { startExport() }
                 )
+            }
+
+            SettingsSection(
+                title: "Passkeys",
+                footer: passkeyFooter
+            ) {
+                switch passkeyAccess {
+                case .notDetermined:
+                    SettingsProminentAction(
+                        title: "Show Passkeys Saved in macOS",
+                        systemImage: "person.badge.key",
+                        tint: .secondary,
+                        action: {
+                            Task {
+                                await WebPasskeyDirectory.shared.requestAccess()
+                                passkeyAccess = WebPasskeyDirectory.shared.access
+                            }
+                        }
+                    )
+                case .authorized:
+                    SettingsToggleRow(
+                        title: "Show passkeys alongside passwords",
+                        description: "List the passkeys macOS already holds for a site next to your saved logins, and note when a stored password may no longer be needed.",
+                        isOn: Binding(
+                            get: { WebPasskeyDirectory.shared.displayEnabled },
+                            set: { WebPasskeyDirectory.shared.displayEnabled = $0 }
+                        )
+                    )
+                case .denied, .unavailable:
+                    // No action offered: the system asks only once, so a button here would be dead.
+                    Text(passkeyAccess == .denied
+                         ? "Searxly doesn't have permission to see your passkeys. You can change this in System Settings ▸ Privacy & Security."
+                         : "Not available in this build.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                }
             }
 
             SettingsSection(
@@ -200,16 +255,21 @@ struct PasswordsSettingsView: View {
         }
         .onAppear {
             vault.reloadFromPersistence()
+            WebPasskeyDirectory.shared.refreshAccess()
+            passkeyAccess = WebPasskeyDirectory.shared.access
         }
         .confirmationDialog(
             "Export passwords as plaintext?",
             isPresented: $showingExportConfirm,
             titleVisibility: .visible
         ) {
-            Button("Choose Location & Export…") { Task { await performExport() } }
+            Button("Choose Location & Export…") { Task { await performExport(includeTOTP: false) } }
+            if vault.entries.contains(where: \.hasTOTP) {
+                Button("Include Two-Factor Keys…", role: .destructive) { Task { await performExport(includeTOTP: true) } }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The exported CSV is NOT encrypted — anyone who opens the file can read every saved password. Save it somewhere safe and delete it once you're done.")
+            Text("The exported CSV is NOT encrypted — anyone who opens the file can read every saved password. Save it somewhere safe and delete it once you're done.\n\nTwo-factor keys are left out unless you choose to include them: anyone holding one can generate valid codes for that account indefinitely.")
         }
         .alert("Export passwords", isPresented: $showingExportResult) {
             Button("OK") {}
@@ -246,7 +306,7 @@ struct PasswordsSettingsView: View {
         showingExportConfirm = true
     }
 
-    private func performExport() async {
+    private func performExport(includeTOTP: Bool) async {
         // Unlock first — export reads every secret, so it must pass the same gate as viewing one.
         if !vault.isVaultUnlocked {
             guard await vault.unlockVault() else {
@@ -258,7 +318,7 @@ struct PasswordsSettingsView: View {
 
         let csv: String
         do {
-            csv = try vault.exportCSV()
+            csv = try vault.exportCSV(includeTOTP: includeTOTP)
         } catch {
             exportMessage = "Couldn't build the export. Make sure the vault is unlocked and has saved logins."
             showingExportResult = true

@@ -24,14 +24,21 @@ final class AIOverviewModel {
     private(set) var failureMessage = ""
     private(set) var sourceCount = 0
 
-    /// The query the current state belongs to, so a genuine new search resets while the same query
-    /// re-appearing (row recycling / scope flips back to All) keeps the in-flight or finished state.
+    /// The query the current state belongs to, so a genuine new search resets while the same
+    /// query re-appearing (row recycling) keeps the in-flight or finished state.
     private var query = ""
     private var task: Task<Void, Never>?
     private var watchdog: Task<Void, Never>?
 
-    /// Point the model at the card's current query. A no-op when the query is unchanged — which is
-    /// exactly what makes the generation survive the card being rebuilt.
+    /// Whether the model's non-idle state belongs to THIS query. The SERP's slot logic uses this
+    /// instead of a bare `phase != .idle`, so stale state from another query can never conjure a
+    /// phantom slot that resets itself on mount (the "AI Overview disappeared" bug).
+    func isActive(query: String) -> Bool {
+        phase != .idle && query == self.query
+    }
+
+    /// Point the model at the card's current query. A no-op when the query is unchanged — which
+    /// is exactly what makes the generation survive the card being rebuilt.
     func sync(query: String) {
         guard query != self.query else { return }
         self.query = query
@@ -59,7 +66,7 @@ final class AIOverviewModel {
         followUps = []
         failureMessage = ""
         phase = .streaming
-        sourceCount = min(results.count, 8)
+        sourceCount = min(results.count, SearchIntelligence.groundingCount)
         let query = self.query
         startWatchdog()
         task = Task { [weak self] in
@@ -106,7 +113,8 @@ final class AIOverviewModel {
     private func startWatchdog() {
         watchdog?.cancel()
         watchdog = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(30))
+            // Slightly tighter so a hung model doesn't sit on the SERP forever under the first result.
+            try? await Task.sleep(for: .seconds(22))
             guard let self, !Task.isCancelled, self.phase == .streaming, self.answer.isEmpty else { return }
             self.failureMessage = L("The on-device model didn't respond. Tap to try again.")
             self.phase = .failed

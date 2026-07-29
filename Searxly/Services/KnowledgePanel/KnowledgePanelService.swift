@@ -52,8 +52,9 @@ enum KnowledgePanelService {
         let displayTitle = title.isEmpty ? subject : title
 
         let (bannerCandidates, bannerReferer) = await resolveBannerImage(
-            grokipediaImage: snippet.imageURL,
+            grokipediaImages: snippet.imageURLs,
             subject: displayTitle,
+            entity: entity,
             instanceURL: imageInstanceURL
         )
 
@@ -72,26 +73,65 @@ enum KnowledgePanelService {
         return (KnowledgePanelContent(query: trimmed, kind: .entity(panel)), true)
     }
 
-    /// Picks the banner image. Grokipedia's own article image wins; when it has none, we fall back to the
-    /// first image from the user's SearXNG instance (private, and reuses the instance's image_proxy for
-    /// hotlink-protected sources). Returns ordered load candidates plus the referer to send.
+    /// Picks the banner image. Order of preference:
+    ///   1. Bundled celebrity face (sharp offline portraits for known people — Grokipedia's og:image
+    ///      is often a soft 16:9 lead that looks blurry at card size).
+    ///   2. Ordered Grokipedia article images (body photos first, og:image last).
+    ///   3. SearXNG image search fallback (private; reuses image_proxy for hotlink protection).
     private static func resolveBannerImage(
-        grokipediaImage: URL?,
+        grokipediaImages: [URL],
         subject: String,
+        entity: OfficialEntityDatabase.OfficialEntity?,
         instanceURL: String?
     ) async -> (candidates: [URL], referer: String?) {
-        if let grokipediaImage {
-            return ([grokipediaImage], "https://grokipedia.com")
+        var candidates: [URL] = []
+        var seen = Set<String>()
+
+        func append(_ url: URL?) {
+            guard let url else { return }
+            if seen.insert(url.absoluteString).inserted {
+                candidates.append(url)
+            }
         }
+
+        // Offline portrait first for curated people (Resources/CelebrityFaces/*.jpg).
+        append(bundledCelebrityFaceURL(for: entity))
+
+        for url in grokipediaImages {
+            append(url)
+        }
+
+        if !candidates.isEmpty {
+            // Bundled faces are file:// (referer unused). CDN images want the article host.
+            let referer = candidates.contains(where: { !$0.isFileURL }) ? "https://grokipedia.com" : nil
+            return (candidates, referer)
+        }
+
         guard let instanceURL,
               let result = await SearXNGImageResolver.firstImageResult(for: subject, instanceURL: instanceURL)
         else {
             return ([], nil)
         }
-        let candidates = SearchMediaURLResolver.candidateURLs(
+        let remote = SearchMediaURLResolver.candidateURLs(
             for: result, proxyBase: instanceURL, mode: .gridThumbnail
         )
-        return (candidates, result.url)
+        return (remote, result.url)
+    }
+
+    /// Bundled face for a curated person entity (`celebrityFaceSlug` → Resources/{slug}.jpg).
+    private static func bundledCelebrityFaceURL(
+        for entity: OfficialEntityDatabase.OfficialEntity?
+    ) -> URL? {
+        guard let slug = entity?.celebrityFaceSlug, !slug.isEmpty else { return nil }
+        let bundle = Bundle.main
+        if let url = bundle.url(forResource: slug, withExtension: "jpg") { return url }
+        if let url = bundle.url(forResource: slug, withExtension: "jpeg") { return url }
+        if let url = bundle.url(forResource: slug, withExtension: "png") { return url }
+        // Folder-style copy (CelebrityFaces/{slug}.jpg) if the resource group kept its path.
+        if let url = bundle.url(forResource: slug, withExtension: "jpg", subdirectory: "CelebrityFaces") {
+            return url
+        }
+        return nil
     }
 
     // MARK: - Result cache

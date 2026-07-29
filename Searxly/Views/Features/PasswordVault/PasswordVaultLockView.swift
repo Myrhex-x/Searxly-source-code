@@ -21,7 +21,7 @@ struct PasswordVaultLockView: View {
     @State private var shakeOffset: CGFloat = 0
     @State private var cardAppeared = false
 
-    private var vault = PasswordVaultManager.shared
+    private var vault: PasswordVaultManager { PasswordVaultManager.shared }
 
     private var protectedLoginLabel: String {
         switch vault.savedLoginCount {

@@ -47,6 +47,10 @@ struct RightToolbarControls: View {
     /// Fill a saved login on the current page (domain, username, password).
     var onFillLogin: ((String, String, String) -> Void)? = nil
 
+    /// Fill a two-factor code on the current page. Separate from `onFillLogin` because the 2FA
+    /// prompt is normally a second page shown after the password has been accepted.
+    var onFillTOTP: ((String) -> Void)? = nil
+
     /// Canonical bookmark action (preferred). Falls back to legacy direct mutation if nil (for old call sites).
     var onBookmarkCurrentPage: (() -> Void)? = nil
 
@@ -142,20 +146,22 @@ struct RightToolbarControls: View {
                 .padding(.trailing, 6)
             }
 
-            // Passwords pill — a glass capsule like the VPN / Tor pills, set apart from the flat
-            // icons. Stays in the header (core privacy feature); goes green when the current site
-            // has a saved login.
-            PasswordsBrowserControl(
-                glassEnabled: glassEnabled,
-                toolbarMaterial: toolbarMaterial,
-                currentWebDomain: currentWebDomain,
-                hasPasswordFieldOnPage: hasPasswordFieldOnPage,
-                isLikelySignupForm: isLikelySignupForm,
-                onGeneratePasswordForPage: onGeneratePasswordForPage,
-                onSaveLoginFromPage: onSaveLoginFromPage,
-                onFillLogin: onFillLogin
-            )
-            .padding(.leading, 6)
+            // Passwords pill — Searxly Maximum exclusive. A glass capsule like the VPN / Tor pills;
+            // goes green when the current site has a saved login. Hidden entirely in the base app.
+            if PasswordVaultManager.isAvailable {
+                PasswordsBrowserControl(
+                    glassEnabled: glassEnabled,
+                    toolbarMaterial: toolbarMaterial,
+                    currentWebDomain: currentWebDomain,
+                    hasPasswordFieldOnPage: hasPasswordFieldOnPage,
+                    isLikelySignupForm: isLikelySignupForm,
+                    onGeneratePasswordForPage: onGeneratePasswordForPage,
+                    onSaveLoginFromPage: onSaveLoginFromPage,
+                    onFillLogin: onFillLogin,
+                    onFillTOTP: onFillTOTP
+                )
+                .padding(.leading, 6)
+            }
 
             // ☰ menu — everything else (Reader, Find, Bookmarks & History, Downloads, Extensions,
             // AI, Wallet, Clear data, Import, Shortcuts, Settings) lives here to keep the header clean.
@@ -166,6 +172,7 @@ struct RightToolbarControls: View {
                 showingBookmarks: $showingBookmarks,
                 showingDownloads: $showingDownloads,
                 showingKeyboardShortcuts: $showingKeyboardShortcuts,
+                currentPageURL: showingWebContent ? activeWebView.url : nil,
                 // Reader reuses the ⌘⇧R menu-command route (ContentView owns the reader state);
                 // Translate talks to the shared on-device translator with this header's webview.
                 onReaderMode: { NotificationCenter.default.post(name: .readerModeRequested, object: nil) },
@@ -260,10 +267,11 @@ struct PasswordsBrowserControl: View {
     var onGeneratePasswordForPage: (() -> Void)? = nil
     var onSaveLoginFromPage: (() -> Void)? = nil
     var onFillLogin: ((String, String, String) -> Void)? = nil
+    var onFillTOTP: ((String) -> Void)? = nil
 
     @State private var showingPopover = false
 
-    private var vault = PasswordVaultManager.shared
+    private var vault: PasswordVaultManager { PasswordVaultManager.shared }
     private var domainLogins: [PasswordVaultEntry] {
         guard let domain = currentWebDomain else { return [] }
         return vault.entries(forDomain: domain)
@@ -321,6 +329,7 @@ struct PasswordsBrowserControl: View {
                 onGeneratePasswordForPage: onGeneratePasswordForPage,
                 onSaveLoginFromPage: onSaveLoginFromPage,
                 onFillLogin: onFillLogin,
+                onFillTOTP: onFillTOTP,
                 onClose: { showingPopover = false }
             )
         }
@@ -339,9 +348,17 @@ private struct PasswordsPopoverContent: View {
     var onGeneratePasswordForPage: (() -> Void)? = nil
     var onSaveLoginFromPage: (() -> Void)? = nil
     var onFillLogin: ((String, String, String) -> Void)? = nil
+    var onFillTOTP: ((String) -> Void)? = nil
     let onClose: () -> Void
 
-    private var vault = PasswordVaultManager.shared
+    private var vault: PasswordVaultManager { PasswordVaultManager.shared }
+
+    // Cached so the once-a-second code refresh doesn't re-read the Keychain on every tick.
+    @State private var totpConfigurations: [UUID: TOTPConfiguration] = [:]
+
+    // Passkeys macOS holds for this site. Empty whenever the entitlement or the user's permission
+    // isn't in force, which is what keeps the section absent rather than showing a broken state.
+    @State private var passkeys: [WebPasskeySummary] = []
 
     @State private var passphraseInput: String = ""
     @State private var unlockError: Bool = false
@@ -370,6 +387,15 @@ private struct PasswordsPopoverContent: View {
         .background(PasswordsPanelTheme.canvas)
         .animation(.spring(response: 0.26, dampingFraction: 0.84), value: vault.isVaultUnlocked)
         .animation(.spring(response: 0.26, dampingFraction: 0.84), value: isAddingNew)
+        .onAppear { refreshTOTP() }
+        .onChange(of: vault.isVaultUnlocked) { _, _ in refreshTOTP() }
+        .onChange(of: domainLogins) { _, _ in refreshTOTP() }
+        .task(id: currentWebDomain) {
+            // WebAuthn relying-party ids are bare registrable domains, so normalize first —
+            // a "www." prefix or a stray path would silently match nothing.
+            let rp = PasswordVaultManager.normalizeDomain(currentWebDomain ?? "")
+            passkeys = await WebPasskeyDirectory.shared.passkeys(forDomain: rp)
+        }
         // Passwords panel — exclude from screenshots / screen recording while open (it can reveal stored passwords).
         .screenCaptureProtected()
     }
@@ -461,6 +487,23 @@ private struct PasswordsPopoverContent: View {
                         }
                     }
                     .background { cardBackground(cornerRadius: 12) }
+                }
+            }
+
+            if !passkeys.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    sectionLabel("PASSKEYS FOR THIS SITE")
+                    VStack(spacing: 0) {
+                        ForEach(passkeys) { passkey in
+                            passkeyRow(passkey)
+                            if passkey.id != passkeys.last?.id { rowDivider }
+                        }
+                    }
+                    .background { cardBackground(cornerRadius: 12) }
+                    Text("Stored by macOS. Sign in with the button the site shows — Searxly can't fill these itself.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -706,7 +749,95 @@ private struct PasswordsPopoverContent: View {
     }
 
     @ViewBuilder
+    /// A passkey the SYSTEM holds for this site. Read-only by nature: the credential lives in
+    /// iCloud Keychain (or another provider) and is used through WKWebView's own WebAuthn sheet,
+    /// so there is deliberately no action button here — offering one would imply a fill Searxly
+    /// cannot perform.
+    private func passkeyRow(_ passkey: WebPasskeySummary) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.badge.key.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(passkey.displayName)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(passkey.providerName)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
     private func loginRow(_ entry: PasswordVaultEntry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            loginRowMain(entry)
+            if let configuration = totpConfigurations[entry.id] {
+                totpRow(entry, configuration: configuration)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    /// Live two-factor code for a saved login, with a one-click fill. Sites put the 2FA prompt on
+    /// its own page, so this is the row the user actually needs once the password has gone through.
+    private func totpRow(_ entry: PasswordVaultEntry, configuration: TOTPConfiguration) -> some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let code = TOTPGenerator.code(for: configuration, at: context.date)
+            let remaining = TOTPGenerator.secondsRemaining(for: configuration, at: context.date)
+
+            HStack(spacing: 6) {
+                Image(systemName: "lock.rotation")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+
+                Text(code ?? "——————")
+                    .font(.system(size: 12.5, design: .monospaced).weight(.medium))
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
+                    .animation(.default, value: code)
+
+                Text("\(remaining)s")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+
+                Spacer()
+
+                if let code {
+                    iconButton("doc.on.doc", help: "Copy two-factor code") {
+                        VaultClipboardManager.shared.copySensitive(code)
+                        vault.recordVaultActivity()
+                    }
+
+                    Button {
+                        onFillTOTP?(code)
+                        vault.recordVaultActivity()
+                        onClose()
+                    } label: {
+                        Text("Fill code")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(PasswordsPanelTheme.fillSubtle, in: Capsule())
+                            .overlay(Capsule().strokeBorder(PasswordsPanelTheme.hairlineStrong, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Fill the two-factor code on this page")
+                }
+            }
+        }
+    }
+
+    private func loginRowMain(_ entry: PasswordVaultEntry) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
@@ -757,8 +888,6 @@ private struct PasswordsPopoverContent: View {
                 .help("Autofill on this page")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
     @ViewBuilder
@@ -857,6 +986,18 @@ private struct PasswordsPopoverContent: View {
         vault.markEntryUsed(id: entry.id)
         onFillLogin?(domain, entry.username, password)
         onClose()
+    }
+
+    /// Loads TOTP seeds for the logins shown in this popover. Returns nothing while locked, since
+    /// `totpConfiguration(for:)` enforces the vault gate.
+    private func refreshTOTP() {
+        var loaded: [UUID: TOTPConfiguration] = [:]
+        for entry in domainLogins where entry.hasTOTP {
+            if let configuration = vault.totpConfiguration(for: entry.id) {
+                loaded[entry.id] = configuration
+            }
+        }
+        totpConfigurations = loaded
     }
 
     private func saveNewLogin() {

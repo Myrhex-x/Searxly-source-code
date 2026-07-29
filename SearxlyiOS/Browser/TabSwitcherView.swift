@@ -18,15 +18,28 @@ struct TabSwitcherView: View {
         GridItem(.flexible(), spacing: 14),
     ]
 
-    /// Search filters by page title, host, or search query (Safari's tab search).
+    /// The current space (normal or private) filtered by Safari-style tab search on title/host/query.
     private var visibleTabs: [BrowserModel] {
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return tabs.tabs }
-        return tabs.tabs.filter { tab in
+        guard !q.isEmpty else { return tabs.spaceTabs }
+        return tabs.spaceTabs.filter { tab in
             tab.pageTitle.lowercased().contains(q)
                 || (tab.webView.url?.host?.lowercased().contains(q) ?? false)
                 || tab.searchQuery.lowercased().contains(q)
         }
+    }
+
+    /// The Normal ⇄ Private space switch. Flipping it toggles app-wide Private Mode (which, on
+    /// leaving, wipes the private session — the user's choice).
+    private var spaceBinding: Binding<Int> {
+        Binding(
+            get: { tabs.privateMode ? 1 : 0 },
+            set: { newVal in
+                if (newVal == 1) != tabs.privateMode {
+                    withAnimation(.smooth) { tabs.togglePrivateMode() }
+                }
+            }
+        )
     }
 
     /// Private cards stay hidden behind Face ID when the lock setting is on.
@@ -35,6 +48,7 @@ struct TabSwitcherView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                spacePicker
                 if privateLocked {
                     privateLockBanner
                 }
@@ -59,11 +73,14 @@ struct TabSwitcherView: View {
                     }
                 }
                 .padding(14)
-                .animation(.smooth(duration: 0.25), value: tabs.tabs.count)
+                .animation(.smooth(duration: 0.25), value: tabs.spaceTabs.count)
                 .animation(.smooth(duration: 0.25), value: privateLocked)
+                .animation(.smooth(duration: 0.3), value: tabs.privateMode)
             }
             .background(Brand.bg.ignoresSafeArea())
-            .navigationTitle("\(tabs.tabs.count) Tab\(tabs.tabs.count == 1 ? "" : "s")")
+            .navigationTitle(tabs.privateMode
+                             ? L("Private Mode")
+                             : "\(tabs.spaceTabs.count) Tab\(tabs.spaceTabs.count == 1 ? "" : "s")")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic),
                         prompt: Text(L("Search Tabs")))
@@ -73,29 +90,18 @@ struct TabSwitcherView: View {
                         .foregroundStyle(Brand.text)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            tabs.newTab()
-                            dismiss()
-                        } label: {
-                            Label(L("New Tab"), systemImage: "plus.square")
-                        }
-                        Button {
-                            tabs.newTab(isPrivate: true)
-                            dismiss()
-                        } label: {
-                            Label(L("New Private Tab"), systemImage: "hand.raised")
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                    } primaryAction: {
+                    // Adds a tab to the CURRENT space — the segmented control below is the
+                    // Normal/Private switch, so the old New-Private-Tab submenu is gone.
+                    Button {
                         tabs.newTab()
                         dismiss()
+                    } label: {
+                        Image(systemName: "plus")
                     }
                     .foregroundStyle(Brand.text)
-                    .accessibilityLabel("New tab")
+                    .accessibilityLabel(L("New tab"))
                 }
-                if tabs.tabs.count > 1 {
+                if tabs.spaceTabs.count > 1 {
                     ToolbarItem(placement: .bottomBar) {
                         Button(L("Close All Tabs"), role: .destructive) {
                             withAnimation(.smooth) { tabs.closeAll() }
@@ -112,6 +118,31 @@ struct TabSwitcherView: View {
         withAnimation(.smooth(duration: 0.25)) { tabs.close(tab) }
     }
 
+    /// The Normal ⇄ Private space switch — where Safari puts its tab groups. Flipping to Private
+    /// enters Private Mode; flipping back wipes it. Indigo tint + a "nothing is kept" line when on.
+    private var spacePicker: some View {
+        VStack(spacing: 8) {
+            Picker("", selection: spaceBinding) {
+                Text(L("Browsing")).tag(0)
+                Text(L("Private")).tag(1)
+            }
+            .pickerStyle(.segmented)
+            .tint(tabs.privateMode ? Color(red: 0.72, green: 0.66, blue: 1.0) : nil)
+            if tabs.privateMode {
+                HStack(spacing: 6) {
+                    Image(systemName: "hand.raised.fill").scaledFont(size: 11, weight: .semibold)
+                    Text(L("Nothing you do here is saved")).scaledFont(size: 12, weight: .medium)
+                }
+                .foregroundStyle(Brand.textSecondary)
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+        .animation(.smooth, value: tabs.privateMode)
+    }
+
     private var privateLockBanner: some View {
         Button { Task { await tabs.revealPrivateTabs() } } label: {
             HStack(spacing: 9) {
@@ -124,8 +155,7 @@ struct TabSwitcherView: View {
             }
             .foregroundStyle(Brand.text)
             .padding(.horizontal, 15).padding(.vertical, 12)
-            .glassEffect(.regular, in: .rect(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 0.5))
+            .searxlyGlassCard(cornerRadius: 14)
             .padding(.horizontal, 14).padding(.top, 8)
         }
         .buttonStyle(.plain)
@@ -176,10 +206,10 @@ private struct TabCard: View {
                     Image(systemName: "hand.raised.fill")
                         .scaledFont(size: 10, weight: .semibold)
                         .foregroundStyle(Brand.textTertiary)
-                        .accessibilityLabel("Private tab")
+                        .accessibilityLabel(L("Private tab"))
                 }
                 Text(locked ? L("Private Tab") : title)
-                    .scaledFont(size: 12.5, weight: .medium)
+                    .scaledFont(size: 12, weight: .medium)
                     .foregroundStyle(Brand.textSecondary)
                     .lineLimit(1)
             }
@@ -198,7 +228,12 @@ private struct TabCard: View {
                 Label(L("Close Other Tabs"), systemImage: "xmark.square")
             }
         }
-        .accessibilityLabel("Tab: \(title)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(locked ? L("Private Tab, locked") : "\(L("Tab")): \(title)")
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        // The flick-to-close gesture and hover ✕ need a VoiceOver path too.
+        .accessibilityAction(named: L("Close Tab"), onClose)
+        .accessibilityAction(named: L("Close Other Tabs"), onCloseOthers)
     }
 
     private var flickToClose: some Gesture {
@@ -242,7 +277,7 @@ private struct TabCard: View {
         }
         .buttonStyle(.plain)
         .padding(6)
-        .accessibilityLabel("Close tab")
+        .accessibilityLabel(L("Close tab"))
     }
 
     @ViewBuilder private var icon: some View {

@@ -68,6 +68,20 @@ final class SearchThumbnailLoader: ObservableObject {
                     return
                 }
 
+                // Bundled celebrity faces / local assets — no network, no Tor gate.
+                if candidate.isFileURL {
+                    if let nsImage = NSImage(contentsOf: candidate), nsImage.isValid {
+                        Self.memoryCache.setObject(nsImage, forKey: key)
+                        self.image = nsImage
+                        self.loadedURL = candidate
+                        self.loadedAspectRatio = nsImage.aspectRatio
+                        self.isLoading = false
+                        self.failed = false
+                        return
+                    }
+                    continue
+                }
+
                 var request = URLRequest(url: candidate)
                 request.setValue("Searxly/1.0 (macOS)", forHTTPHeaderField: "User-Agent")
                 if let referer, !referer.isEmpty {
@@ -142,8 +156,8 @@ struct CachedSearchThumbnail: View {
                 if let image = loader.image {
                     Image(nsImage: image)
                         .resizable()
+                        .interpolation(.high)
                         .scaledToFill()
-                        .scaleEffect(1.06)
                         .frame(maxWidth: .infinity)
                         .frame(height: fillHeight)
                         .clipped()

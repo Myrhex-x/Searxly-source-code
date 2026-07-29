@@ -20,7 +20,7 @@ enum QuickAction: String {
     private var title: String {
         switch self {
         case .newSearch:     return NSLocalizedString("New Search", comment: "Quick action")
-        case .newPrivateTab: return NSLocalizedString("New Private Tab", comment: "Quick action")
+        case .newPrivateTab: return NSLocalizedString("Private Mode", comment: "Quick action")
         case .reopenLast:    return NSLocalizedString("Reopen Last Tab", comment: "Quick action")
         }
     }

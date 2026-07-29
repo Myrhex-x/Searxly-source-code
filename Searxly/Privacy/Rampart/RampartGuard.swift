@@ -15,16 +15,18 @@ import Foundation
 nonisolated final class RampartGuard {
     private let engine: RampartEngine
     let session: RampartSession
+    private let minScore: Float
 
-    init(engine: RampartEngine, keepLabels: Set<String>) {
+    init(engine: RampartEngine, keepLabels: Set<String>, minScore: Float = RampartNER.defaultMinScore) {
         self.engine = engine
         self.session = RampartSession(keepLabels: keepLabels)
+        self.minScore = minScore
     }
 
     /// Detect PII and replace it with placeholders. Returns the safe text, the number of spans
     /// hidden, and a PII-safe label summary (e.g. "GIVEN_NAME×2, SSN×1") for logging/UI.
     func protect(_ text: String) async -> (text: String, count: Int, summary: String) {
-        let spans = await engine.detect(in: text)
+        let spans = await engine.detect(in: text, minScore: minScore)
         let result = session.scrub(text, spans: spans)
         return (result.text, result.placeholders.count, RampartSession.labelSummary(of: result.placeholders))
     }
@@ -61,6 +63,13 @@ nonisolated final class RampartRedactor: Sendable {
     /// A new per-turn guard sharing the app's engine/model.
     func newSession() -> RampartGuard {
         RampartGuard(engine: engine, keepLabels: keepLabels)
+    }
+
+    /// A new per-turn guard with a caller-supplied keep-set and optional NER confidence floor (same
+    /// shared engine/model). Agentic Tools retain URLs so browsing stays useful, and raise `minScore`
+    /// so public names in search/page results aren't mangled by low-confidence NER guesses.
+    func newSession(keepLabels: Set<String>, minScore: Float = RampartNER.defaultMinScore) -> RampartGuard {
+        RampartGuard(engine: engine, keepLabels: keepLabels, minScore: minScore)
     }
 
     /// Whether the optional ML NER layer is bundled (vs. heuristic-only).

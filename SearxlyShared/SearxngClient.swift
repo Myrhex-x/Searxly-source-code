@@ -26,10 +26,12 @@ struct SearxngClient {
         safeSearch: Int = 1,
         language: String = "auto",
         pageNo: Int = 1,
+        timeRange: String? = nil,
         timeout: TimeInterval = 12
     ) async throws -> [SearXNGResult] {
         try await searchDetailed(query, base: base, categories: categories, safeSearch: safeSearch,
-                                 language: language, pageNo: pageNo, timeout: timeout).results
+                                 language: language, pageNo: pageNo, timeRange: timeRange,
+                                 timeout: timeout).results
     }
 
     /// Results + related-search suggestions.
@@ -40,6 +42,7 @@ struct SearxngClient {
         safeSearch: Int = 1,
         language: String = "auto",
         pageNo: Int = 1,
+        timeRange: String? = nil,
         timeout: TimeInterval = 12
     ) async throws -> SearxngSearchResult {
         var comps = URLComponents(string: "\(base)/search")
@@ -50,12 +53,24 @@ struct SearxngClient {
             URLQueryItem(name: "safesearch", value: String(safeSearch)),
             URLQueryItem(name: "pageno", value: String(pageNo)),
         ]
-        if language != "auto" { items.append(URLQueryItem(name: "language", value: language)) }
+        // SearXNG accepts day / week / month / year; anything else is omitted (= any time).
+        if let timeRange, ["day", "week", "month", "year"].contains(timeRange) {
+            items.append(URLQueryItem(name: "time_range", value: timeRange))
+        }
+        // Always pass a concrete language when callers resolved "auto" → system/app code.
+        // Bare "auto" is still omitted so the instance can decide (legacy call sites).
+        if language != "auto", !language.isEmpty {
+            items.append(URLQueryItem(name: "language", value: language))
+        }
         comps?.queryItems = items
         guard let url = comps?.url else { throw SearxngClientError.badURL }
 
         var req = URLRequest(url: url, timeoutInterval: timeout)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Hint engines with the same language preference (any system locale, not just a short list).
+        if language != "auto", !language.isEmpty {
+            req.setValue("\(language),en;q=0.5", forHTTPHeaderField: "Accept-Language")
+        }
         // A browser-ish UA makes some instances serve JSON instead of a challenge/landing page.
         req.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
 

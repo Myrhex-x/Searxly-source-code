@@ -172,7 +172,7 @@ final class HomeNewsFeed {
         for instance in s.searchInstances {
             if let results = try? await SearxngClient().search(
                 query, base: instance, categories: "news",
-                safeSearch: s.safeSearch.rawValue, language: s.language, pageNo: 1
+                safeSearch: s.safeSearch.rawValue, language: s.resolvedContentLanguage, pageNo: 1
             ), !results.isEmpty {
                 return results
             }

@@ -12,12 +12,13 @@ import Foundation
 @MainActor
 struct OpenWebsiteTool: AgenticTool {
     let id = "open_website"
+    let title = "Open a website"
     let summary = """
-    Open a website in the user's Searxly browser as a new tab. Use ONLY for explicit navigation \
-    ("open the official Tesla site", "go to x.com", "show me the Wikipedia page for …"). Pass a clean \
-    site name/brand or a URL; Searxly resolves the best/official page privately via the user's own \
-    SearXNG. This changes what the user sees on screen, so don't use it for information lookups — use \
-    web_search for those.
+    Open a website in the user's Searxly browser as a NEW tab. Use for explicit navigation when you \
+    have a brand/name rather than an exact URL ("open the official Tesla site", "go to x.com", "show \
+    me the Wikipedia page for …"): Searxly resolves the best/official page privately via the user's \
+    own SearXNG. To change the CURRENT tab to a URL you already know, use navigate instead. This \
+    changes what the user sees on screen, so don't use it for information lookups — use web_search.
     """
     let inputSchema: [String: Any] = [
         "type": "object",

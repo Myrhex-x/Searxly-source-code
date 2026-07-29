@@ -20,7 +20,8 @@ enum SERPDesign {
     static let maxListWidth: CGFloat = 720
     static let knowledgePanelWidth: CGFloat = 360
     static let knowledgePanelSpacing: CGFloat = 24
-    static let minWidthForKnowledgePanel: CGFloat = 1050
+    /// ~list + panel + padding; kept modest so cards still appear on 13" windows with peeker rail.
+    static let minWidthForKnowledgePanel: CGFloat = 920
     static let knowledgePanelMinContentHeight: CGFloat = 520
     static let knowledgePanelCornerRadius: CGFloat = 12
     static let resultSpacing: CGFloat = 4

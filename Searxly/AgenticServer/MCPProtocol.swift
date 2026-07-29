@@ -24,6 +24,18 @@ struct MCPHTTPRequest: Sendable {
     let body: Data
 
     func header(_ name: String) -> String? { headers[name.lowercased()] }
+
+    /// Value of a query parameter on the request path, percent-decoded (nil if absent).
+    func queryValue(_ name: String) -> String? {
+        guard let qIndex = path.firstIndex(of: "?") else { return nil }
+        for pair in path[path.index(after: qIndex)...].split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2, parts[0] == name else { continue }
+            let raw = String(parts[1])
+            return raw.removingPercentEncoding ?? raw
+        }
+        return nil
+    }
 }
 
 /// An HTTP response to write back over the connection.
@@ -122,8 +134,8 @@ enum MCPRouter {
             let version = (requested.map { supportedProtocolVersions.contains($0) } == true) ? requested! : latestProtocolVersion
             let result: [String: Any] = [
                 "protocolVersion": version,
-                "capabilities": ["tools": ["listChanged": false]],
-                "serverInfo": ["name": serverName, "version": SearxlyVersion.short],
+                "capabilities": ["tools": ["listChanged": true]],
+                "serverInfo": ["name": serverName, "title": "Searxly Agentic Tools", "version": SearxlyVersion.short],
                 "instructions": "Searxly Agentic Tools — private web access for your local AI. Tools search and read the web through the user's own SearXNG instance; nothing is sent to any AI provider."
             ]
             return .json(JSONRPC.success(id: id, result: result))
@@ -151,6 +163,13 @@ enum MCPRouter {
                 return .json(JSONRPC.success(id: id, result: toolContent("This tool is turned off in Searxly → Settings → Agentic Tools.", isError: true)))
             case .ok(let text):
                 return .json(JSONRPC.success(id: id, result: toolContent(text, isError: false)))
+            case .okStructured(let text, let structuredJSON):
+                var res = toolContent(text, isError: false)
+                // `structuredContent` must be a JSON object (tools build one, e.g. {"query":…, "results":[…]}).
+                if let obj = try? JSONSerialization.jsonObject(with: structuredJSON) as? [String: Any] {
+                    res["structuredContent"] = obj
+                }
+                return .json(JSONRPC.success(id: id, result: res))
             case .failed(let message):
                 return .json(JSONRPC.success(id: id, result: toolContent(message, isError: true)))
             case .image(let base64, let mimeType):

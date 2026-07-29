@@ -35,6 +35,8 @@ final class FaviconStore {
     /// during a view update is illegal — `generation` (mutated only from capture/clear) is the signal.
     @ObservationIgnored private var cache: [String: UIImage?] = [:]
     @ObservationIgnored private var inFlight: Set<String> = []
+    /// Coalesces many simultaneous SERP icon arrivals into one generation bump (one list re-render).
+    @ObservationIgnored private var generationFlushTask: Task<Void, Never>?
 
     private static let iconSize: CGFloat = 64
     private static let refreshAge: TimeInterval = 7 * 24 * 3600
@@ -62,7 +64,7 @@ final class FaviconStore {
             await MainActor.run { [weak self] in
                 guard let self, prepared != nil else { return }
                 self.cache[key] = prepared
-                self.generation += 1
+                self.bumpGenerationCoalesced()
             }
         }
         return nil
@@ -138,12 +140,26 @@ final class FaviconStore {
         let dir = Self.directory()
         try? data.write(to: Self.fileURL(for: key), options: [.atomic, .completeFileProtection])
         cache[key] = icon
-        generation += 1
+        bumpGenerationCoalesced()
         Self.pruneIfNeeded(in: dir)
+    }
+
+    /// One generation tick for a burst of icons (SERP loads ~10 hosts at once). Immediate clear still
+    /// publishes right away so the UI drops stale glyphs without waiting.
+    private func bumpGenerationCoalesced() {
+        if generationFlushTask != nil { return }
+        generationFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(90))
+            guard let self, !Task.isCancelled else { return }
+            self.generationFlushTask = nil
+            self.generation += 1
+        }
     }
 
     /// Wipes every cached icon (called alongside Clear History — favicons are browsing traces too).
     func clearAll() {
+        generationFlushTask?.cancel()
+        generationFlushTask = nil
         try? FileManager.default.removeItem(at: Self.directory())
         cache.removeAll()
         generation += 1

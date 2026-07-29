@@ -23,9 +23,11 @@ final class RemoteThumbLoader {
     }()
     static var failed: Set<String> = []
 
-    static func load(candidates: [URL], referer: String?) async -> UIImage? {
+    static func load(candidates: [URL], referer: String?, maxPixel: CGFloat = 700) async -> UIImage? {
         for raw in normalized(candidates) {
-            let key = raw.absoluteString as NSString
+            // Key by size too: the grid loads at 700px, the full-screen preview at a higher cap, and
+            // they must not clobber each other in the cache when they share a source URL.
+            let key = "\(raw.absoluteString)|\(Int(maxPixel))" as NSString
             if let hit = cache.object(forKey: key) { return hit }
 
             var req = URLRequest(url: raw, timeoutInterval: 10)
@@ -40,7 +42,7 @@ final class RemoteThumbLoader {
                   let image = UIImage(data: data) else { continue }
             // Decode once to thumbnail size off the render path: full-resolution photos decoded
             // inside 180pt tiles are a scroll-jank + memory factory.
-            let display = await downscaled(image, maxPixel: 700) ?? image
+            let display = await downscaled(image, maxPixel: maxPixel) ?? image
             cache.setObject(display, forKey: key)
             return display
         }

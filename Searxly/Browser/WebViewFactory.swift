@@ -62,7 +62,16 @@ struct WebViewFactory {
     /// "Searxly/1.0" tag. WebKit fills the platform prefix (correct AppleWebKit build for the OS); only
     /// this pinned marketing version can go stale, so refresh it periodically. Mirrors the UA already
     /// used for YouTube compatibility in WebViewRepresentable.
-    static let safariUserAgentToken = "Version/17.4 Safari/605.1.15"
+    ///
+    /// MAINTENANCE: a uniform UA only hides you while it matches the *current* Safari. Claiming an old
+    /// Safari on a new macOS is itself a fingerprint. Track Safari like Tor Browser tracks ESR — bump
+    /// this (and `desktopSafariUserAgent` below) on each major Safari release. Last set: Safari 18.5.
+    static let safariUserAgentToken = "Version/18.5 Safari/605.1.15"
+
+    /// The full desktop-Safari UA string, kept in one place so the pinned version can't drift between
+    /// the two call sites in WebViewRepresentable. Bump alongside `safariUserAgentToken`.
+    static let desktopSafariUserAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15"
 
     /// Creates a new WKWebView configured according to the requested privacy mode.
     /// Each call to .privateEphemeral gets its own isolated non-persistent data store
@@ -163,6 +172,9 @@ struct WebViewFactory {
         // enforcement bypass, player protection) without polluting the general adblocker.
         YouTubeAdBlocker.shared.apply(to: configuration)
 
+        // Native ported features (Searxly-built equivalents of popular extensions). Standard tabs only.
+        WebsiteDarkMode.shared.apply(to: configuration, mode: mode)
+
         // Lane B userscripts (in-house, AI-authorable extensions). Injected into an isolated content
         // world, scoped to the user's match patterns, and ONLY on standard tabs — never Private/Onion.
         // No-op when the feature is off or there are no enabled+valid scripts. See Extensions/.
@@ -173,6 +185,20 @@ struct WebViewFactory {
         // created for normal users. The manager re-checks flag + standard-only. See Extensions/LaneA/.
         if #available(macOS 15.4, *), ExtensionFeatures.laneAEnabled {
             ExtensionManager.shared.configure(configuration, mode: mode)
+        }
+
+        // Chrome Web Store page bridge: routes clicks on the store's own install button into Searxly's
+        // native install flow and relabels it Chrome → Searxly. Isolated content world (page JS can't
+        // reach the handler), main frame only, early-returns off the store hosts. Standard tabs on a
+        // 15.4+ run only — the same population that can actually install. Gated on the PROGRAM flag
+        // (not laneAEnabled) because it must work before the first extension is ever installed.
+        if #available(macOS 15.4, *), ExtensionFeatures.programEnabled, mode == .standard {
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: ChromeWebStore.storeBridgeScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true,
+                in: WKContentWorld.world(name: ChromeWebStore.storeBridgeWorldName)
+            ))
         }
 
         // === Layout & Viewport Quality Fixer ===
@@ -208,6 +234,17 @@ struct WebViewFactory {
         )
         configuration.userContentController.addUserScript(linkHoverScript)
 
+        // Media-state reporter: lets the tab stay resident while a video/audio is mid-playback so
+        // switching away and back never reloads it (and restarts the video), and remembers the position
+        // for resume-on-reload. The `searxlyMedia` handler is registered per active representable
+        // (WebViewRepresentable.makeNSView); background tabs simply drop the posts.
+        let mediaStateScript = WKUserScript(
+            source: Self.mediaStateReporterSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        configuration.userContentController.addUserScript(mediaStateScript)
+
         // Fingerprint surface reduction (every tab, all frames): clamp navigator.hardwareConcurrency to a
         // common Apple-Silicon value so high-core Macs don't stand out. See fingerprintMitigationSource.
         let fingerprintScript = WKUserScript(
@@ -216,6 +253,17 @@ struct WebViewFactory {
             forMainFrameOnly: false
         )
         configuration.userContentController.addUserScript(fingerprintScript)
+
+        // Global Privacy Control (the JS half): navigator.globalPrivacyControl === true. The Sec-GPC
+        // header half is added on main-frame requests by the navigation delegate. All frames, at
+        // document start, so a page reads the opt-out before its own scripts run.
+        if PrivacyShieldSettings.shared.gpcSignal {
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: NavigationGuard.gpcUserScriptSource,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            ))
+        }
 
         // Strict fingerprint cluster — Maximum Privacy ONLY (opt-in; may break some sites). Farbles
         // canvas/audio/WebGL readbacks, reports the content window as the screen (the CYT screen rows),
@@ -269,6 +317,15 @@ struct WebViewFactory {
                 configuration.websiteDataStore = WKWebsiteDataStore.nonPersistent()
             }
             let webView = SearxlyWebView(frame: .zero, configuration: configuration)
+            // Web Inspector (real dev tools) for standard tabs — on in Debug and when Developer Mode is
+            // enabled, off for normal release users. Private/Onion tabs stay non-inspectable.
+            if #available(macOS 13.3, *) {
+                #if DEBUG
+                webView.isInspectable = true
+                #else
+                webView.isInspectable = DeveloperSettings.shared.isEnabled
+                #endif
+            }
             // Lane A: register this standard tab with the WebExtension controller. Attaching the controller
             // (above) is not enough — the engine only injects content scripts into tabs it has been told
             // about via didOpenTab. Flag-gated + 15.4, so it's a no-op unless an extension is installed.
@@ -373,6 +430,11 @@ struct WebViewFactory {
     /// Scope: page + subframes — the path commodity fingerprinters use. Worker-context coverage (which
     /// means wrapping the Worker constructor, with its own breakage surface) is deferred to a future
     /// Strict-mode farbling layer. navigator.deviceMemory is Chrome-only and already absent in WebKit.
+    ///
+    /// NOTE (tiering): this is intentionally a light, always-on reduction — pinning the core count to a
+    /// SINGLE value for everyone, emptying navigator.plugins, and the font/screen defenses are reserved
+    /// for the Searxly Maximum edition (see strictUAConsistencyJS / strictFontDefenseJS), so the edition
+    /// is a genuine step up in fingerprint resistance rather than matching the base app.
     static let fingerprintMitigationSource: String = """
     (function() {
         'use strict';
@@ -391,22 +453,30 @@ struct WebViewFactory {
     /// fingerprint cluster — each block independently try/caught behind a double-install guard:
     ///   • WebRTC neutered (no RTCPeerConnection → no IP leak around the Tor SOCKS proxy)
     ///   • canvas / WebGL / audio / OffscreenCanvas readbacks farbled per-read
-    ///   • font metrics noised (canvas measureText) + FontFaceSet enumeration capped to common/registered
     ///   • WebGL vendor+renderer standardized to Apple; WebGPU (navigator.gpu) made absent
-    ///   • screen == content window; window/screen/documentElement/visualViewport letterboxed to a bucket
+    ///   • screen == content window; window/screen letterboxed to a bucket
     ///   • devicePixelRatio→1×/2×; colour depth→24 (low-entropy display)
     ///   • timezone reported as UTC (getTimezoneOffset + Intl) so the local region can't be read
     ///   • referrer trimmed to same-origin; window.name cleared across sites
     ///   • every shim native-code-masked so Function.prototype.toString can't reveal the tampering
     /// This is the breakage-prone, opt-in layer — NOT injected in Normal/Encrypted.
     ///
+    /// TIERING: the Searxly Maximum EDITION adds a strictly stronger set on top of this same cluster (the
+    /// `Edition.isMaximum` blocks below): a system-font allow-list + queryLocalFonts neutered, an emptied
+    /// navigator.plugins/mimeTypes set consistent with the Safari UA, a fixed CPU-core count, and finer
+    /// documentElement/visualViewport letterboxing. Those are deliberately WITHHELD from the base app so
+    /// the edition is a real upgrade — the base app keeps a lighter fingerprint posture on purpose.
+    ///
     /// Honest limits (WKWebView ceiling): shims are native-masked but still detectable via descriptor
-    /// inspection or a fresh-realm (dynamically-created about:blank iframe) escape. Font metrics are now
-    /// noised (canvas measureText) and FontFaceSet enumeration capped, but the DOM offsetWidth font-probe
-    /// and Worker-context reads stay open; letterboxing now spans innerWidth/screen/documentElement/
-    /// visualViewport, yet a full-width element's getBoundingClientRect still reveals the true width (true
-    /// letterboxing needs native content margins); TLS/JA3 is untouched. This raises the cost of
-    /// fingerprinting; it does not make the browser un-fingerprintable — only a patched engine would.
+    /// inspection or a fresh-realm (dynamically-created about:blank iframe) escape. In the Maximum EDITION
+    /// the font enumeration APIs are closed (FontFaceSet.check allow-list + queryLocalFonts) and text
+    /// metrics noised, but the font MEASUREMENT side-channel — a probe reading a differently-fonted
+    /// element's integer offsetWidth — stays open, because noising offsetWidth enough to hide it would
+    /// break real layout (real Safari leaks user-installed fonts the same way); closing it fully needs an
+    /// engine-level font allow-list (the Tier-2 custom-WebKit item). Edition letterboxing spans innerWidth/
+    /// screen/documentElement/visualViewport, yet a full-width element's getBoundingClientRect still
+    /// reveals the true width (true letterboxing needs native content margins); TLS/JA3 is untouched. This
+    /// raises the cost of fingerprinting; it does not make the browser un-fingerprintable.
     /// matchMedia interception is scoped to device-width/height (the FP vectors), so ordinary responsive
     /// (max-width/min-width) layouts are left alone.
     static var strictPrivacySource: String { """
@@ -507,7 +577,9 @@ struct WebViewFactory {
             }
         } catch (e) {}
 
-        // --- Fonts (metrics + enumeration) — Maximum edition only (see strictFontDefenseJS). ---
+        // --- Fonts (metrics + enumeration) — Searxly Maximum EDITION only (see strictFontDefenseJS). The
+        //     base app deliberately leaves the font surface open; fonts are the single most fingerprintable
+        //     JS metric, so closing them is a headline reason to move up to the edition. ---
         \(Edition.isMaximum ? Self.strictFontDefenseJS : "")
 
         // --- WebGL: standardize the high-signal strings + perturb readback ---
@@ -683,6 +755,12 @@ struct WebViewFactory {
             });
         } catch (e) {}
 
+        // --- navigator field set consistency (plugins / mimeTypes / vendor / platform / core count) —
+        //     Searxly Maximum EDITION only. The base app keeps WebKit's native navigator set on purpose
+        //     (a Chromium-plugin list under the Safari UA is one of the surfaces the edition tightens).
+        //     See strictUAConsistencyJS. ---
+        \(Edition.isMaximum ? Self.strictUAConsistencyJS : "")
+
         // --- Searxly Maximum hardening: speculative-networking off, uniform locale, and the security
         //     slider's GPU/WASM cuts. Edition-gated so the base app's Maximum-Privacy farbling is untouched.
         \(Edition.isMaximum ? Self.strictMaximumHardeningJS : "")
@@ -703,9 +781,14 @@ struct WebViewFactory {
     """
     }
 
-    /// Font defense (measureText noise + FontFaceSet.check cap) injected into strictPrivacySource —
-    /// Searxly Maximum edition ONLY, so the base app's own Maximum-Privacy farbling is never extended.
-    /// Uses `mask` from the enclosing IIFE (function-scoped, so visible where this is interpolated).
+    /// Font defense injected into strictPrivacySource — Searxly Maximum EDITION ONLY, so the base app's
+    /// own Maximum-Privacy farbling is never extended (fonts are the biggest single fingerprint, and
+    /// withholding this is a deliberate reason to move up to the edition). Noises canvas measureText, caps
+    /// FontFaceSet.check to a common/registered allow-list, and neuters the Local Font Access API
+    /// (queryLocalFonts), which would otherwise hand a page the entire installed-font list outright. Uses
+    /// `mask` from the enclosing IIFE (function-scoped, so visible where this is interpolated). Residual:
+    /// the integer-offsetWidth measurement probe (see the honest-limits note on strictPrivacySource) —
+    /// closing that one needs an engine-level font allow-list.
     private static let strictFontDefenseJS: String = """
     try {
                 var origMeasure = CanvasRenderingContext2D.prototype.measureText;
@@ -744,10 +827,22 @@ struct WebViewFactory {
                     }, 'check');
                 }
             } catch (e) {}
+
+            // Local Font Access API — queryLocalFonts() returns the FULL installed-font list (family +
+            // PostScript names) by design: the cleanest possible font-enumeration leak. WebKit doesn't
+            // ship it today, but guard so a future engine (or a polyfilled runtime) can't reopen it.
+            try {
+                if (typeof window.queryLocalFonts === 'function') {
+                    window.queryLocalFonts = mask(function() { return Promise.resolve([]); }, 'queryLocalFonts');
+                }
+                if (navigator && navigator.fonts && typeof navigator.fonts.query === 'function') {
+                    navigator.fonts.query = mask(function() { return Promise.resolve([]); }, 'query');
+                }
+            } catch (e) {}
     """
 
     /// Viewport letterbox extras (documentElement/body clientWidth + visualViewport) injected INSIDE
-    /// strictPrivacySource's screen block — Searxly Maximum edition ONLY. Placed inside that block so it
+    /// strictPrivacySource's screen block — Searxly Maximum EDITION ONLY. Placed inside that block so it
     /// can see `__origGetter`, which is block-scoped there under 'use strict'.
     private static let strictLetterboxExtrasJS: String = """
     try {
@@ -766,6 +861,38 @@ struct WebViewFactory {
                     defGet(window.visualViewport, 'width',  function() { return window.innerWidth; });
                     defGet(window.visualViewport, 'height', function() { return window.innerHeight; });
                 }
+            } catch (e) {}
+    """
+
+    /// navigator field-set consistency injected into strictPrivacySource — Searxly Maximum EDITION ONLY.
+    /// The base app claims desktop Safari in its UA (all editions) but keeps WebKit's native navigator
+    /// set, so a page can see the standardized "Chrome/Chromium PDF Viewer" plugin names under a Safari
+    /// UA — an inconsistency that is itself a fingerprint. The edition removes that: empty plugins +
+    /// mimeTypes (the Tor-Browser posture, and a large well-populated bucket), vendor/platform pinned to
+    /// the Mac-Safari values, maxTouchPoints 0, and hardwareConcurrency pinned to a SINGLE value (8) for
+    /// every user (vs the base app's ≤ 8 clamp). Uses `mask`/`defGet` from the enclosing IIFE.
+    private static let strictUAConsistencyJS: String = """
+    try {
+                function __emptyList() {
+                    var list = { length: 0 };
+                    list.item = mask(function () { return null; }, 'item');
+                    list.namedItem = mask(function () { return null; }, 'namedItem');
+                    list.refresh = mask(function () {}, 'refresh');
+                    try {
+                        list[Symbol.iterator] = function () {
+                            return { next: function () { return { done: true, value: undefined }; } };
+                        };
+                    } catch (e) {}
+                    return list;
+                }
+                var __plugins = __emptyList();
+                var __mimes = __emptyList();
+                defGet(Navigator.prototype, 'plugins',        function () { return __plugins; });
+                defGet(Navigator.prototype, 'mimeTypes',      function () { return __mimes; });
+                defGet(Navigator.prototype, 'vendor',         function () { return 'Apple Computer, Inc.'; });
+                defGet(Navigator.prototype, 'platform',       function () { return 'MacIntel'; });
+                defGet(Navigator.prototype, 'maxTouchPoints', function () { return 0; });
+                defGet(Navigator.prototype, 'hardwareConcurrency', function () { return 8; });
             } catch (e) {}
     """
 
@@ -920,6 +1047,16 @@ struct WebViewFactory {
         return config
     }
 
+    /// A Tor SOCKS proxy config carrying an explicit isolation credential — used by first-party
+    /// circuit keying (`TorCircuitIsolation`, Searxly Maximum only) to rotate a live tab's circuits
+    /// when its main frame moves to a different first-party site. Same mechanism as above: distinct
+    /// credentials ride distinct circuits via Tor's default `IsolateSOCKSAuth`.
+    static func makeTorProxyConfiguration(credential: String) -> ProxyConfiguration {
+        let config = ProxyConfiguration(socksv5Proxy: torSocksEndpoint())
+        config.applyCredential(username: credential, password: credential)
+        return config
+    }
+
     /// Routes a tab through Tor's local SOCKS proxy and applies the onion IP-leak hardening (WebRTC /
     /// media-device / geolocation neutering). Used for Maximum Privacy + Tor so standard and private
     /// tabs traverse Tor exactly like onion tabs, hiding the real IP. Forces a non-persistent store.
@@ -1012,6 +1149,64 @@ struct WebViewFactory {
 
         window.addEventListener('blur', function() { report(null); });
         document.addEventListener('mouseleave', function() { report(null); }, true);
+    })();
+    """
+
+    /// Injected at document start. Reports the tab's media playback state to the `searxlyMedia` message
+    /// handler so the tab can be kept resident while a video/audio is mid-playback (see
+    /// BrowserTab.hasResumableMedia) and its position remembered for resume-on-reload. Passive: it only
+    /// listens to media events, never mutates the page. Capture-phase, document-level listeners catch
+    /// dynamically inserted players (YouTube's SPA swaps its <video> in after load). Throttled so a
+    /// playing video's `timeupdate` (~4 Hz) doesn't flood the bridge.
+    static let mediaStateReporterSource: String = """
+    (function() {
+        'use strict';
+        if (window.__searxlyMediaBridgeInstalled) { return; }
+        window.__searxlyMediaBridgeInstalled = true;
+
+        var lastPost = 0;
+
+        function primaryMedia() {
+            var media;
+            try { media = Array.prototype.slice.call(document.querySelectorAll('video, audio')); }
+            catch (e) { return null; }
+            if (!media.length) { return null; }
+            var playing = media.filter(function(m) { return !m.paused && !m.ended; });
+            if (playing.length) {
+                return playing.sort(function(a, b) { return (b.currentTime || 0) - (a.currentTime || 0); })[0];
+            }
+            // None playing: pick the largest element (the main player, not a tiny preview).
+            return media.sort(function(a, b) {
+                return ((b.clientWidth || 0) * (b.clientHeight || 0)) - ((a.clientWidth || 0) * (a.clientHeight || 0));
+            })[0];
+        }
+
+        function report(force) {
+            try {
+                var m = primaryMedia();
+                var resumable = false, playing = false, time = 0;
+                if (m) {
+                    time = m.currentTime || 0;
+                    playing = !m.paused && !m.ended;
+                    var nearEnd = isFinite(m.duration) ? (time >= (m.duration - 1.5)) : false;
+                    // "Resumable" = a real playback position that hasn't finished — playing, or paused
+                    // partway through. Keeps a mid-watch tab alive; lets a finished one hibernate.
+                    resumable = (playing || time > 1) && !m.ended && !nearEnd;
+                }
+                var now = Date.now();
+                if (!force && (now - lastPost) < 1800) { return; }
+                lastPost = now;
+                window.webkit.messageHandlers.searxlyMedia.postMessage({ resumable: resumable, playing: playing, time: time });
+            } catch (e) {}
+        }
+
+        ['play', 'playing', 'pause', 'ended', 'emptied', 'loadedmetadata', 'seeked'].forEach(function(ev) {
+            document.addEventListener(ev, function() { report(true); }, true);
+        });
+        document.addEventListener('timeupdate', function() { report(false); }, true);
+
+        // Initial read once the page settles (covers media that autoplays before any event we hear).
+        setTimeout(function() { report(true); }, 1200);
     })();
     """
 

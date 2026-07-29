@@ -22,6 +22,7 @@ enum PasswordCSVImporter {
         let skipped: Int    // already in the vault (same domain + username)
         let failed: Int     // rows missing a usable url / username / password
         let total: Int      // data rows in the file
+        let withTOTP: Int   // imported logins that also carried a usable two-factor key
     }
 
     enum Outcome {
@@ -37,6 +38,11 @@ enum PasswordCSVImporter {
     private static let passwordKeys = ["password", "login_password", "pass", "pwd"]
     private static let notesKeys    = ["notes", "note", "comment", "comments", "extra"]
     private static let nameKeys     = ["name", "title", "item name"]
+    /// Two-factor seed column. Bitwarden writes `login_totp`, 1Password `otpauth`, most others
+    /// some spelling of "totp" — the value is either a full otpauth:// URI or a bare Base32 key,
+    /// and `TOTPGenerator.parse` accepts both.
+    private static let totpKeys     = ["totp", "login_totp", "login totp", "otpauth", "otp", "otp secret",
+                                       "otpsecret", "two-factor secret", "authenticator key", "totp secret"]
 
     /// Shows the open panel and returns the chosen CSV file (main thread). nil if cancelled.
     static func pickCSVFile() -> URL? {
@@ -52,8 +58,9 @@ enum PasswordCSVImporter {
     }
 
     /// Reads + parses the CSV off the main thread, then writes new logins through the Keychain vault
-    /// (de-duplicated by normalized domain + username).
+    /// (de-duplicated by normalized domain + username). No-op in the base app — vault is Maximum-only.
     static func importPasswords(from url: URL) async -> Outcome {
+        guard PasswordVaultManager.isAvailable else { return .unreadable }
         let rows: [[String]] = await Task.detached(priority: .userInitiated) {
             // NSOpenPanel URLs can be security-scoped in the sandbox; without this the read can fail.
             let scoped = url.startAccessingSecurityScopedResource()
@@ -73,9 +80,10 @@ enum PasswordCSVImporter {
         let userIdx  = firstIndex(in: lowerHeader, anyOf: usernameKeys)
         let notesIdx = firstIndex(in: lowerHeader, anyOf: notesKeys)
         let nameIdx  = firstIndex(in: lowerHeader, anyOf: nameKeys)
+        let totpIdx  = firstIndex(in: lowerHeader, anyOf: totpKeys)
 
         let dataRows = rows.dropFirst()
-        var imported = 0, skipped = 0, failed = 0
+        var imported = 0, skipped = 0, failed = 0, withTOTP = 0
 
         for row in dataRows {
             // Skip fully blank lines that some exporters leave between records.
@@ -95,14 +103,22 @@ enum PasswordCSVImporter {
                 .contains { $0.username.compare(username, options: .caseInsensitive) == .orderedSame }
             if dupe { skipped += 1; continue }
 
-            if PasswordVaultManager.shared.addEntry(domain: domain, username: username, password: password, notes: notes) != nil {
+            if let entry = PasswordVaultManager.shared.addEntry(domain: domain, username: username, password: password, notes: notes) {
                 imported += 1
+                // A two-factor key that doesn't parse is NOT an import failure — the login itself
+                // imported fine, and rejecting the whole row would lose a working password over a
+                // malformed optional column.
+                if let totp = totpIdx.map({ field(row, $0) })?.nilIfBlank,
+                   PasswordVaultManager.shared.setTOTP(from: totp, for: entry.id) {
+                    withTOTP += 1
+                }
             } else {
                 failed += 1
             }
         }
 
-        return .imported(Summary(imported: imported, skipped: skipped, failed: failed, total: dataRows.count))
+        return .imported(Summary(imported: imported, skipped: skipped, failed: failed,
+                                 total: dataRows.count, withTOTP: withTOTP))
     }
 
     // MARK: - CSV parsing (RFC 4180-ish: quoted fields, escaped quotes, commas/newlines in quotes)

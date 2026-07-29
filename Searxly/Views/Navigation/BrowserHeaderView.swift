@@ -48,12 +48,23 @@ struct BrowserHeaderView: View {
     let onGeneratePasswordForPage: (() -> Void)?
     let onSaveLoginFromPage: (() -> Void)?
     let onFillLogin: ((String, String, String) -> Void)?
+    var onFillTOTP: ((String) -> Void)? = nil
 
-    /// True when the app is in Maximum Privacy AND routing through Tor: the Maximum pill fully covers
-    /// the Tor connection, so the standalone Tor pill is folded into it (hidden). Reads @Observable
-    /// PrivacyManager, so this re-evaluates when the mode or backing network changes.
+    /// True when the Maximum pill already covers Tor, so the standalone Tor pill is folded into it
+    /// (hidden). Reads @Observable PrivacyManager, so this re-evaluates when the mode or backing
+    /// network changes.
+    ///
+    /// Two ways that happens:
+    ///   • Maximum Privacy over Tor (either edition) — all traffic is Tor and the Maximum pill owns that
+    ///     status, so a Tor pill beside it is pure duplication.
+    ///   • Searxly Maximum, whichever lane is picked — the Maximum pill IS this edition's single
+    ///     protection indicator (it names the live network and its state). On the VPN lane a standalone
+    ///     Tor pill isn't duplication, it's worse: Tor isn't carrying anything, so it sits there greyed
+    ///     out next to a header that shows no VPN pill at all (that one is base-app-only), which reads
+    ///     as "Maximum turned itself off".
     private var foldTorIntoMaximumPill: Bool {
-        PrivacyManager.shared.appPrivacyMode == .maximum && PrivacyManager.shared.maxProtection == .tor
+        guard PrivacyManager.shared.appPrivacyMode == .maximum else { return false }
+        return Edition.isMaximum || PrivacyManager.shared.maxProtection == .tor
     }
 
     var body: some View {
@@ -86,6 +97,14 @@ struct BrowserHeaderView: View {
 
                 Spacer()
 
+                // Extension action buttons — clickable logo bubbles that open each extension's popup
+                // (or a manage card). Standard tabs only; hidden when none apply. Left of the address bar.
+                HeaderExtensionBubbles(
+                    webView: browserState.selectedTab?.privacyMode == .standard ? activeWebView : nil,
+                    currentURL: browserState.selectedTab?.privacyMode == .standard
+                        ? browserState.selectedTab?.currentURL : nil
+                )
+
                 AddressBar(
                     text: $searchText,
                     isFocused: $isAddressBarFocused,
@@ -116,6 +135,15 @@ struct BrowserHeaderView: View {
                     if isAddressBarFocused { browserState.scheduleSuggestionsRefresh() }
                 }
 
+                // Headless coordinator for the Chrome Web Store install flow. The visible "Add to
+                // Searxly" button lives inside the store page (an injected popup); this presents the
+                // native permission prompt and reflects progress back into that popup.
+                ExtensionInstallHost(
+                    activeWebView: activeWebView,
+                    currentURL: browserState.selectedTab?.currentURL,
+                    isStandardTab: browserState.selectedTab?.privacyMode == .standard
+                )
+
                 Spacer(minLength: 16)
 
                 RightToolbarControls(
@@ -138,6 +166,7 @@ struct BrowserHeaderView: View {
                     onGeneratePasswordForPage: onGeneratePasswordForPage,
                     onSaveLoginFromPage: onSaveLoginFromPage,
                     onFillLogin: onFillLogin,
+                    onFillTOTP: onFillTOTP,
                     onBookmarkCurrentPage: onBookmarkCurrentPage,
                     onGoBack: onGoBack,
                     onGoForward: onGoForward,
@@ -184,6 +213,7 @@ struct BrowserHeaderView: View {
                     onGeneratePasswordForPage: onGeneratePasswordForPage,
                     onSaveLoginFromPage: onSaveLoginFromPage,
                     onFillLogin: onFillLogin,
+                    onFillTOTP: onFillTOTP,
                     onBookmarkCurrentPage: onBookmarkCurrentPage,
                     onGoBack: onGoBack,
                     onGoForward: onGoForward,

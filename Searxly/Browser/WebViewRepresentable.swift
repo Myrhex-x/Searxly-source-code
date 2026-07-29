@@ -38,6 +38,12 @@ struct WebViewRepresentable: NSViewRepresentable {
         ucc.removeScriptMessageHandler(forName: "linkHover")
         ucc.add(context.coordinator, name: "linkHover")
 
+        // Media-state reporter → keep a mid-playback tab resident + remember its position (see
+        // BrowserTab.hasResumableMedia). Only the active tab holds this handler; background tabs' posts
+        // are harmlessly dropped, which is fine — we only need the state captured while the tab is shown.
+        ucc.removeScriptMessageHandler(forName: "searxlyMedia")
+        ucc.add(context.coordinator, name: "searxlyMedia")
+
         // Wallet provider bridge (EIP-1193). Uses the reply-handler variant so JS can await
         // the result directly. Registered in the page content world so window.ethereum sees it.
         //
@@ -54,6 +60,15 @@ struct WebViewRepresentable: NSViewRepresentable {
         if isStandardTab && walletConfigured && WalletFeatures.dappProvider {
             ucc.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: "searxlyWallet")
             WalletProviderBridge.shared.register(webView)
+        }
+
+        // Chrome Web Store install bridge (extensions program): receives "the store's install button
+        // was clicked" from the bridge script. Registered only in the bridge's isolated world — page
+        // JS can't post to it — and the handler re-verifies the sender is the store's main frame.
+        let storeBridgeWorld = WKContentWorld.world(name: ChromeWebStore.storeBridgeWorldName)
+        ucc.removeScriptMessageHandler(forName: ChromeWebStore.storeBridgeHandlerName, contentWorld: storeBridgeWorld)
+        if ExtensionFeatures.programEnabled, isStandardTab {
+            ucc.add(context.coordinator, contentWorld: storeBridgeWorld, name: ChromeWebStore.storeBridgeHandlerName)
         }
 
         webView.addObserver(context.coordinator, forKeyPath: #keyPath(WKWebView.estimatedProgress), options: .new, context: nil)
@@ -124,6 +139,13 @@ struct WebViewRepresentable: NSViewRepresentable {
         /// URL cancelled because the Maximum-Privacy kill switch was closed; reloaded when protection returns.
         var lastBlockedURL: URL?
 
+        /// Loop guard for the GPC re-issue: absolute URLs we've already re-issued with the Sec-GPC
+        /// header, so re-entering the delegate doesn't rewrite the same request forever.
+        var gpcHandledURLs = Set<String>()
+
+        /// Hosts the user chose to visit past the phishing/malware warning (session-only, per tab).
+        var phishingAllowedHosts = Set<String>()
+
         func isYouTubeVideoPage(_ url: URL?) -> Bool {
             guard let url = url else { return false }
             let host = url.host?.lowercased() ?? ""
@@ -169,6 +191,7 @@ struct WebViewRepresentable: NSViewRepresentable {
                 webView.removeObserver(self, forKeyPath: #keyPath(WKWebView.canGoForward))
                 webView.configuration.userContentController.removeScriptMessageHandler(forName: "adblockDiagnostic")
                 webView.configuration.userContentController.removeScriptMessageHandler(forName: "linkHover")
+                webView.configuration.userContentController.removeScriptMessageHandler(forName: "searxlyMedia")
             }
 
             NotificationCenter.default.removeObserver(self, name: AdBlockNotifications.rulesReady, object: nil)
@@ -201,7 +224,7 @@ struct WebViewRepresentable: NSViewRepresentable {
                         )
                     }
                     if let url = self.observedWebView?.url, url.host?.contains("youtube") == true || url.host?.contains("youtu.be") == true {
-                        self.observedWebView?.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+                        self.observedWebView?.customUserAgent = WebViewFactory.desktopSafariUserAgent
                         self.observedWebView?.evaluateJavaScript("""
                         (function() {
                             document.querySelectorAll('video').forEach(v => {
@@ -221,7 +244,7 @@ struct WebViewRepresentable: NSViewRepresentable {
                     if let url = webView.url, !(url.host?.contains("youtube") == true || url.host?.contains("youtu.be") == true) {
                         self.stopYouTubeRecoveryTimer()
                     } else if let url = webView.url, (url.host?.contains("youtube") == true || url.host?.contains("youtu.be") == true) {
-                        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+                        webView.customUserAgent = WebViewFactory.desktopSafariUserAgent
                         self.enterYouTubeSafeMode(on: webView)
                         if !self.isYouTubeVideoPage(url) {
                             self.stopYouTubeRecoveryTimer()

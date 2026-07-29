@@ -31,6 +31,9 @@ struct PasswordVaultData: Codable {
     var useCustomPassword: Bool = false
     var customSalt: Data?
     var customVerifier: Data?
+    /// PBKDF2 work factor the verifier was derived at. Absent on configs written before the work
+    /// factor was raised — those decode to `legacyIterations` so they keep verifying.
+    var customIterations: Int?
 
     // Auto-lock + behavior preferences.
     var autoLockMinutes: Int = 10
@@ -67,6 +70,7 @@ struct PasswordVaultData: Codable {
         useCustomPassword        = (try? c.decodeIfPresent(Bool.self, forKey: .useCustomPassword)) ?? false
         customSalt               = (try? c.decodeIfPresent(Data.self, forKey: .customSalt)) ?? nil
         customVerifier           = (try? c.decodeIfPresent(Data.self, forKey: .customVerifier)) ?? nil
+        customIterations         = (try? c.decodeIfPresent(Int.self, forKey: .customIterations)) ?? nil
         autoLockMinutes          = (try? c.decodeIfPresent(Int.self, forKey: .autoLockMinutes)) ?? 10
         autofillEnabled          = (try? c.decodeIfPresent(Bool.self, forKey: .autofillEnabled)) ?? true
         offerToSaveEnabled       = (try? c.decodeIfPresent(Bool.self, forKey: .offerToSaveEnabled)) ?? true
@@ -79,6 +83,7 @@ struct PasswordVaultData: Codable {
         case useCustomPassword
         case customSalt
         case customVerifier
+        case customIterations
         case autoLockMinutes
         case autofillEnabled
         case offerToSaveEnabled
@@ -142,16 +147,20 @@ enum PasswordVaultStore {
         save(data)
     }
 
-    static func loadLockConfig() -> (useCustom: Bool, salt: Data?, verifier: Data?) {
+    static func loadLockConfig() -> (useCustom: Bool, salt: Data?, verifier: Data?, iterations: Int) {
         let d = load()
-        return (d.useCustomPassword, d.customSalt, d.customVerifier)
+        // A config with no recorded work factor predates the bump, so it was written at the legacy
+        // count. Defaulting to the CURRENT count here would lock those users out of their own vault.
+        let iterations = d.customIterations ?? VaultPassphraseCrypto.legacyIterations
+        return (d.useCustomPassword, d.customSalt, d.customVerifier, max(1, iterations))
     }
 
-    static func saveLockConfig(useCustom: Bool, salt: Data?, verifier: Data?) {
+    static func saveLockConfig(useCustom: Bool, salt: Data?, verifier: Data?, iterations: Int) {
         var data = load()
         data.useCustomPassword = useCustom
         data.customSalt = salt
         data.customVerifier = verifier
+        data.customIterations = iterations
         save(data)
     }
 

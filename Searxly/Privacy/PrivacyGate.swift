@@ -144,7 +144,13 @@ final class PrivacyGate {
         switch PrivacyManager.shared.maxProtection {
         case .vpn:
             if !ManagedVPNService.shared.hasActivePass {
-                return "Maximum Privacy needs an active VPN pass — buy one in Settings → VPN, or switch your protection to Tor in Settings → Privacy."
+                // Maximum's included comp just lapsed and enforceAccess is already switching the lane back
+                // to Tor, so say that rather than asking the user to fix it — browsing resumes by itself.
+                // (A pass can be renewed in Settings → VPN in either edition.) The base app has no such
+                // fallback: it sits on the lane the user chose, so it gets the actionable message.
+                return Edition.isMaximum
+                    ? "Your included VPN has ended — switching you back to Tor…"
+                    : "Maximum Privacy needs an active VPN pass — buy one in Settings → VPN, or switch your protection to Tor in Settings → Privacy."
             }
             return "Connecting to the Searxly VPN… traffic stays blocked until your IP is hidden."
         case .tor:
@@ -155,6 +161,13 @@ final class PrivacyGate {
     /// Recomputes the fast caches and notifies observers when web, native, or local-search protection
     /// changes.
     func refresh() {
+        // Heal a common Maximum desync: the system VPN tunnel is up, but the kill switch is still
+        // waiting on Tor (the default lane). That happens when the user connected the Searxly VPN
+        // without flipping "Hide my IP with" to VPN — search and pages then fail with "VPN or Tor
+        // isn't connected" even though VPN is live. Promote the live tunnel to the protection lane
+        // so routing + gate agree. Don't interrupt an in-flight Tor bootstrap.
+        if healVPNLaneDesyncIfNeeded() { return }
+
         let nativeAllowed = isNativeProtected
         let localSearchAllowed = isLocalSearchProtected
         let webAllowed = isWebProtected
@@ -170,6 +183,29 @@ final class PrivacyGate {
         }
     }
 
+    /// If Maximum is on the Tor lane, Tor is fully down, and the Searxly VPN tunnel is already
+    /// connected, switch the kill switch to VPN. Returns true when it switched (caller should stop —
+    /// `setMaxProtection` posts a notification that re-enters `refresh` via `onModeChanged`).
+    @discardableResult
+    private func healVPNLaneDesyncIfNeeded() -> Bool {
+        guard Edition.isMaximum,
+              PrivacyManager.shared.appPrivacyMode == .maximum,
+              PrivacyManager.shared.maxProtection == .tor,
+              SystemVPNManager.shared.isConnected else { return false }
+        switch TorManager.shared.status {
+        case .stopped, .error:
+            break
+        case .running, .bootstrapping, .stopping:
+            return false
+        @unknown default:
+            return false
+        }
+        guard PrivacyManager.shared.canSelectVPNProtection else { return false }
+        Log.privacy.info("PrivacyGate: live VPN tunnel while Tor is down — switching kill switch to VPN")
+        PrivacyManager.shared.setMaxProtection(.vpn)
+        return true
+    }
+
     private func onModeChanged() {
         refresh()
         Task { await ensureProtection() }
@@ -180,11 +216,24 @@ final class PrivacyGate {
     /// to call repeatedly — the managers no-op when already in the right state. Note: the VPN path
     /// requires an active pass; if there isn't one, the VPN won't connect and the gate stays closed
     /// (blockReason explains how to proceed).
+    ///
+    /// `.onion` tabs are independent of this lane: `openOnionURL` always starts Tor for those, even
+    /// while Maximum Privacy rides the VPN (clearnet on VPN, onion on Tor).
     func ensureProtection() async {
         if PrivacyManager.shared.appPrivacyMode == .maximum {
             switch PrivacyManager.shared.maxProtection {
-            case .vpn: await SystemVPNManager.shared.connectSearxlyNode()
-            case .tor: _ = await TorManager.shared.ensureReadyAndRunning()
+            case .vpn:
+                await SystemVPNManager.shared.connectSearxlyNode()
+                // If the tunnel never came up (dead node, failed switch), stay fail-closed only for a
+                // moment — flip to Tor so search isn't bricked. SystemVPNManager also does this; this
+                // is the gate-side backstop after ensureProtection returns.
+                if !SystemVPNManager.shared.isConnected {
+                    Log.privacy.info("PrivacyGate: VPN lane requested but tunnel is down — falling back to Tor")
+                    PrivacyManager.shared.setMaxProtection(.tor)
+                    _ = await TorManager.shared.ensureReadyAndRunning()
+                }
+            case .tor:
+                _ = await TorManager.shared.ensureReadyAndRunning()
             }
         }
         await LocalSearxngManager.shared.reconcileTorSearchRouting()

@@ -11,9 +11,17 @@ import SwiftUI
 import UIKit
 
 struct SuggestionsView: View {
+    /// How the panel presents: `.compact` is the floating card above the bar (typing, web pages);
+    /// `.expanded` is the home page's full browse panel — top-sites grid + recents, scrollable.
+    enum PanelStyle { case compact, expanded }
+
     let query: String
     /// Online autocomplete is allowed only when the user opted in AND the tab isn't private.
     var allowRemote: Bool = true
+    var style: PanelStyle = .compact
+    /// Private tabs hide the personal sections (Top Sites, Recent Searches) — a private surface
+    /// must not display normal-mode browsing. Paste and Go stays (it reads nothing until tapped).
+    var isPrivate: Bool = false
     let onSearch: (String) -> Void
     let onOpen: (URL) -> Void
 
@@ -21,10 +29,13 @@ struct SuggestionsView: View {
     @State private var remote: [String] = []
     private var appearance = AppearanceSettings.shared
 
-    init(query: String, allowRemote: Bool = true,
+    init(query: String, allowRemote: Bool = true, style: PanelStyle = .compact,
+         isPrivate: Bool = false,
          onSearch: @escaping (String) -> Void, onOpen: @escaping (URL) -> Void) {
         self.query = query
         self.allowRemote = allowRemote
+        self.style = style
+        self.isPrivate = isPrivate
         self.onSearch = onSearch
         self.onOpen = onOpen
     }
@@ -34,6 +45,39 @@ struct SuggestionsView: View {
     private var remoteEnabled: Bool { allowRemote && ShieldSettings.shared.onlineSuggestions }
 
     var body: some View {
+        Group {
+            if style == .expanded {
+                ScrollView { panelContent }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                panelContent
+            }
+        }
+        .task(id: trimmed) {
+            guard remoteEnabled, !trimmed.isEmpty, directURL == nil else {
+                remote = []
+                return
+            }
+            // Small debounce so half-typed queries never leave the device.
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            remote = await Self.fetchCompletions(for: trimmed)
+        }
+        .padding(.vertical, 6)
+        // Liquid Glass panel — matches the elevated bottom dock (same tint language, stronger
+        // lift). The expanded browse panel backs itself near-opaque: it covers the whole home,
+        // and the news feed ghosting through full-height glass read as clutter.
+        .glassEffect(.regular.tint(Brand.bg.opacity(style == .expanded ? 0.88 : 0.48)),
+                     in: .rect(cornerRadius: 22))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Brand.hairline.opacity(1.1), lineWidth: 0.6)
+        )
+        .shadow(color: .black.opacity(0.32), radius: 22, y: 10)
+    }
+
+    @ViewBuilder
+    private var panelContent: some View {
         let matches = store.suggestions(for: trimmed)
         VStack(spacing: 0) {
             if trimmed.isEmpty {
@@ -47,22 +91,26 @@ struct SuggestionsView: View {
                         pasteAndGo()
                     }
                 }
-                let sites = quickAccessURLs
+                let sites = isPrivate ? [] : quickAccessURLs
                 if !sites.isEmpty {
                     if UIPasteboard.general.hasStrings {
                         Rectangle().fill(Brand.hairline).frame(height: 0.5)
                             .padding(.horizontal, 14).padding(.top, 6)
                     }
                     sectionHeader(L("Top Sites"), clear: nil)
-                    topSitesRow(sites)
+                    if style == .expanded {
+                        topSitesGrid(sites)
+                    } else {
+                        topSitesRow(sites)
+                    }
                 }
-                if !store.recentSearches.isEmpty {
+                if !isPrivate, !store.recentSearches.isEmpty {
                     if !sites.isEmpty {
                         Rectangle().fill(Brand.hairline).frame(height: 0.5)
                             .padding(.horizontal, 14).padding(.top, 6)
                     }
                     sectionHeader(L("Recent Searches")) { store.clearRecentSearches() }
-                    ForEach(store.recentSearches.prefix(6), id: \.self) { term in
+                    ForEach(store.recentSearches.prefix(style == .expanded ? 10 : 6), id: \.self) { term in
                         Rectangle().fill(Brand.hairline).frame(height: 0.5).padding(.leading, 48)
                         row(icon: "clock.arrow.circlepath", title: term, subtitle: L("Search again")) { onSearch(term) }
                     }
@@ -87,23 +135,6 @@ struct SuggestionsView: View {
                 }
             }
         }
-        .task(id: trimmed) {
-            guard remoteEnabled, !trimmed.isEmpty, directURL == nil else {
-                remote = []
-                return
-            }
-            // Small debounce so half-typed queries never leave the device.
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            remote = await Self.fetchCompletions(for: trimmed)
-        }
-        .padding(.vertical, 4)
-        // Liquid Glass panel — the dimmed page shows through, like the bottom bar it hovers over.
-        .glassEffect(.regular.tint(Brand.bg.opacity(0.4)), in: .rect(cornerRadius: 20))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
     }
 
     // MARK: - Empty-state quick access (Top Sites)
@@ -142,30 +173,49 @@ struct SuggestionsView: View {
     /// Horizontal favicon tiles — tap to open. Cache-only icons (these are already-visited sites).
     private func topSitesRow(_ urls: [String]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 14) {
-                ForEach(urls, id: \.self) { urlString in
-                    let host = URL(string: urlString)?.host?.replacingOccurrences(of: "www.", with: "") ?? urlString
-                    Button {
-                        if let u = URL(string: urlString) { onOpen(u) }
-                    } label: {
-                        VStack(spacing: 6) {
-                            FaviconView(host: host, size: 34)
-                                .padding(9)
-                                .background(Brand.surfaceHi, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            Text(siteLabel(host: host))
-                                .scaledFont(size: 10.5, weight: .medium)
-                                .foregroundStyle(Brand.textSecondary)
-                                .lineLimit(1)
-                                .frame(width: 54)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Top site: \(host)")
-                }
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(urls, id: \.self) { siteTile($0) }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
         }
+    }
+
+    /// The expanded panel's grid — Safari's focused start page, 4 across.
+    private func topSitesGrid(_ urls: [String]) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4),
+                  spacing: 16) {
+            ForEach(urls, id: \.self) { siteTile($0) }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+    }
+
+    private func siteTile(_ urlString: String) -> some View {
+        let host = URL(string: urlString)?.host?.replacingOccurrences(of: "www.", with: "") ?? urlString
+        return Button {
+            if let u = URL(string: urlString) { onOpen(u) }
+        } label: {
+            VStack(spacing: 7) {
+                FaviconView(host: host, size: 34)
+                    .padding(9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .fill(Brand.surfaceHi.opacity(0.9))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .strokeBorder(Brand.hairline, lineWidth: 0.5)
+                    )
+                Text(siteLabel(host: host))
+                    .scaledFont(size: 11, weight: .medium)
+                    .foregroundStyle(Brand.textSecondary)
+                    .lineLimit(1)
+                    .frame(width: 56)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L("Top site") + ": \(host)")
     }
 
     /// A short, stable name for a site tile — the second-level domain label ("apple", "wikipedia").

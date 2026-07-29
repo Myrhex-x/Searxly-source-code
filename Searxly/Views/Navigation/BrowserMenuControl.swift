@@ -26,6 +26,10 @@ struct BrowserMenuControl: View {
     @Binding var showingDownloads: Bool
     @Binding var showingKeyboardShortcuts: Bool
 
+    /// The current page's URL, so the menu can offer "Copy Clean Link" (tracker-stripped). Nil on the
+    /// new-tab / home surface.
+    var currentPageURL: URL? = nil
+
     // Page actions + app destinations supplied by the header (optional → row hidden when nil).
     var onReaderMode: (() -> Void)? = nil
     var onTranslatePage: (() -> Void)? = nil
@@ -85,6 +89,7 @@ struct BrowserMenuControl: View {
     private var menuPanel: some View {
         BrowserMenuPanel(
             showingWebContent: showingWebContent,
+            currentPageURL: currentPageURL,
             showingBookmarks: $showingBookmarks,
             showingDownloads: $showingDownloads,
             showingKeyboardShortcuts: $showingKeyboardShortcuts,
@@ -106,6 +111,7 @@ struct BrowserMenuControl: View {
 
 private struct BrowserMenuPanel: View {
     let showingWebContent: Bool
+    var currentPageURL: URL? = nil
 
     @Binding var showingBookmarks: Bool
     @Binding var showingDownloads: Bool
@@ -124,8 +130,14 @@ private struct BrowserMenuPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // Searxly Maximum: security controls at the top — the fastest place to change posture
+            // without opening Settings. Absent in the base app.
+            if Edition.isMaximum {
+                maximumSecuritySection
+            }
+
             if showingWebContent,
-               onReaderMode != nil || onTranslatePage != nil || onShowFind != nil {
+               onReaderMode != nil || onTranslatePage != nil || onShowFind != nil || currentPageURL != nil {
                 section("THIS PAGE") {
                     if let onReaderMode {
                         BrowserMenuRow(icon: "doc.plaintext", label: "Reader View", shortcut: "⌘⇧R") {
@@ -144,6 +156,12 @@ private struct BrowserMenuPanel: View {
                         BrowserMenuRow(icon: "magnifyingglass", label: "Find on Page", shortcut: "⌘F") {
                             onClose(); onShowFind()
                         }
+                    }
+                    // Copy the current URL with tracking parameters removed — keeps the menu open so
+                    // the "copied" confirmation is visible.
+                    if let currentPageURL {
+                        if onReaderMode != nil || onTranslatePage != nil || onShowFind != nil { rowDivider }
+                        CopyCleanLinkRow(url: currentPageURL)
                     }
                 }
             }
@@ -164,8 +182,13 @@ private struct BrowserMenuPanel: View {
                 }
             }
 
-            if let onOpenWallet {
-                section("TOOLS") {
+            section("TOOLS") {
+                BrowserMenuRow(icon: "sparkles", label: "Connect your AI") {
+                    onClose()
+                    NotificationCenter.default.post(name: .openSettingsToAgenticTools, object: nil)
+                }
+                if let onOpenWallet {
+                    rowDivider
                     BrowserMenuRow(icon: "creditcard", label: "Wallet") {
                         onClose(); onOpenWallet()
                     }
@@ -196,6 +219,39 @@ private struct BrowserMenuPanel: View {
         .padding(16)
         .frame(width: 300)
         .background(BrowserMenuTheme.canvas)
+    }
+
+    // MARK: Maximum security section (level / new identity / status)
+
+    private var maximumSecuritySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("SECURITY LEVEL")
+                .font(.system(size: 9, weight: .bold))
+                .tracking(1.1)
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 4)
+
+            SecurityLevelSelector()
+
+            VStack(spacing: 0) {
+                BrowserMenuRow(icon: "arrow.triangle.2.circlepath", label: "New Identity", shortcut: "⌘⇧U") {
+                    onClose()
+                    NotificationCenter.default.post(name: .newIdentityRequested, object: nil)
+                }
+                if onOpenSettings != nil {
+                    rowDivider
+                    BrowserMenuRow(icon: "checkmark.shield", label: "Security Status") {
+                        onClose(); onOpenSettings?()
+                    }
+                }
+            }
+            .background(BrowserMenuTheme.card)
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(BrowserMenuTheme.hairline, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
     }
 
     // MARK: App section (lock / shortcuts / settings)
@@ -242,6 +298,125 @@ private struct BrowserMenuPanel: View {
 
     private var rowDivider: some View {
         Divider().overlay(BrowserMenuTheme.hairline).padding(.leading, 12)
+    }
+}
+
+// MARK: - Copy clean link
+
+/// Copies the current URL with tracking parameters stripped (via NavigationGuard). Confirms inline —
+/// and distinguishes "trackers removed" from a link that was already clean — instead of closing the
+/// menu, so the feedback is actually seen.
+private struct CopyCleanLinkRow: View {
+    let url: URL
+
+    private enum Feedback { case idle, removed, alreadyClean }
+    @State private var feedback: Feedback = .idle
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: copy) {
+            HStack(spacing: 11) {
+                Image(systemName: iconName)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .frame(width: 20)
+                    .foregroundStyle(feedback == .idle ? Color.primary.opacity(0.92) : SERPDesign.accentGreen)
+                Text(label)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(isHovering ? BrowserMenuTheme.hoverFill : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: feedback)
+    }
+
+    private var iconName: String {
+        switch feedback {
+        case .idle:         return "link"
+        case .removed, .alreadyClean: return "checkmark"
+        }
+    }
+
+    private var label: String {
+        switch feedback {
+        case .idle:         return "Copy Clean Link"
+        case .removed:      return "Copied — trackers removed"
+        case .alreadyClean: return "Copied — already clean"
+        }
+    }
+
+    private func copy() {
+        let cleaned = NavigationGuard.strippingTrackingParams(from: url)
+        let toCopy = cleaned ?? url
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(toCopy.absoluteString, forType: .string)
+
+        feedback = (cleaned != nil) ? .removed : .alreadyClean
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            feedback = .idle
+        }
+    }
+}
+
+// MARK: - Security level selector (Searxly Maximum)
+
+/// Three-segment selector for the Standard / Safer / Safest security level, live from
+/// `MaximumSecurity`. The active segment is filled; a one-line summary sits underneath so the
+/// choice's cost is visible without opening Settings.
+private struct SecurityLevelSelector: View {
+    @State private var level: MaximumSecurityLevel = MaximumSecurity.effective
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                ForEach(MaximumSecurityLevel.allCases, id: \.self) { option in
+                    segment(option)
+                }
+            }
+            .padding(3)
+            .background(BrowserMenuTheme.card)
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(BrowserMenuTheme.hairline, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            Text(level.summary)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: MaximumSecurity.levelChangedNotification)) { _ in
+            level = MaximumSecurity.effective
+        }
+    }
+
+    private func segment(_ option: MaximumSecurityLevel) -> some View {
+        let selected = option == level
+        return Button {
+            MaximumSecurity.shared.setLevel(option)
+            level = option
+        } label: {
+            Text(option.displayName)
+                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+                .foregroundStyle(selected ? BrowserMenuTheme.onAccent : Color.primary.opacity(0.75))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(selected ? BrowserMenuTheme.accent : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.15), value: level)
     }
 }
 
@@ -296,4 +471,8 @@ private enum BrowserMenuTheme {
     static let card      = AdaptiveChrome.dynamic(light: Color.black.opacity(0.035), dark: Color.white.opacity(0.05))
     static let hairline  = AdaptiveChrome.dynamic(light: Color.black.opacity(0.085), dark: Color.white.opacity(0.09))
     static let hoverFill = AdaptiveChrome.dynamic(light: Color.black.opacity(0.05), dark: Color.white.opacity(0.07))
+    /// Ink accent for the active security-level segment: near-black pill in light, white in dark
+    /// (monochrome — matches the Settings toggle "on" ink). `onAccent` is the text over it.
+    static let accent    = AdaptiveChrome.dynamic(light: Color(white: 0.14), dark: .white)
+    static let onAccent  = AdaptiveChrome.dynamic(light: .white, dark: .black)
 }
