@@ -1377,7 +1377,7 @@
 			repositoryURL = "https://github.com/searxly/bulwark";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.3.0;
+				minimumVersion = 1.0.0;
 			};
 		};
 		BFC000010000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
